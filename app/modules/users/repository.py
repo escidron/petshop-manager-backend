@@ -1,8 +1,6 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-
 from app.modules.users.models import User
-
 
 class UserRepository:
     def get_user(self, db: Session, user_id: int):
