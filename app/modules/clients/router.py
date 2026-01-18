@@ -3,77 +3,77 @@ from sqlalchemy.orm import Session
 
 from app.config.database import get_db
 from .schemas import (
-    ClienteCreate,
-    ClienteUpdate,
-    ClienteResponse,
+    ClientCreate,
+    ClientUpdate,
+    ClientResponse,
 )
-from .service import ClienteService
+from .service import ClientService
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
 
 @router.post(
     "/",
-    response_model=ClienteResponse,
+    response_model=ClientResponse,
 )
-def create_cliente(
+def create_client(
     tenant_id: int,
-    data: ClienteCreate,
+    data: ClientCreate,
     db: Session = Depends(get_db),
 ):
-    service = ClienteService()
-    return service.create_cliente(db, tenant_id, data)
+    service = ClientService()
+    return service.create_client(db, tenant_id, data)
 
 
 @router.get(
     "/",
-    response_model=list[ClienteResponse],
+    response_model=list[ClientResponse],
 )
-def list_clientes(
+def list_clients(
     tenant_id: int,
     db: Session = Depends(get_db),
 ):
-    service = ClienteService()
-    return service.list_clientes(db, tenant_id)
+    service = ClientService()
+    return service.list_clients(db, tenant_id)
 
 
 @router.get(
-    "/{cliente_id}",
-    response_model=ClienteResponse,
+    "/{client_id}",
+    response_model=ClientResponse,
 )
-def get_cliente(
+def get_client(
     tenant_id: int,
-    cliente_id: int,
+    client_id: int,
     db: Session = Depends(get_db),
 ):
-    service = ClienteService()
-    return service.get_cliente(db, tenant_id, cliente_id)
+    service = ClientService()
+    return service.get_client(db, tenant_id, client_id)
 
 
 @router.patch(
-    "/{cliente_id}",
-    response_model=ClienteResponse,
+    "/{client_id}",
+    response_model=ClientResponse,
 )
-def update_cliente(
+def update_client(
     tenant_id: int,
-    cliente_id: int,
-    data: ClienteUpdate,
+    client_id: int,
+    data: ClientUpdate,
     db: Session = Depends(get_db),
 ):
-    service = ClienteService()
-    return service.update_cliente(
-        db, tenant_id, cliente_id, data
+    service = ClientService()
+    return service.update_client(
+        db, tenant_id, client_id, data
     )
 
 
 @router.delete(
-    "/{cliente_id}",
+    "/{client_id}",
     status_code=204,
 )
-def delete_cliente(
+def delete_client(
     tenant_id: int,
-    cliente_id: int,
+    client_id: int,
     db: Session = Depends(get_db),
 ):
-    service = ClienteService()
-    service.delete_cliente(db, tenant_id, cliente_id)
+    service = ClientService()
+    service.delete_client(db, tenant_id, client_id)

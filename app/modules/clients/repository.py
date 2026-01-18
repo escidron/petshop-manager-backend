@@ -1,26 +1,26 @@
 from sqlalchemy.orm import Session
 from app.modules.clients.models import Client
-from app.modules.clients.schemas import ClienteCreate, ClienteUpdate
+from app.modules.clients.schemas import ClientCreate, ClientUpdate
 
 
-class ClienteRepository:
-    def create(self, db: Session, tenant_id: int, data: ClienteCreate) -> Client:
-        cliente = Client(
+class ClientRepository:
+    def create(self, db: Session, tenant_id: int, data: ClientCreate) -> Client:
+        client = Client(
             tenant_id=tenant_id,
             **data.model_dump(),
         )
-        db.add(cliente)
+        db.add(client)
         db.commit()
-        db.refresh(cliente)
-        return cliente
+        db.refresh(client)
+        return client
 
     def get_by_id(
-        self, db: Session, tenant_id: int, cliente_id: int
+        self, db: Session, tenant_id: int, client_id: int
     ) -> Client | None:
         return (
             db.query(Client)
             .filter(
-                Client.id == cliente_id,
+                Client.id == client_id,
                 Client.tenant_id == tenant_id,
             )
             .first()
@@ -39,16 +39,16 @@ class ClienteRepository:
     def update(
         self,
         db: Session,
-        cliente: Client,
-        data: ClienteUpdate,
+        client: Client,
+        data: ClientUpdate,
     ) -> Client:
         for field, value in data.model_dump(exclude_unset=True).items():
-            setattr(cliente, field, value)
+            setattr(client, field, value)
 
         db.commit()
-        db.refresh(cliente)
-        return cliente
+        db.refresh(client)
+        return client
 
-    def delete(self, db: Session, cliente: Client) -> None:
-        db.delete(cliente)
+    def delete(self, db: Session, client: Client) -> None:
+        db.delete(client)
         db.commit()

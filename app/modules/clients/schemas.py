@@ -2,25 +2,25 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 
-class ClienteBase(BaseModel):
+class ClientBase(BaseModel):
     name: str
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     is_active: bool = True
 
 
-class ClienteCreate(ClienteBase):
+class ClientCreate(ClientBase):
     pass
 
 
-class ClienteUpdate(BaseModel):
+class ClientUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     is_active: Optional[bool] = None
 
 
-class ClienteResponse(ClienteBase):
+class ClientResponse(ClientBase):
     id: int
 
     class Config:
