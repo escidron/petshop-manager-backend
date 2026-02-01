@@ -21,6 +21,16 @@ def create_pet(
     service = PetService()
     return service.create_pet(db, tenant_id, data)
 
+@router.get(
+    "/",
+    response_model=list[PetResponse],
+)
+def list_pets(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+):
+    service = PetService()
+    return service.list_pets(db, tenant_id)
 
 @router.get(
     "/client/{client_id}",

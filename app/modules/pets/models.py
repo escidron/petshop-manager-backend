@@ -1,4 +1,5 @@
-from sqlalchemy import String, Boolean, ForeignKey, Integer
+from datetime import datetime
+from sqlalchemy import DateTime, String, Boolean, ForeignKey, Integer, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config.database import Base
@@ -33,6 +34,28 @@ class Pet(Base):
 
     age: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    gender: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        default="unknown",  # male | female | unknown
+        index=True,
+    )
 
+    ageUnit: Mapped[str] = mapped_column(
+        String(10),
+        nullable=True,
+    )
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
     client = relationship("Client", backref="pets")
+    
+    @property
+    def owner_name(self) -> str | None:
+        return self.client.name if self.client else None

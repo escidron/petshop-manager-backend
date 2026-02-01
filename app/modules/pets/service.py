@@ -44,6 +44,9 @@ class PetService:
             )
         return pet
 
+    def list_pets(self, db: Session, tenant_id: int):
+        return self.repository.list_pets(db, tenant_id)
+    
     def list_pets_by_client(
         self,
         db: Session,

@@ -45,3 +45,4 @@ class ClientService:
     ):
         client = self.get_client(db, tenant_id, client_id)
         self.repository.delete(db, client)
+

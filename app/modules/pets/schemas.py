@@ -7,6 +7,8 @@ class PetBase(BaseModel):
     species: str
     breed: Optional[str] = None
     age: Optional[int] = None
+    gender: Optional[str] = None
+    ageUnit: Optional[str] = None
     is_active: bool = True
 
 
@@ -25,6 +27,7 @@ class PetUpdate(BaseModel):
 class PetResponse(PetBase):
     id: int
     client_id: int
+    owner_name: Optional[str]
 
     class Config:
         from_attributes = True
