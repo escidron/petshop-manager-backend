@@ -12,10 +12,7 @@ from .service import ClientService
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
 
-@router.post(
-    "/",
-    response_model=ClientResponse,
-)
+@router.post("/",response_model=ClientResponse)
 def create_client(
     tenant_id: int,
     data: ClientCreate,

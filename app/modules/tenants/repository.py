@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from app.modules.tenants.models import Tenant, TenantType
 from app.modules.tenants.schemas import TenantCreate, TenantUpdate
+from app.modules.users.models import TenantUser
 
 
 class TenantRepository:
@@ -45,3 +46,21 @@ class TenantTypeRepository:
             )
             .first()
         )
+
+class TenantUserRepository:
+    def create(
+        self,
+        db: Session,
+        tenant_id: int,
+        user_id: int,
+        role: str,
+    ):
+        tenant_user = TenantUser(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            role=role,
+        )
+        db.add(tenant_user)
+        db.commit()
+        db.refresh(tenant_user)
+        return tenant_user

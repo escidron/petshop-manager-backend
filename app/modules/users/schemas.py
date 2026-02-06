@@ -5,6 +5,8 @@ class UserBase(BaseModel):
     email: EmailStr
     name: str
     is_active: bool = True
+    role: str = "owner"
+    password: str
 
 
 class UserCreate(UserBase):

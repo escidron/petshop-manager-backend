@@ -3,15 +3,16 @@ from sqlalchemy.orm import Session
 
 from app.modules.tenants.schemas import TenantCreate, TenantUpdate
 
-from .repository import TenantRepository, TenantTypeRepository
+from .repository import TenantRepository, TenantTypeRepository, TenantUserRepository
 
 
 class TenantService:
     def __init__(self):
         self.repository = TenantRepository()
         self.type_repository = TenantTypeRepository()
+        self.tenant_users_repository = TenantUserRepository()
 
-    def create_tenant(self, db: Session, data: TenantCreate):
+    def create_tenant(self, db: Session, data: TenantCreate, user_id: int):
         tenant_type = self.type_repository.get_by_id(
             db, data.type_id
         )
@@ -20,8 +21,14 @@ class TenantService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid tenant type",
             )
-
-        return self.repository.create(db, data)
+        tenant = self.repository.create(db, data)
+        self.tenant_users_repository.create(
+            db,
+            tenant_id=tenant.id,
+            user_id=user_id,
+            role="owner",
+        )
+        return tenant
 
     def get_tenant(self, db: Session, tenant_id: int):
         tenant = self.repository.get_by_id(db, tenant_id)

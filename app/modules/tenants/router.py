@@ -14,11 +14,12 @@ router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
 @router.post("/", response_model=TenantResponse)
 def create_tenant(
+    user_id: int, ##remove when impelemtn jwt
     data: TenantCreate,
     db: Session = Depends(get_db),
 ):
     service = TenantService()
-    return service.create_tenant(db, data)
+    return service.create_tenant(db, data, user_id)
 
 
 @router.get("/", response_model=list[TenantResponse])

@@ -4,8 +4,9 @@ from typing import Optional
 
 class TenantBase(BaseModel):
     name: str
-    type_id: int
+    type_id: int = 1
     is_active: bool = True
+    phone:str
 
 
 class TenantCreate(TenantBase):
