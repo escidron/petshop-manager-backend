@@ -32,19 +32,37 @@ def get_current_tenant(
     db: Session = Depends(get_db),
 ) -> TenantUser:
     token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
     payload = decode_token(token)
+
+    try:
+        user_id = int(payload["user_id"])
+        tenant_id = int(payload["tenant_id"])
+    except (KeyError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
 
     tenant_user = (
         db.query(TenantUser)
         .filter(
-            TenantUser.user_id == payload["user_id"],
-            TenantUser.tenant_id == payload["tenant_id"],
+            TenantUser.user_id == user_id,
+            TenantUser.tenant_id == tenant_id,
         )
         .first()
     )
 
     if not tenant_user:
-        raise HTTPException(status_code=403)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not linked to tenant",
+        )
 
     request.state.tenant_user = tenant_user
     return tenant_user
