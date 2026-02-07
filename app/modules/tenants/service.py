@@ -5,7 +5,7 @@ from app.modules.auth.token import create_access_token
 from app.modules.tenants.schemas import TenantCreate, TenantUpdate
 
 from .repository import TenantRepository, TenantTypeRepository, TenantUserRepository
-
+from app.modules.tenant_services.service import ServiceService
 
 class TenantService:
     def __init__(self):
@@ -36,7 +36,9 @@ class TenantService:
             "role": "owner",
         }
         access_token = create_access_token(token_data)
-
+        #create default services
+        service_service = ServiceService()
+        service_service.create_default_services(db, tenant.id)
         # 5️⃣ Retorna tenant + token
         return {
             "tenant": tenant,
