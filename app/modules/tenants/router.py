@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
+from app.modules.auth.dependencies import get_current_tenant
 from .schemas import (
     TenantCreate,
     TenantUpdate,
@@ -14,12 +15,24 @@ router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
 @router.post("/", response_model=TenantResponse)
 def create_tenant(
-    user_id: int, ##remove when impelemtn jwt
+    user_id: int,
     data: TenantCreate,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     service = TenantService()
-    return service.create_tenant(db, data, user_id)
+    result = service.create_tenant(db, data, user_id)
+
+    response.set_cookie(
+        key="access_token",
+        value=result["access_token"],
+        httponly=True,
+        secure=False,  # True em prod
+        samesite="lax",
+        path="/",
+    )
+
+    return result["tenant"]
 
 
 @router.get("/", response_model=list[TenantResponse])

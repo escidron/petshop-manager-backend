@@ -1,8 +1,9 @@
 from datetime import date
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
+from app.modules.auth.dependencies import get_current_tenant
 from .schemas import (
     AppointmentActionRequest,
     AppointmentCreate,
@@ -14,25 +15,28 @@ from .service import AppointmentService
 router = APIRouter(
     prefix="/appointments",
     tags=["Appointments"],
+    dependencies=[Depends(get_current_tenant)],
+
 )
 
 
 @router.post("/", response_model=AppointmentResponse)
 def create_appointment(
-    tenant_id: int,
     data: AppointmentCreate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().create(db, tenant_id, data)
 
 
 @router.get("/{appointment_id}", response_model=AppointmentResponse)
 def get_appointment(
-    tenant_id: int,
     appointment_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-
+    tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().get(
         db, tenant_id, appointment_id
     )
@@ -43,10 +47,11 @@ def get_appointment(
     response_model=list[AppointmentResponse],
 )
 def list_appointments_by_day(
-    tenant_id: int,
     day: date,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().list_by_day(
         db, tenant_id, day
     )
@@ -57,11 +62,11 @@ def list_appointments_by_day(
     response_model=list[AppointmentResponse],
 )
 def list_appointments_by_client(
-    tenant_id: int,
     client_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-
+    tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().list_by_client(
         db, tenant_id, client_id
     )
@@ -69,12 +74,12 @@ def list_appointments_by_client(
 
 @router.patch("/{appointment_id}", response_model=AppointmentResponse)
 def update_appointment(
-    tenant_id: int,
     appointment_id: int,
     data: AppointmentUpdate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-
+    tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().update(
         db, tenant_id, appointment_id, data
     )
@@ -82,10 +87,11 @@ def update_appointment(
 
 @router.delete("/{appointment_id}", status_code=204)
 def delete_appointment(
-    tenant_id: int,
     appointment_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    tenant_id = request.state.tenant_user.tenant_id
     AppointmentService().delete(
         db, tenant_id, appointment_id
     )
@@ -95,11 +101,12 @@ def delete_appointment(
     response_model=AppointmentResponse,
 )
 def appointment_action(
-    tenant_id: int,
     appointment_id: int,
     data: AppointmentActionRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().apply_action(
         db=db,
         tenant_id=tenant_id,

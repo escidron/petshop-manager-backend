@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
+from app.modules.auth.dependencies import get_current_tenant
 from .schemas import (
     ClientCreate,
     ClientUpdate,
@@ -9,16 +10,17 @@ from .schemas import (
 )
 from .service import ClientService
 
-router = APIRouter(prefix="/clients", tags=["Clients"])
+router = APIRouter(prefix="/clients", tags=["Clients"],dependencies=[Depends(get_current_tenant)])
 
 
 @router.post("/",response_model=ClientResponse)
 def create_client(
-    tenant_id: int,
     data: ClientCreate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = ClientService()
+    tenant_id = request.state.tenant_user.tenant_id
     return service.create_client(db, tenant_id, data)
 
 
@@ -27,10 +29,11 @@ def create_client(
     response_model=list[ClientResponse],
 )
 def list_clients(
-    tenant_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = ClientService()
+    tenant_id = request.state.tenant_user.tenant_id
     return service.list_clients(db, tenant_id)
 
 
@@ -39,11 +42,12 @@ def list_clients(
     response_model=ClientResponse,
 )
 def get_client(
-    tenant_id: int,
     client_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = ClientService()
+    tenant_id = request.state.tenant_user.tenant_id
     return service.get_client(db, tenant_id, client_id)
 
 
@@ -52,12 +56,13 @@ def get_client(
     response_model=ClientResponse,
 )
 def update_client(
-    tenant_id: int,
     client_id: int,
     data: ClientUpdate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = ClientService()
+    tenant_id = request.state.tenant_user.tenant_id
     return service.update_client(
         db, tenant_id, client_id, data
     )
@@ -68,9 +73,10 @@ def update_client(
     status_code=204,
 )
 def delete_client(
-    tenant_id: int,
     client_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = ClientService()
+    tenant_id = request.state.tenant_user.tenant_id
     service.delete_client(db, tenant_id, client_id)

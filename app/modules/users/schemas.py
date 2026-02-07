@@ -1,20 +1,19 @@
 from pydantic import BaseModel, EmailStr
 
-
+# ----------------- Base -----------------
 class UserBase(BaseModel):
     email: EmailStr
     name: str
     is_active: bool = True
     role: str = "owner"
-    password: str
 
-
+# ----------------- Criação -----------------
 class UserCreate(UserBase):
-    pass
+    password: str  # necessário só na criação
 
-
+# ----------------- Resposta -----------------
 class UserResponse(UserBase):
     id: int
 
     class Config:
-        from_attributes = True
+        from_attributes = True  # Pydantic v2: popula a partir de atributos de ORM

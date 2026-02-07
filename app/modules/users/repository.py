@@ -3,9 +3,8 @@ from app.modules.users.models import User
 from app.modules.users.schemas import UserCreate
 
 class UserRepository:
-    def create(self, db: Session, data: UserCreate,
-    ) -> User:
-        user = User(**data.model_dump())
+    def create(self, db: Session, data: UserCreate) -> User:
+        user = User(**data)
         db.add(user)
         db.commit()
         db.refresh(user)
