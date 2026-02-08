@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
+from app.config.settings import settings
 from app.config.database import get_db
-from app.modules.auth.dependencies import get_current_tenant
+
 from .schemas import (
     TenantCreate,
     TenantUpdate,
@@ -24,7 +25,7 @@ def create_tenant(
     result = service.create_tenant(db, data, user_id)
 
     response.set_cookie(
-        key="access_token",
+        key=settings.COOKIE_ACCESS_NAME,
         value=result["access_token"],
         httponly=True,
         secure=False,  # True em prod
@@ -32,6 +33,14 @@ def create_tenant(
         path="/",
     )
 
+    response.set_cookie(
+        key=settings.COOKIE_REFRESH_NAME,
+        value=result["refresh_token"],
+        httponly=True,
+        secure=False,  # True em prod
+        samesite="lax",
+        path="/",
+    )
     return result["tenant"]
 
 

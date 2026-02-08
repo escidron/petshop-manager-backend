@@ -5,8 +5,29 @@ from typing import Optional
 class ClientBase(BaseModel):
     name: str
     email: Optional[EmailStr] = None
-    phone: Optional[str] = None
     is_active: bool = True
+
+    phone: Optional[str] = None
+
+    phone_secondary_name: Optional[str] = None
+    phone_secondary: Optional[str] = None
+
+    phone_tertiary_name: Optional[str] = None
+    phone_tertiary: Optional[str] = None
+
+    # Endereço
+    cep: Optional[str] = None
+    street: Optional[str] = None
+    number: Optional[str] = None
+    complement: Optional[str] = None
+    neighborhood: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+
+    # Redes sociais
+    instagram: Optional[str] = None
+    facebook: Optional[str] = None
+    x: Optional[str] = None
 
 
 class ClientCreate(ClientBase):
@@ -16,8 +37,27 @@ class ClientCreate(ClientBase):
 class ClientUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
-    phone: Optional[str] = None
     is_active: Optional[bool] = None
+
+    phone: Optional[str] = None
+
+    phone_secondary_name: Optional[str] = None
+    phone_secondary: Optional[str] = None
+
+    phone_tertiary_name: Optional[str] = None
+    phone_tertiary: Optional[str] = None
+
+    cep: Optional[str] = None
+    street: Optional[str] = None
+    number: Optional[str] = None
+    complement: Optional[str] = None
+    neighborhood: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+
+    instagram: Optional[str] = None
+    facebook: Optional[str] = None
+    x: Optional[str] = None
 
 
 class ClientResponse(ClientBase):

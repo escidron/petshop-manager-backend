@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
@@ -30,7 +30,7 @@ def get_current_user(
 def get_current_tenant(
     request: Request,
     db: Session = Depends(get_db),
-) -> TenantUser:
+):
     token = request.cookies.get("access_token")
     if not token:
         raise HTTPException(
@@ -63,6 +63,10 @@ def get_current_tenant(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not linked to tenant",
         )
+
+    # Busca o nome do usuário
+    user = db.query(User).filter(User.id == tenant_user.user_id).first()
+    tenant_user.name = user.name if user else None
 
     request.state.tenant_user = tenant_user
     return tenant_user

@@ -7,7 +7,7 @@ from app.modules.auth.token import (
     create_access_token,
     create_refresh_token,
 )
-from app.modules.users.models import User
+from app.modules.users.models import TenantUser, User
 
 
 def authenticate_user(
@@ -23,16 +23,21 @@ def authenticate_user(
         .filter(User.email == email)
         .first()
     )
-
+    # handle user having multiple tenants
+    tenant: TenantUser | None = (
+        db.query(TenantUser)
+        .filter(TenantUser.user_id == user.id)
+        .first()
+    )
     if not user:
         return None
 
-    if not verify_password(password, user.password_hash):
+    if not verify_password(password, user.password):
         return None
 
     payload = {
         "user_id": str(user.id),
-        "tenant_id": str(user.tenant_id),
+        "tenant_id": str(tenant.tenant_id),
         "role": user.role,
     }
 
@@ -42,6 +47,7 @@ def authenticate_user(
         "user": {
             "id": str(user.id),
             "role": user.role,
-            "tenant_id": str(user.tenant_id),
+            "tenant_id": str(tenant.tenant_id),
+            "name": user.name,
         },
     }

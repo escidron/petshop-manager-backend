@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
-from jose import jwt, JWTError
+from jose import ExpiredSignatureError, jwt, JWTError
 from passlib.context import CryptContext
 
 from app.config.settings import settings
@@ -42,15 +42,14 @@ def create_refresh_token(data: Dict[str, Any]) -> str:
     )
 
 
-def decode_token(token: str):
+def decode_token(token: str) -> dict:
     try:
-        payload = jwt.decode(
+        return jwt.decode(
             token,
             settings.SECRET_KEY,
             algorithms=[ALGORITHM],
         )
-        print("DECODED PAYLOAD:", payload)
-        return payload
-    except JWTError as e:
-        print("JWT ERROR:", e)
+    except ExpiredSignatureError:
+        return {"expired": True}
+    except JWTError:
         return {}

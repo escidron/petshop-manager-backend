@@ -1,7 +1,7 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.modules.auth.token import create_access_token
+from app.modules.auth.token import create_access_token, create_refresh_token
 from app.modules.tenants.schemas import TenantCreate, TenantUpdate
 
 from .repository import TenantRepository, TenantTypeRepository, TenantUserRepository
@@ -36,13 +36,18 @@ class TenantService:
             "role": "owner",
         }
         access_token = create_access_token(token_data)
+        refresh_token = create_refresh_token(token_data)
+        
         #create default services
         service_service = ServiceService()
         service_service.create_default_services(db, tenant.id)
+        
         # 5️⃣ Retorna tenant + token
         return {
             "tenant": tenant,
             "access_token": access_token,
+            "refresh_token": refresh_token,
+
         }
 
     def get_tenant(self, db: Session, tenant_id: int):
