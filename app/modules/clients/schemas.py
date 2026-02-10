@@ -7,7 +7,11 @@ class ClientBase(BaseModel):
     email: Optional[EmailStr] = None
     is_active: bool = True
 
-    phone: Optional[str] = None
+    document_type: Optional[str] = None
+    document: Optional[str] = None
+    birth_date: Optional[str] = None
+    
+    phone: str
 
     phone_secondary_name: Optional[str] = None
     phone_secondary: Optional[str] = None
@@ -39,6 +43,9 @@ class ClientUpdate(BaseModel):
     email: Optional[EmailStr] = None
     is_active: Optional[bool] = None
 
+    document_type: Optional[str] = None
+    document: Optional[str] = None
+    birth_date: Optional[str] = None
     phone: Optional[str] = None
 
     phone_secondary_name: Optional[str] = None

@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     # Cookies
     COOKIE_ACCESS_NAME: str = "access_token"
     COOKIE_REFRESH_NAME: str = "refresh_token"
-
+    BASE_URL: str
+    
     class Config:
         env_file = ".env"
 
