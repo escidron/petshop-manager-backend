@@ -1,5 +1,5 @@
 from datetime import date
-from sqlalchemy import String, Boolean, ForeignKey
+from sqlalchemy import Date, String, Boolean, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config.database import Base
@@ -22,7 +22,7 @@ class Client(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     document_type: Mapped[str | None] = mapped_column(String(10))
     document: Mapped[str | None] = mapped_column(String(20))
-    birth_date: Mapped[date | None] = mapped_column(String(10))
+    birth_date: Mapped[date | None] = mapped_column(Date)
     # -------- Telefones --------
     phone: Mapped[str | None] = mapped_column(String(20), nullable=False)
 

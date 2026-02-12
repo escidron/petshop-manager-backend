@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.modules.clients.models import Client
 from app.modules.pets.models import Pet
@@ -35,41 +36,19 @@ class PetRepository:
             .first()
         )
 
-    def list_pets(
-        self, db: Session, tenant_id: int
-    ) -> list[dict]:
-        rows = (
-            db.query(
-                Pet.id.label("id"),
-                Pet.name.label("name"),
-                Pet.species.label("species"),
-                Pet.breed.label("breed"),
-                Pet.gender.label("gender"),
-                Pet.age.label("age"),
-                Pet.ageUnit.label("ageUnit"),
-                Pet.client_id.label("client_id"),
+    def list_pets(self, db: Session, tenant_id: int) -> list[dict]:
+
+        stmt = (
+            select(
+                *Pet.__table__.c,  # todas as colunas do Pet
                 Client.name.label("owner_name"),
             )
             .join(Client, Client.id == Pet.client_id)
-            .filter(Pet.tenant_id == tenant_id)
+            .where(Pet.tenant_id == tenant_id)
             .order_by(Pet.name)
-            .all()
         )
 
-        return [
-            {
-                "id": r.id,
-                "name": r.name,
-                "species": r.species,
-                "breed": r.breed,
-                "gender": r.gender,
-                "age": r.age,
-                "ageUnit": r.ageUnit,
-                "client_id": r.client_id,
-                "owner_name": r.owner_name,
-            }
-            for r in rows
-        ]
+        return db.execute(stmt).mappings().all()
     
     def list_by_client(
         self,

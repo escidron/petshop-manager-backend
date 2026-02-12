@@ -1,3 +1,4 @@
+from datetime import date
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
@@ -9,7 +10,8 @@ class ClientBase(BaseModel):
 
     document_type: Optional[str] = None
     document: Optional[str] = None
-    birth_date: Optional[str] = None
+    birth_date: Optional[date] = None
+
     
     phone: str
 
@@ -45,7 +47,7 @@ class ClientUpdate(BaseModel):
 
     document_type: Optional[str] = None
     document: Optional[str] = None
-    birth_date: Optional[str] = None
+    birth_date: Optional[date] = None
     phone: Optional[str] = None
 
     phone_secondary_name: Optional[str] = None
