@@ -4,7 +4,6 @@ from pydantic import BaseModel
 from app.modules.appointments.models import AppointmentAction, AppointmentStatus
 from app.modules.clients.schemas import ClientBase
 from app.modules.pets.schemas import PetBase
-from app.modules.tenant_services.schemas import ServiceBase
 
 
 class AppointmentCreate(BaseModel):
@@ -27,7 +26,7 @@ class AppointmentResponse(BaseModel):
     notes: str | None = None
     client: ClientBase
     pet: PetBase
-    services: list[ServiceBase]
+    services: list[int]
     status: AppointmentStatus
 
     class Config:

@@ -10,7 +10,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config.database import Base
-
+from app.enums import PetSize, PetSpecies
 
 class Service(Base):
     __tablename__ = "services"
@@ -24,23 +24,42 @@ class Service(Base):
     )
 
     name: Mapped[str] = mapped_column(
-        String(100), nullable=False
+        String(120),
+        nullable=False,
     )
 
     description: Mapped[str | None] = mapped_column(
-        String(255)
+        String(255),
+        nullable=True,
     )
 
-    duration_minutes: Mapped[int] = mapped_column(
-        Integer, nullable=False
+    species: Mapped[PetSpecies | None] = mapped_column(
+        nullable=True,
+    )
+
+    size: Mapped[PetSize | None] = mapped_column(
+        nullable=True,
+    )
+
+    coat_type: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
     )
 
     price_cents: Mapped[int] = mapped_column(
-        Integer, nullable=False
+        Integer,
+        nullable=False,
+    )
+
+    duration_minutes: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
     )
 
     is_active: Mapped[bool] = mapped_column(
-        Boolean, default=True
+        Boolean,
+        default=True,
+        nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(
