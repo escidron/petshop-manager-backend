@@ -1,8 +1,8 @@
 from datetime import date, datetime
-from sqlalchemy.orm import Session,joinedload
+from sqlalchemy.orm import Session,joinedload, selectinload
 from sqlalchemy import func
 
-from .models import Appointment
+from .models import Appointment, AppointmentItem
 from app.modules.tenant_services.models import Service
 
 
@@ -12,23 +12,38 @@ class AppointmentRepository:
         db: Session,
         tenant_id: int,
         client_id: int,
-        pet_id: int,
         scheduled_at: datetime,
-        services: list[Service],
         notes: str | None = None,
     ) -> Appointment:
+
         appointment = Appointment(
             tenant_id=tenant_id,
             client_id=client_id,
-            pet_id=pet_id,
             scheduled_at=scheduled_at,
-            services=services,
             notes=notes,
         )
+
         db.add(appointment)
-        db.commit()
-        db.refresh(appointment)
+        db.flush()  # importante para gerar ID antes dos items
+
         return appointment
+    
+    def create_item(
+        self,
+        db: Session,
+        appointment: Appointment,
+        pet_id: int,
+        services: list[Service],
+    ) -> AppointmentItem:
+
+        item = AppointmentItem(
+            appointment_id=appointment.id,
+            pet_id=pet_id,
+            services=services,
+        )
+
+        db.add(item)
+        return item
 
     def get_by_id(
         self,
@@ -52,12 +67,15 @@ class AppointmentRepository:
         tenant_id: int,
         day: date,
     ) -> list[Appointment]:
+
         return (
             db.query(Appointment)
             .options(
                 joinedload(Appointment.client),
-                joinedload(Appointment.pet),
-                joinedload(Appointment.services),
+                joinedload(Appointment.items)
+                    .joinedload(AppointmentItem.pet),
+                joinedload(Appointment.items)
+                    .joinedload(AppointmentItem.services),
             )
             .filter(
                 Appointment.tenant_id == tenant_id,
@@ -108,4 +126,25 @@ class AppointmentRepository:
         db.add(appointment)
         db.commit()
         db.refresh(appointment)
+        return appointment
+    
+    def get_with_relations(
+        self,
+        db: Session,
+        appointment_id: int,
+    ) -> Appointment:
+
+        appointment = (
+            db.query(Appointment)
+            .options(
+                selectinload(Appointment.client),
+                selectinload(Appointment.items)
+                .selectinload(AppointmentItem.pet),
+                selectinload(Appointment.items)
+                .selectinload(AppointmentItem.services),
+            )
+            .filter(Appointment.id == appointment_id)
+            .first()
+        )
+
         return appointment

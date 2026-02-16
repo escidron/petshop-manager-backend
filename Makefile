@@ -21,7 +21,7 @@ format:
 	poetry run ruff format .
 
 revision:
-	poetry run alembic revision --autogenerate -m "$(MSG)"
+	poetry run alembic revision --autogenerate -m "$(msg)"
 
 upgrade:
 	poetry run alembic upgrade head

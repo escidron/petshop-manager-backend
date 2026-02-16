@@ -21,12 +21,12 @@ from sqlalchemy import (
     Column,
 )
 
-appointment_services = Table(
-    "appointment_services",
+appointment_item_services = Table(
+    "appointment_item_services",
     Base.metadata,
     Column(
-        "appointment_id",
-        ForeignKey("appointments.id", ondelete="CASCADE"),
+        "appointment_item_id",
+        ForeignKey("appointment_items.id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column(
@@ -66,25 +66,12 @@ class Appointment(Base):
         ForeignKey("clients.id"),
         nullable=False,
     )
-
-    pet_id: Mapped[int] = mapped_column(
-        ForeignKey("pets.id"),
-        nullable=False,
-    )
+    client = relationship("Client")
 
     scheduled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         index=True,
-    )
-
-    client = relationship("Client", lazy="joined")
-    pet = relationship("Pet", lazy="joined")
-
-    services = relationship(
-        "Service",
-        secondary=appointment_services,
-        lazy="joined",
     )
 
     status: Mapped[AppointmentStatus] = mapped_column(
@@ -96,9 +83,40 @@ class Appointment(Base):
         default=AppointmentStatus.PENDING,
         index=True,
     )
+
     notes: Mapped[str | None] = mapped_column(String(255))
-    
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+    )
+
+    items = relationship(
+        "AppointmentItem",
+        back_populates="appointment",
+        cascade="all, delete-orphan",
+    )
+    
+
+class AppointmentItem(Base):
+    __tablename__ = "appointment_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    appointment_id: Mapped[int] = mapped_column(
+        ForeignKey("appointments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    pet_id: Mapped[int] = mapped_column(
+        ForeignKey("pets.id"),
+        nullable=False,
+    )
+
+    appointment = relationship("Appointment", back_populates="items")
+    pet = relationship("Pet")
+
+    services = relationship(
+        "Service",
+        secondary="appointment_item_services",
     )

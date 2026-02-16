@@ -37,18 +37,55 @@ class AppointmentService:
         tenant_id: int,
         data: AppointmentCreate,
     ):
-        self._validate_client_and_pet(db, tenant_id, data.client_id, data.pet_id)
-        services = self._get_services(db, tenant_id, data.service_ids)
-
-        return self.repo.create(
-            db,
-            tenant_id,
-            data.client_id,
-            data.pet_id,
-            data.scheduled_at,
-            services,
-            data.notes,
+        print('dataaa', data)
+        # 1️⃣ Validar cliente primeiro (uma única vez)
+        client = (
+            db.query(Client)
+            .filter(
+                Client.id == data.client_id,
+                Client.tenant_id == tenant_id,
+            )
+            .first()
         )
+        if not client:
+            raise HTTPException(404, "Client not found")
+
+        # 2️⃣ Criar appointment root
+        appointment = self.repo.create(
+            db=db,
+            tenant_id=tenant_id,
+            client_id=data.client_id,
+            scheduled_at=data.scheduled_at,
+            notes=data.notes,
+        )
+
+        # 3️⃣ Para cada pet no payload
+        for item in data.items:
+
+            # Aqui reaproveitamos sua validação
+            self._validate_pet(
+                db,
+                tenant_id,
+                data.client_id,
+                item.pet_id,
+            )
+
+            services = self._get_services(
+                db,
+                tenant_id,
+                item.service_ids,
+            )
+
+            self.repo.create_item(
+                db=db,
+                appointment=appointment,
+                pet_id=item.pet_id,
+                services=services,
+            )
+
+        db.commit()
+
+        return self.repo.get_with_relations(db, appointment.id)
 
     # ---------- GET ----------
     def get(
@@ -112,24 +149,13 @@ class AppointmentService:
         self.repo.delete(db, appointment)
 
     # ---------- helpers ----------
-    def _validate_client_and_pet(
+    def _validate_pet(
         self,
         db: Session,
         tenant_id: int,
         client_id: int,
         pet_id: int,
     ):
-        client = (
-            db.query(Client)
-            .filter(
-                Client.id == client_id,
-                Client.tenant_id == tenant_id,
-            )
-            .first()
-        )
-        if not client:
-            raise HTTPException(404, "Client not found")
-
         pet = (
             db.query(Pet)
             .filter(
@@ -141,7 +167,7 @@ class AppointmentService:
         )
         if not pet:
             raise HTTPException(404, "Pet not found")
-
+        
     def _get_services(
         self,
         db: Session,
