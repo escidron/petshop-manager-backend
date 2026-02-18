@@ -125,19 +125,45 @@ class AppointmentService:
     ):
         appointment = self.get(db, tenant_id, appointment_id)
 
-        services = None
-        if data.service_ids is not None:
-            services = self._get_services(
-                db, tenant_id, data.service_ids
-            )
+        # 🔹 Atualizar campos simples
+        if data.scheduled_at is not None:
+            appointment.scheduled_at = data.scheduled_at
 
-        return self.repo.update(
-            db,
-            appointment,
-            scheduled_at=data.scheduled_at,
-            services=services,
-        )
+        if data.notes is not None:
+            appointment.notes = data.notes
 
+        # 🔹 Se vier items → reconstruir
+        if data.items is not None:
+
+            # Remove todos os items antigos
+            self.repo.delete_items(db, appointment)
+
+            # Recria baseado no payload
+            for item in data.items:
+
+                self._validate_pet(
+                    db,
+                    tenant_id,
+                    appointment.client_id,
+                    item.pet_id,
+                )
+
+                services = self._get_services(
+                    db,
+                    tenant_id,
+                    item.service_ids,
+                )
+
+                self.repo.create_item(
+                    db=db,
+                    appointment=appointment,
+                    pet_id=item.pet_id,
+                    services=services,
+                )
+
+        db.commit()
+
+        return self.repo.get_with_relations(db, appointment.id)
     # ---------- DELETE ----------
     def delete(
         self,

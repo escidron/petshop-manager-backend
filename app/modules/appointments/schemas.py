@@ -6,9 +6,9 @@ from app.modules.appointments.models import (
     AppointmentAction,
     AppointmentStatus,
 )
-from app.modules.clients.schemas import ClientBase
-from app.modules.pets.schemas import PetBase
-from app.modules.tenant_services.schemas import ServiceBase
+from app.modules.clients.schemas import ClientResponse
+from app.modules.pets.schemas import  PetResponse
+from app.modules.tenant_services.schemas import ServiceResponse
 
 class AppointmentItemCreate(BaseModel):
     pet_id: int
@@ -20,8 +20,8 @@ class AppointmentItemCreate(BaseModel):
 
 class AppointmentItemResponse(BaseModel):
     id: int
-    pet: PetBase
-    services: List[ServiceBase]
+    pet: PetResponse
+    services: List[ServiceResponse]
 
     class Config:
         from_attributes = True
@@ -50,7 +50,7 @@ class AppointmentResponse(BaseModel):
     notes: str | None = None
     status: AppointmentStatus
 
-    client: ClientBase
+    client: ClientResponse
     items: List[AppointmentItemResponse]
 
     created_at: datetime

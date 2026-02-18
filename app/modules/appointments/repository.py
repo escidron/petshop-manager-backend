@@ -106,22 +106,34 @@ class AppointmentRepository:
         db: Session,
         appointment: Appointment,
         scheduled_at: datetime | None = None,
-        services: list[Service] | None = None,
+        notes: str | None = None,
     ) -> Appointment:
-        if scheduled_at:
+
+        if scheduled_at is not None:
             appointment.scheduled_at = scheduled_at
 
-        if services is not None:
-            appointment.services = services
+        if notes is not None:
+            appointment.notes = notes
 
-        db.commit()
-        db.refresh(appointment)
+        db.add(appointment)
+        db.flush()
+
         return appointment
 
     def delete(self, db: Session, appointment: Appointment):
         db.delete(appointment)
         db.commit()
 
+    def delete_items(
+        self,
+        db: Session,
+        appointment: Appointment,
+    ):
+        for item in appointment.items:
+            db.delete(item)
+
+        db.flush()
+        
     def save_action(self, db: Session, appointment: Appointment) -> Appointment:
         db.add(appointment)
         db.commit()

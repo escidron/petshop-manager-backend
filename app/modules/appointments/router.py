@@ -1,5 +1,7 @@
 from datetime import date
+import json
 from fastapi import APIRouter, Depends, Request
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
@@ -52,9 +54,11 @@ def list_appointments_by_day(
     db: Session = Depends(get_db),
 ):
     tenant_id = request.state.tenant_user.tenant_id
-    return AppointmentService().list_by_day(
-        db, tenant_id, day
-    )
+    appointments = AppointmentService().list_by_day(db, tenant_id, day)
+    encoded = jsonable_encoder(appointments)
+
+    print(json.dumps(encoded, indent=2, ensure_ascii=False))
+    return appointments
 
 
 @router.get(

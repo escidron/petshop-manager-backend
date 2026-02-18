@@ -39,7 +39,6 @@ class ClientBase(BaseModel):
 class ClientCreate(ClientBase):
     pass
 
-
 class ClientUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -67,7 +66,6 @@ class ClientUpdate(BaseModel):
     instagram: Optional[str] = None
     facebook: Optional[str] = None
     x: Optional[str] = None
-
 
 class ClientResponse(ClientBase):
     id: int
