@@ -27,7 +27,11 @@ class Tenant(Base):
         ForeignKey("tenant_types.id"),
         nullable=False,
     )
-
+    onboarding_step: Mapped[str] = mapped_column(
+        String(50),
+        default="services",
+        nullable=False,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

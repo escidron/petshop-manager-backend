@@ -20,6 +20,9 @@ lint:
 format:
 	poetry run ruff format .
 
+seed:
+	poetry run python -m app.run_seeds
+
 revision:
 	poetry run alembic revision --autogenerate -m "$(msg)"
 

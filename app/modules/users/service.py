@@ -10,7 +10,6 @@ class UserService:
         self.repository = UserRepository()
     
     def create(self, db: Session, data: UserCreate):
-        print(data)
         user_data = data.model_dump()  # Pydantic v2
         user_data["password"] = hash_password(user_data["password"])
         return self.repository.create(db, user_data)

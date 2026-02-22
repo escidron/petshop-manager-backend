@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from app.config.settings import settings
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant
-from app.modules.auth.schemas import LoginInput
-from app.modules.auth.service import authenticate_user
+from app.modules.auth.schemas import AuthResponse, LoginInput, MeResponse, SignupRequest
+from app.modules.auth.service import AuthService, authenticate_user
 from app.modules.auth.token import create_access_token, decode_token
 
 router = APIRouter(
@@ -13,6 +13,40 @@ router = APIRouter(
     tags=["Auth"],
 )
 
+@router.post("/signup", response_model=AuthResponse)
+def signup(
+    payload: SignupRequest,
+    response: Response,  # 👈 adicionar
+    db: Session = Depends(get_db),
+):
+    auth_service = AuthService()
+
+    result = auth_service.signup(
+        db=db,
+        user_data=payload.user,
+        tenant_data=payload.tenant,
+    )
+
+    # 🍪 Setar cookies aqui
+    response.set_cookie(
+        key=settings.COOKIE_ACCESS_NAME,
+        value=result["access_token"],
+        httponly=True,
+        secure=False,  # True em prod
+        samesite="lax",
+        path="/",
+    )
+
+    response.set_cookie(
+        key=settings.COOKIE_REFRESH_NAME,
+        value=result["refresh_token"],
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        path="/",
+    )
+
+    return result
 
 @router.post("/login")
 def login(
@@ -108,6 +142,6 @@ def logout(response: Response):
     )
     return {"ok": True}
 
-@router.get("/me")
-def me(current_user: dict = Depends(get_current_tenant)):
-    return {"user": current_user}
+@router.get("/me", response_model=MeResponse)
+def me(current_data: dict = Depends(get_current_tenant)):
+    return current_data

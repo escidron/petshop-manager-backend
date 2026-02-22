@@ -1,0 +1,37 @@
+from sqlalchemy.orm import Session
+
+from app.modules.plans.models import Plan
+
+
+def seed_plans(db: Session):
+    plans = [
+        {
+            "name": "Teste Gratis",
+            "code": "FREE_TRIAL",
+            "price_cents": 0,
+            "currency": "BRL",
+            "billing_cycle": "monthly",
+            "trial_days": 14,
+            "is_active": True,
+        },
+        {
+            "name": "Plano Mensal",
+            "code": "MONTHLY",
+            "price_cents": 9990,  # 99.90 em centavos
+            "currency": "BRL",
+            "billing_cycle": "monthly",
+            "trial_days": 0,
+            "is_active": True,
+        },
+    ]
+
+    for plan_data in plans:
+        existing = db.query(Plan).filter(
+            Plan.code == plan_data["code"]
+        ).first()
+
+        if not existing:
+            plan = Plan(**plan_data)
+            db.add(plan)
+
+    db.commit()

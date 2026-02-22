@@ -8,6 +8,7 @@ from app.modules.tenant_services.router import router as tenant_services_router
 from app.modules.appointments.router import router as appointments_router
 from app.modules.auth.router import router as auth_router
 from app.modules.address.router import router as address_router
+from app.modules.onboarding.router import router as onboarding_router
 
 api_router = APIRouter()
 
@@ -20,3 +21,4 @@ api_router.include_router(tenant_services_router)
 api_router.include_router(appointments_router)
 api_router.include_router(auth_router)
 api_router.include_router(address_router)
+api_router.include_router(onboarding_router)

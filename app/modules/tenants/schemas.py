@@ -7,7 +7,8 @@ class TenantBase(BaseModel):
     type_id: int = 1
     is_active: bool = True
     phone:str
-
+    plan_code: str
+    onboarding_step: str = "services"
 
 class TenantCreate(TenantBase):
     pass
@@ -31,7 +32,7 @@ class TenantResponse(BaseModel):
     id: int
     name: str
     is_active: bool
-
+    onboarding_step: str
     type: TenantTypeResponse
 
     class Config:

@@ -6,10 +6,12 @@ from app.modules.users.models import TenantUser
 
 class TenantRepository:
     def create(self, db: Session, data: TenantCreate) -> Tenant:
-        tenant = Tenant(**data.model_dump())
+        tenant_data = data.model_dump(exclude={"plan_code"})
+        tenant = Tenant(**tenant_data)
+
         db.add(tenant)
-        db.commit()
-        db.refresh(tenant)
+        db.flush()
+
         return tenant
 
     def get_by_id(self, db: Session, tenant_id: int) -> Tenant | None:

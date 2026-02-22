@@ -1,55 +1,82 @@
+from datetime import datetime, timedelta
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.modules.auth.token import create_access_token, create_refresh_token
+from app.modules.plans.repository import PlanRepository
+from app.modules.subscriptions.repository import SubscriptionRepository
 from app.modules.tenants.schemas import TenantCreate, TenantUpdate
 
 from .repository import TenantRepository, TenantTypeRepository, TenantUserRepository
-from app.modules.tenant_services.service import ServiceService
 
 class TenantService:
     def __init__(self):
         self.repository = TenantRepository()
         self.type_repository = TenantTypeRepository()
         self.tenant_users_repository = TenantUserRepository()
+        self.plan_repository = PlanRepository()
+        self.subscription_repository = SubscriptionRepository()
 
-    def create_tenant(self, db: Session, data: TenantCreate, user_id: int):
-        tenant_type = self.type_repository.get_by_id(
-            db, data.type_id
-        )
+    def create_tenant(
+        self,
+        db: Session,
+        data: TenantCreate,
+        user_id: int,
+    ):
+        # 1️⃣ Validar Tenant Type
+        tenant_type = self.type_repository.get_by_id(db, data.type_id)
         if not tenant_type:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=400,
                 detail="Invalid tenant type",
             )
+
+        # 2️⃣ Criar Tenant
         tenant = self.repository.create(db, data)
+
+        # 3️⃣ Criar vínculo owner
         self.tenant_users_repository.create(
-            db,
+            db=db,
             tenant_id=tenant.id,
             user_id=user_id,
             role="owner",
         )
-        
-        token_data = {
-            "user_id": str(user_id),
-            "tenant_id": str(tenant.id),
-            "role": "owner",
-        }
-        access_token = create_access_token(token_data)
-        refresh_token = create_refresh_token(token_data)
-        
-        #create default services
-        service_service = ServiceService()
-        service_service.create_default_services(db, tenant.id)
-        
-        # 5️⃣ Retorna tenant + token
-        return {
-            "tenant": tenant,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
 
-        }
+        # 4️⃣ Buscar Plan
+        plan = self.plan_repository.get_by_code(db, data.plan_code)
+        if not plan:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid plan",
+            )
 
+        now = datetime.now()
+
+        # 5️⃣ Criar Subscription
+        if plan.trial_days > 0:
+            trial_end = now + timedelta(days=plan.trial_days)
+
+            self.subscription_repository.create(
+                db=db,
+                tenant_id=tenant.id,
+                plan_id=plan.id,
+                status="trialing",
+                trial_ends_at=trial_end,
+                current_period_end=trial_end,
+            )
+        else:
+            period_end = now + timedelta(days=30)
+
+            self.subscription_repository.create(
+                db=db,
+                tenant_id=tenant.id,
+                plan_id=plan.id,
+                status="active",
+                current_period_end=period_end,
+            )
+
+        return tenant
+    
     def get_tenant(self, db: Session, tenant_id: int):
         tenant = self.repository.get_by_id(db, tenant_id)
         if not tenant:

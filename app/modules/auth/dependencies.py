@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.config.database import get_db
 from app.modules.auth.token import decode_token
+from app.modules.tenants.models import Tenant
 from app.modules.users.models import TenantUser, User
 
 
@@ -64,9 +65,17 @@ def get_current_tenant(
             detail="User not linked to tenant",
         )
 
-    # Busca o nome do usuário
-    user = db.query(User).filter(User.id == tenant_user.user_id).first()
-    tenant_user.name = user.name if user else None
+    user = db.query(User).filter(User.id == user_id).first()
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
 
+    if not user or not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User or tenant not found",
+        )
     request.state.tenant_user = tenant_user
-    return tenant_user
+
+    return {
+        "user": user,
+        "tenant": tenant,
+    }

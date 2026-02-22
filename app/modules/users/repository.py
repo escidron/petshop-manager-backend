@@ -1,13 +1,11 @@
 from sqlalchemy.orm import Session
 from app.modules.users.models import User
-from app.modules.users.schemas import UserCreate
 
 class UserRepository:
-    def create(self, db: Session, data: UserCreate) -> User:
+    def create(self, db: Session, data: dict) -> User:
         user = User(**data)
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        db.flush()  # apenas gera ID
         return user
     
     def get_user(self, db: Session, user_id: int):
