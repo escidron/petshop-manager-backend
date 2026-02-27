@@ -16,7 +16,7 @@ class AddressService:
             return None
 
         async with httpx.AsyncClient(timeout=5) as client:
-            response = await client.get(f"{settings.BASE_URL}/{cep}/json/")
+            response = await client.get(f"{settings.CEP_BASE_URL}/{cep}/json/")
             data = response.json()
 
         if data.get("erro"):

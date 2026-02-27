@@ -75,6 +75,19 @@ def list_appointments_by_client(
         db, tenant_id, client_id
     )
 
+@router.get(
+    "/",
+    response_model=list[AppointmentResponse],
+)
+def list_appointments_by_tenant(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return AppointmentService().list_by_tenant(
+        db, tenant_id
+    )
+
 
 @router.patch("/{appointment_id}", response_model=AppointmentResponse)
 def update_appointment(

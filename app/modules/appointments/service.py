@@ -114,6 +114,13 @@ class AppointmentService:
         client_id: int,
     ):
         return self.repo.list_by_client(db, tenant_id, client_id)
+    
+    def list_by_tenant(
+        self,
+        db: Session,
+        tenant_id: int,
+    ):
+        return self.repo.list_by_tenant(db, tenant_id)
 
     # ---------- UPDATE ----------
     def update(

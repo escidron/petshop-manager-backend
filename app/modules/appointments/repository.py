@@ -100,6 +100,20 @@ class AppointmentRepository:
             .order_by(Appointment.scheduled_at.desc())
             .all()
         )
+    
+    def list_by_tenant(
+        self,
+        db: Session,
+        tenant_id: int,
+    ) -> list[Appointment]:
+        return (
+            db.query(Appointment)
+            .filter(
+                Appointment.tenant_id == tenant_id,
+            )
+            .order_by(Appointment.scheduled_at.desc())
+            .all()
+        )
 
     def update(
         self,
