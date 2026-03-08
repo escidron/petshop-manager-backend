@@ -1,6 +1,6 @@
 from datetime import date
 from sqlalchemy import Date, String, Boolean, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config.database import Base
 
@@ -14,6 +14,20 @@ class Client(Base):
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+
+    # 🔗 Relacionamentos (cascade para deletar pets/appointments junto com o cliente)
+    pets = relationship(
+        "Pet",
+        back_populates="client",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    appointments = relationship(
+        "Appointment",
+        back_populates="client",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     # -------- Dados básicos --------

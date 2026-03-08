@@ -89,7 +89,7 @@ class Pet(Base):
     )
 
     # 🔗 Relacionamentos
-    client = relationship("Client", backref="pets")
+    client = relationship("Client", back_populates="pets")
 
     # 🧠 Helpers
     @property

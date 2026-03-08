@@ -63,10 +63,10 @@ class Appointment(Base):
     )
 
     client_id: Mapped[int] = mapped_column(
-        ForeignKey("clients.id"),
+        ForeignKey("clients.id", ondelete="CASCADE"),
         nullable=False,
     )
-    client = relationship("Client")
+    client = relationship("Client", back_populates="appointments")
 
     scheduled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -109,7 +109,7 @@ class AppointmentItem(Base):
     )
 
     pet_id: Mapped[int] = mapped_column(
-        ForeignKey("pets.id"),
+        ForeignKey("pets.id", ondelete="CASCADE"),
         nullable=False,
     )
 
