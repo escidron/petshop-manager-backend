@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime
+from app.modules.subscriptions.schemas import SubscriptionResponse
 
 
 class TenantBase(BaseModel):
@@ -33,7 +35,9 @@ class TenantResponse(BaseModel):
     name: str
     is_active: bool
     onboarding_step: str
+    created_at: datetime
     type: TenantTypeResponse
+    subscription: Optional[SubscriptionResponse] = None
 
     class Config:
         from_attributes = True

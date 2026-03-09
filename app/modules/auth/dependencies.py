@@ -5,6 +5,7 @@ from app.config.database import get_db
 from app.modules.auth.token import decode_token
 from app.modules.tenants.models import Tenant
 from app.modules.users.models import TenantUser, User
+from app.modules.subscriptions.repository import SubscriptionRepository
 
 
 def get_current_user(
@@ -73,6 +74,11 @@ def get_current_tenant(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User or tenant not found",
         )
+    
+    subscription_repo = SubscriptionRepository()
+    subscription = subscription_repo.get_active_by_tenant(db, tenant_id)
+    tenant.subscription = subscription
+
     request.state.tenant_user = tenant_user
 
     return {

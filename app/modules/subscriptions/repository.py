@@ -27,3 +27,11 @@ class SubscriptionRepository:
         db.flush()
 
         return subscription
+
+    def get_active_by_tenant(self, db: Session, tenant_id: int) -> Subscription | None:
+        return (
+            db.query(Subscription)
+            .filter(Subscription.tenant_id == tenant_id)
+            .order_by(Subscription.started_at.desc())
+            .first()
+        )
