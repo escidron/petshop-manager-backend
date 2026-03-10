@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant
 from .schemas import ProductCreate, ProductUpdate, ProductResponse
+from .inventory_schemas import InventoryLogResponse, StockAdjustmentRequest
 from .service import ProductService
 
 router = APIRouter(prefix="/products", tags=["Produtos"], dependencies=[Depends(get_current_tenant)])
@@ -41,3 +42,30 @@ def delete_product(product_id: int, request: Request, db: Session = Depends(get_
     service = ProductService()
     tenant_id = request.state.tenant_user.tenant_id
     service.delete_product(db, tenant_id, product_id)
+
+@router.get("/{product_id}/inventory", response_model=list[InventoryLogResponse])
+def list_inventory_logs(product_id: int, request: Request, db: Session = Depends(get_db)):
+    service = ProductService()
+    tenant_id = request.state.tenant_user.tenant_id
+    # We need to add a method to service to list logs
+    return service.inventory_repository.list_logs(db, tenant_id, product_id)
+
+@router.post("/{product_id}/adjust-stock", response_model=ProductResponse)
+def adjust_stock(product_id: int, data: StockAdjustmentRequest, request: Request, db: Session = Depends(get_db)):
+    service = ProductService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.adjust_stock(
+        db, 
+        tenant_id, 
+        product_id, 
+        data.quantity_change, 
+        data.change_type, 
+        data.notes
+    )
+    
+@router.get("/inventory/low-stock", response_model=list[ProductResponse])
+def list_low_stock_products(request: Request, db: Session = Depends(get_db)):
+    service = ProductService()
+    tenant_id = request.state.tenant_user.tenant_id
+    all_products = service.list_products(db, tenant_id)
+    return [p for p in all_products if p.quantity <= p.min_stock]
