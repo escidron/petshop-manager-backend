@@ -18,6 +18,7 @@ class TenantCreate(TenantBase):
 
 class TenantUpdate(BaseModel):
     name: Optional[str] = None
+    phone: Optional[str] = None
     type_id: Optional[int] = None
     is_active: Optional[bool] = None
 
@@ -33,6 +34,7 @@ class TenantTypeResponse(BaseModel):
 class TenantResponse(BaseModel):
     id: int
     name: str
+    phone: str
     is_active: bool
     onboarding_step: str
     created_at: datetime
