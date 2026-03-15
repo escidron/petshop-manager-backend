@@ -1,4 +1,4 @@
-.PHONY: run install shell test lint format migrate revision upgrade downgrade
+.PHONY: run install shell test lint format migrate revision upgrade downgrade reset-db
 
 APP=app.main:app
 
@@ -31,3 +31,6 @@ upgrade:
 
 downgrade:
 	poetry run alembic downgrade -1
+
+reset-db:
+	poetry run python app/scripts/reset_db.py

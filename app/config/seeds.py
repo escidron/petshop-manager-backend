@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.modules.plans.models import Plan
+from app.modules.tenants.models import TenantType
 
 
 def seed_plans(db: Session):
@@ -33,5 +34,26 @@ def seed_plans(db: Session):
         if not existing:
             plan = Plan(**plan_data)
             db.add(plan)
+
+    db.commit()
+
+
+def seed_tenant_types(db: Session):
+    types = [
+        {
+            "code": "petshop",
+            "name": "Petshop / Banho e Tosa",
+            "is_active": True,
+        }
+    ]
+
+    for type_data in types:
+        existing = db.query(TenantType).filter(
+            TenantType.code == type_data["code"]
+        ).first()
+
+        if not existing:
+            t_type = TenantType(**type_data)
+            db.add(t_type)
 
     db.commit()
