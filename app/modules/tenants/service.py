@@ -112,3 +112,21 @@ class TenantService:
     def delete_tenant(self, db: Session, tenant_id: int):
         tenant = self.get_tenant(db, tenant_id)
         self.repository.delete(db, tenant)
+
+    def update_subscription(
+        self,
+        db: Session,
+        tenant_id: int,
+        data,
+    ):
+        subscription = self.subscription_repository.get_active_by_tenant(db, tenant_id)
+        if not subscription:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Subscription not found",
+            )
+        return self.subscription_repository.update(
+            db,
+            subscription,
+            {"payment_method": data.payment_method},
+        )

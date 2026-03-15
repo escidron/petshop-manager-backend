@@ -9,6 +9,7 @@ from .schemas import (
     TenantUpdate,
     TenantResponse,
 )
+from app.modules.subscriptions.schemas import SubscriptionUpdate, SubscriptionResponse
 from .service import TenantService
 
 router = APIRouter(prefix="/tenants", tags=["Tenants"])
@@ -76,3 +77,13 @@ def delete_tenant(
 ):
     service = TenantService()
     service.delete_tenant(db, tenant_id)
+
+
+@router.patch("/{tenant_id}/subscription", response_model=SubscriptionResponse)
+def update_subscription(
+    tenant_id: int,
+    data: SubscriptionUpdate,
+    db: Session = Depends(get_db),
+):
+    service = TenantService()
+    return service.update_subscription(db, tenant_id, data)

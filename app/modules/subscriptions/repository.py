@@ -35,3 +35,12 @@ class SubscriptionRepository:
             .order_by(Subscription.started_at.desc())
             .first()
         )
+
+    def update(self, db: Session, subscription: Subscription, data: dict) -> Subscription:
+        for key, value in data.items():
+            setattr(subscription, key, value)
+
+        db.add(subscription)
+        db.commit()
+        db.refresh(subscription)
+        return subscription

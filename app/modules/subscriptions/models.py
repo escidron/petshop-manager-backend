@@ -47,5 +47,10 @@ class Subscription(Base):
         nullable=True,
     )
 
+    payment_method: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
     tenant = relationship("Tenant")
     plan = relationship("Plan")
