@@ -44,9 +44,9 @@ class InventoryRepository:
             result.append({
                 "id": log.id,
                 "product_id": log.product_id,
-                "quantity_change": log.quantity_change,
-                "change_type": log.change_type,
-                "notes": log.notes,
+                "quantity_changed": log.quantity_change,
+                "log_type": log.change_type,
+                "description": log.notes,
                 "created_at": log.created_at,
                 "product_name": log.product.name if log.product else "Desconhecido",
                 "product_sku": log.product.sku if log.product else None
