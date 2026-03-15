@@ -5,7 +5,7 @@ from typing import Literal
 # Sale Items
 
 class SaleItemBase(BaseModel):
-    item_type: Literal["product", "service"]
+    item_type: Literal["product", "service", "package"]
     item_id: int
     name: str
     quantity: int = Field(gt=0)

@@ -52,6 +52,7 @@ class AppointmentResponse(BaseModel):
 
     client: ClientResponse
     items: List[AppointmentItemResponse]
+    is_paid: bool = False
 
     created_at: datetime
 

@@ -7,12 +7,14 @@ from .schemas import SaleCreate, SaleUpdateStatus
 from .repository import SalesRepository
 from app.modules.products.service import ProductService
 from app.modules.appointments.service import AppointmentService
+from app.modules.packages.service import PackageService
 
 class SalesService:
     def __init__(self):
         self.repository = SalesRepository()
         self.product_service = ProductService()
         self.appointment_service = AppointmentService()
+        self.package_service = PackageService()
 
     def create_sale(self, db: Session, tenant_id: int, data: SaleCreate) -> Sale:
         
@@ -29,12 +31,29 @@ class SalesService:
                         db=db,
                         tenant_id=tenant_id,
                         product_id=item.item_id,
-                        quantity_change=-item.quantity,  # Negative quantity for sale
+                        quantity_change=-item.quantity,
                         change_type="sale",
                         notes=f"Venda no PDV"
                     )
                 except HTTPException as e:
                      raise HTTPException(status_code=400, detail=f"Estoque insuficiente para {item.name}. {e.detail}")
+            
+            elif item.item_type == "package":
+                package = self.package_service.get_package(db, tenant_id, item.item_id)
+                for p_item in package.items:
+                    if p_item.product_id:
+                        total_qty = p_item.quantity * item.quantity
+                        try:
+                            self.product_service.adjust_stock(
+                                db=db,
+                                tenant_id=tenant_id,
+                                product_id=p_item.product_id,
+                                quantity_change=-total_qty,
+                                change_type="sale",
+                                notes=f"Venda de Pacote: {package.name}"
+                            )
+                        except HTTPException as e:
+                            raise HTTPException(status_code=400, detail=f"Estoque insuficiente no pacote {package.name}. {e.detail}")
                      
         # 2. If everything is fine, create the sale in db
         sale = self.repository.create(db, tenant_id, data)
@@ -77,10 +96,24 @@ class SalesService:
                         db=db,
                         tenant_id=tenant_id,
                         product_id=item.item_id,
-                        quantity_change=item.quantity, # Positive quantity to cancel out
-                        change_type="sale_cancel",
-                        notes=f"Cancelamento Venda #{sale.id}"
-                    )
+                         quantity_change=item.quantity, # Positive quantity to cancel out
+                         change_type="sale_cancel",
+                         notes=f"Cancelamento Venda #{sale.id}"
+                     )
+             
+             elif item.item_type == "package":
+                 package = self.package_service.get_package(db, tenant_id, item.item_id)
+                 for p_item in package.items:
+                     if p_item.product_id:
+                         total_qty = p_item.quantity * item.quantity
+                         self.product_service.adjust_stock(
+                             db=db,
+                             tenant_id=tenant_id,
+                             product_id=p_item.product_id,
+                             quantity_change=total_qty,
+                             change_type="sale_cancel",
+                             notes=f"Cancelamento Pacote em Venda #{sale.id}"
+                         )
 
         # 2. Cancel sale
         updated_sale = self.repository.update_status(db, tenant_id, sale_id, "canceled")

@@ -97,6 +97,19 @@ class Appointment(Base):
         cascade="all, delete-orphan",
     )
     
+    sales = relationship(
+        "app.modules.sales.models.Sale", 
+        back_populates="appointment",
+        lazy="select"
+    )
+
+    @property
+    def is_paid(self) -> bool:
+        """Checks if there's any completed sale linked to this appointment."""
+        if not self.sales:
+            return False
+        return any(sale.status == "completed" for sale in self.sales)
+    
 
 class AppointmentItem(Base):
     __tablename__ = "appointment_items"

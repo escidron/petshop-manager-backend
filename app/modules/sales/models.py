@@ -70,7 +70,7 @@ class Sale(Base):
     )
     client = relationship("Client")
     pet = relationship("Pet")
-    appointment = relationship("Appointment")
+    appointment = relationship("Appointment", back_populates="sales")
 
 
 class SaleItem(Base):
