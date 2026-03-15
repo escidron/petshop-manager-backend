@@ -4,6 +4,7 @@ from app.api.v1.api_router import api_router
 import app.modules.users.models
 import app.modules.tenants.models
 import app.modules.products.models
+import app.modules.sales.models
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Petshop API")

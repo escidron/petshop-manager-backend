@@ -3,10 +3,17 @@ from sqlalchemy.orm import Session
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant
 from .schemas import ProductCreate, ProductUpdate, ProductResponse
-from .inventory_schemas import InventoryLogResponse, StockAdjustmentRequest
+from .inventory_schemas import InventoryLogResponse, StockAdjustmentRequest, GlobalInventoryLogResponse
 from .service import ProductService
 
 router = APIRouter(prefix="/products", tags=["Produtos"], dependencies=[Depends(get_current_tenant)])
+
+
+@router.get("/inventory/logs", response_model=list[GlobalInventoryLogResponse])
+def get_global_inventory_logs(skip: int = 0, limit: int = 100, request: Request = None, db: Session = Depends(get_db)):
+    service = ProductService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.inventory_repository.list_all_logs(db, tenant_id, skip, limit)
 
 
 @router.post("/", response_model=ProductResponse)

@@ -9,9 +9,13 @@ class InventoryLogResponse(BaseModel):
     change_type: str
     notes: Optional[str]
     created_at: datetime
-
+    
     class Config:
         from_attributes = True
+
+class GlobalInventoryLogResponse(InventoryLogResponse):
+    product_name: str
+    product_sku: Optional[str] = None
 
 class StockAdjustmentRequest(BaseModel):
     quantity_change: int
