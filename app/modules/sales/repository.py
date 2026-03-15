@@ -10,6 +10,7 @@ class SalesRepository:
             tenant_id=tenant_id,
             client_id=data.client_id,
             pet_id=data.pet_id,
+            appointment_id=data.appointment_id,
             total_amount=data.total_amount,
             payment_method=data.payment_method,
             status=data.status

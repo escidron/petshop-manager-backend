@@ -6,11 +6,13 @@ from .models import Sale
 from .schemas import SaleCreate, SaleUpdateStatus
 from .repository import SalesRepository
 from app.modules.products.service import ProductService
+from app.modules.appointments.service import AppointmentService
 
 class SalesService:
     def __init__(self):
         self.repository = SalesRepository()
         self.product_service = ProductService()
+        self.appointment_service = AppointmentService()
 
     def create_sale(self, db: Session, tenant_id: int, data: SaleCreate) -> Sale:
         
@@ -36,6 +38,21 @@ class SalesService:
                      
         # 2. If everything is fine, create the sale in db
         sale = self.repository.create(db, tenant_id, data)
+
+        # 3. If it's linked to an appointment, mark appointment as completed
+        if data.appointment_id:
+            try:
+                self.appointment_service.apply_action(
+                    db=db,
+                    tenant_id=tenant_id,
+                    appointment_id=data.appointment_id,
+                    action="complete"
+                )
+            except HTTPException as e:
+                # We don't want to fail the sale if the appointment status update fails, 
+                # but we should probably log it. For now, just continue.
+                pass
+
         return sale
 
     def get_sale(self, db: Session, tenant_id: int, sale_id: int) -> Sale:

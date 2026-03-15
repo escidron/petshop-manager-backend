@@ -26,6 +26,7 @@ class SaleItemResponse(SaleItemBase):
 class SaleBase(BaseModel):
     client_id: int | None = None
     pet_id: int | None = None
+    appointment_id: int | None = None
     total_amount: float = Field(ge=0)
     payment_method: Literal["pix", "credit_card", "debit_card", "money", "other"]
     status: Literal["completed", "canceled"] = "completed"
