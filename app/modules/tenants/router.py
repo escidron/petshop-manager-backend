@@ -37,6 +37,21 @@ def create_tenant_user(
     return service.create_tenant_user(db, context["tenant"].id, data)
 
 
+@router.delete("/users/{user_id}", status_code=204)
+def remove_tenant_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    context: dict = Depends(require_owner),
+):
+    service = TenantService()
+    service.remove_tenant_user(
+        db,
+        context["tenant"].id,
+        user_id,
+        context["user"].id,
+    )
+
+
 @router.post("/", response_model=TenantResponse)
 def create_tenant(
     user_id: int,

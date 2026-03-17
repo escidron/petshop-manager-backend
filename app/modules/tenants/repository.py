@@ -72,6 +72,25 @@ class TenantUserRepository:
         return (
             db.query(TenantUser, User)
             .join(User, User.id == TenantUser.user_id)
-            .filter(TenantUser.tenant_id == tenant_id)
+            .filter(TenantUser.tenant_id == tenant_id, TenantUser.active == True)
             .all()
         )
+
+    def get_by_user_and_tenant(self, db: Session, user_id: int, tenant_id: int):
+        return (
+            db.query(TenantUser)
+            .filter(TenantUser.user_id == user_id, TenantUser.tenant_id == tenant_id)
+            .first()
+        )
+
+    def soft_delete(self, db: Session, user_id: int, tenant_id: int) -> bool:
+        from app.modules.users.models import User
+        tenant_user = self.get_by_user_and_tenant(db, user_id, tenant_id)
+        if not tenant_user:
+            return False
+        tenant_user.active = False
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.is_active = False
+        db.commit()
+        return True

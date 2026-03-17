@@ -132,11 +132,41 @@ class TenantService:
 
     def create_tenant_user(self, db: Session, tenant_id: int, data: TenantUserCreate):
         existing = db.query(User).filter(User.email == data.email).first()
+
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered",
+            if existing.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered",
+                )
+            # Reactivate previously deleted user
+            existing.is_active = True
+            existing.name = data.name
+            existing.role = data.role
+
+            tenant_user = self.tenant_users_repository.get_by_user_and_tenant(
+                db, existing.id, tenant_id
             )
+            if tenant_user:
+                tenant_user.active = True
+                tenant_user.role = data.role
+            else:
+                self.tenant_users_repository.create(
+                    db=db,
+                    tenant_id=tenant_id,
+                    user_id=existing.id,
+                    role=data.role,
+                )
+
+            db.commit()
+            db.refresh(existing)
+            return {
+                "id": existing.id,
+                "name": existing.name,
+                "email": existing.email,
+                "role": data.role,
+                "is_active": existing.is_active,
+            }
 
         user_create = UserCreate(
             name=data.name,
@@ -160,6 +190,25 @@ class TenantService:
             "role": data.role,
             "is_active": user.is_active,
         }
+
+    def remove_tenant_user(
+        self,
+        db: Session,
+        tenant_id: int,
+        user_id: int,
+        requesting_user_id: int,
+    ):
+        if user_id == requesting_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot remove yourself",
+            )
+        removed = self.tenant_users_repository.soft_delete(db, user_id, tenant_id)
+        if not removed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found in this tenant",
+            )
 
     def update_subscription(
         self,
