@@ -85,3 +85,16 @@ def get_current_tenant(
         "user": user,
         "tenant": tenant,
     }
+
+
+def require_owner(
+    request: Request,
+    context: dict = Depends(get_current_tenant),
+):
+    tenant_user = request.state.tenant_user
+    if tenant_user.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners can perform this action",
+        )
+    return context

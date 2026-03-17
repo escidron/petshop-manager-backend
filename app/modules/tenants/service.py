@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.plans.repository import PlanRepository
 from app.modules.subscriptions.repository import SubscriptionRepository
-from app.modules.tenants.schemas import TenantCreate, TenantUpdate
+from app.modules.tenants.schemas import TenantCreate, TenantUpdate, TenantUserCreate
+from app.modules.users.models import User
+from app.modules.users.schemas import UserCreate
+from app.modules.users.service import UserService
 
 from .repository import TenantRepository, TenantTypeRepository, TenantUserRepository
 
@@ -16,6 +19,7 @@ class TenantService:
         self.tenant_users_repository = TenantUserRepository()
         self.plan_repository = PlanRepository()
         self.subscription_repository = SubscriptionRepository()
+        self.user_service = UserService()
 
     def create_tenant(
         self,
@@ -112,6 +116,50 @@ class TenantService:
     def delete_tenant(self, db: Session, tenant_id: int):
         tenant = self.get_tenant(db, tenant_id)
         self.repository.delete(db, tenant)
+
+    def list_tenant_users(self, db: Session, tenant_id: int):
+        results = self.tenant_users_repository.list_by_tenant(db, tenant_id)
+        return [
+            {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "role": tenant_user.role,
+                "is_active": user.is_active,
+            }
+            for tenant_user, user in results
+        ]
+
+    def create_tenant_user(self, db: Session, tenant_id: int, data: TenantUserCreate):
+        existing = db.query(User).filter(User.email == data.email).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
+
+        user_create = UserCreate(
+            name=data.name,
+            email=data.email,
+            password=data.password,
+            role=data.role,
+        )
+        user = self.user_service.create(db, user_create)
+
+        self.tenant_users_repository.create(
+            db=db,
+            tenant_id=tenant_id,
+            user_id=user.id,
+            role=data.role,
+        )
+
+        return {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": data.role,
+            "is_active": user.is_active,
+        }
 
     def update_subscription(
         self,

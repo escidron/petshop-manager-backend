@@ -3,16 +3,38 @@ from sqlalchemy.orm import Session
 
 from app.config.settings import settings
 from app.config.database import get_db
+from app.modules.auth.dependencies import require_owner
 
 from .schemas import (
     TenantCreate,
     TenantUpdate,
     TenantResponse,
+    TenantUserCreate,
+    TenantUserResponse,
 )
 from app.modules.subscriptions.schemas import SubscriptionUpdate, SubscriptionResponse
 from .service import TenantService
 
 router = APIRouter(prefix="/tenants", tags=["Tenants"])
+
+
+@router.get("/users", response_model=list[TenantUserResponse])
+def list_tenant_users(
+    db: Session = Depends(get_db),
+    context: dict = Depends(require_owner),
+):
+    service = TenantService()
+    return service.list_tenant_users(db, context["tenant"].id)
+
+
+@router.post("/users", response_model=TenantUserResponse, status_code=201)
+def create_tenant_user(
+    data: TenantUserCreate,
+    db: Session = Depends(get_db),
+    context: dict = Depends(require_owner),
+):
+    service = TenantService()
+    return service.create_tenant_user(db, context["tenant"].id, data)
 
 
 @router.post("/", response_model=TenantResponse)

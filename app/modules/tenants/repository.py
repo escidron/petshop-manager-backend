@@ -66,3 +66,12 @@ class TenantUserRepository:
         db.commit()
         db.refresh(tenant_user)
         return tenant_user
+
+    def list_by_tenant(self, db: Session, tenant_id: int):
+        from app.modules.users.models import User
+        return (
+            db.query(TenantUser, User)
+            .join(User, User.id == TenantUser.user_id)
+            .filter(TenantUser.tenant_id == tenant_id)
+            .all()
+        )

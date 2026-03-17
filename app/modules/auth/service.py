@@ -101,7 +101,7 @@ def authenticate_user(
     payload = {
         "user_id": str(user.id),
         "tenant_id": str(tenant.tenant_id),
-        "role": user.role,
+        "role": tenant.role,
     }
 
     return {
@@ -109,7 +109,7 @@ def authenticate_user(
         "refresh_token": create_refresh_token(payload),
         "user": {
             "id": str(user.id),
-            "role": user.role,
+            "role": tenant.role,
             "tenant_id": str(tenant.tenant_id),
             "name": user.name,
         },

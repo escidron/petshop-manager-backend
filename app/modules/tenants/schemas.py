@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional
 from datetime import datetime
 from app.modules.subscriptions.schemas import SubscriptionResponse
@@ -43,4 +43,19 @@ class TenantResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TenantUserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str = "employee"
+
+
+class TenantUserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    is_active: bool
 
