@@ -23,8 +23,7 @@ class Base(DeclarativeBase):
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
-    echo=True,  # log SQL (remove depois se quiser)
-
+    echo=settings.ENVIRONMENT == "development",
 )
 
 

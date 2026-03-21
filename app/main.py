@@ -7,14 +7,15 @@ import app.modules.products.models
 import app.modules.sales.models
 
 def create_app() -> FastAPI:
+    from app.config.settings import settings
+
     app = FastAPI(title="Petshop API")
+
+    origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-        ],
+        allow_origins=origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
