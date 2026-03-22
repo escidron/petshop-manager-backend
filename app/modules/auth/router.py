@@ -32,8 +32,8 @@ def signup(
         key=settings.COOKIE_ACCESS_NAME,
         value=result["access_token"],
         httponly=True,
-        secure=False,  # True em prod
-        samesite="lax",
+        secure=True,
+        samesite="none",
         path="/",
     )
 
@@ -41,8 +41,8 @@ def signup(
         key=settings.COOKIE_REFRESH_NAME,
         value=result["refresh_token"],
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
         path="/",
     )
 
@@ -70,8 +70,8 @@ def login(
         key=settings.COOKIE_ACCESS_NAME,
         value=result["access_token"],
         httponly=True,
-        secure=True,        # em dev local pode ser False
-        samesite="lax",
+        secure=True,
+        samesite="none",
         path="/",
     )
 
@@ -80,8 +80,8 @@ def login(
         key=settings.COOKIE_REFRESH_NAME,
         value=result["refresh_token"],
         httponly=True,
-        secure=True,        # em dev local pode ser False
-        samesite="lax",
+        secure=True,
+        samesite="none",
         path="/",
     )
     print('userxx',result)
@@ -123,8 +123,8 @@ def refresh_token(
         key=settings.COOKIE_ACCESS_NAME,
         value=new_access_token,
         httponly=True,
-        secure=True,      # False em dev
-        samesite="lax",
+        secure=True,
+        samesite="none",
         path="/",
     )
 
