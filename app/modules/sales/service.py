@@ -8,6 +8,8 @@ from .repository import SalesRepository
 from app.modules.products.service import ProductService
 from app.modules.appointments.service import AppointmentService
 from app.modules.packages.service import PackageService
+from app.modules.client_packages.service import ClientPackageService
+from app.modules.client_packages.schemas import ClientPackageSellRequest
 
 class SalesService:
     def __init__(self):
@@ -15,6 +17,7 @@ class SalesService:
         self.product_service = ProductService()
         self.appointment_service = AppointmentService()
         self.package_service = PackageService()
+        self.client_package_service = ClientPackageService()
 
     def create_sale(self, db: Session, tenant_id: int, data: SaleCreate) -> Sale:
         
@@ -58,7 +61,25 @@ class SalesService:
         # 2. If everything is fine, create the sale in db
         sale = self.repository.create(db, tenant_id, data)
 
-        # 3. If it's linked to an appointment, mark appointment as completed
+        # 3. Auto-create ClientPackage for package items sold with a specific pet
+        if data.client_id:
+            for item in data.items:
+                if item.item_type == "package" and item.pet_id:
+                    try:
+                        self.client_package_service.sell(
+                            db=db,
+                            tenant_id=tenant_id,
+                            client_id=data.client_id,
+                            data=ClientPackageSellRequest(
+                                pet_id=item.pet_id,
+                                package_id=item.item_id,
+                            ),
+                        )
+                    except HTTPException:
+                        # Não bloqueia a venda se falhar ao criar o pacote do cliente
+                        pass
+
+        # 4. If it's linked to an appointment, mark appointment as completed
         if data.appointment_id:
             try:
                 self.appointment_service.apply_action(

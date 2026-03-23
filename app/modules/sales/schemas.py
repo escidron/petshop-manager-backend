@@ -13,7 +13,7 @@ class SaleItemBase(BaseModel):
     subtotal: float = Field(ge=0)
 
 class SaleItemCreate(SaleItemBase):
-    pass
+    pet_id: int | None = None  # Para pacotes: gera ClientPackage automaticamente na venda
 
 class SaleItemResponse(SaleItemBase):
     id: int
