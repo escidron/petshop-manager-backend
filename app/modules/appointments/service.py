@@ -9,11 +9,13 @@ from .schemas import AppointmentCreate, AppointmentUpdate
 from app.modules.pets.models import Pet
 from app.modules.clients.models import Client
 from app.modules.tenant_services.models import Service
+from app.modules.client_packages.repository import ClientPackageRepository
 
 
 class AppointmentService:
     def __init__(self):
         self.repo = AppointmentRepository()
+        self.credit_repo = ClientPackageRepository()
     
     TRANSITIONS = {
         AppointmentStatus.PENDING: {
@@ -253,4 +255,26 @@ class AppointmentService:
         new_status = self.TRANSITIONS[current_status][action]
         appointment.status = new_status
 
-        return self.repo.save_action(db, appointment)
+        result = self.repo.save_action(db, appointment)
+
+        # Ao completar, desconta créditos de pacotes e registra coverages (FIFO)
+        if action == AppointmentAction.COMPLETE:
+            appointment_full = self.repo.get_with_relations(db, appointment.id)
+            for item in appointment_full.items:
+                for service in item.services:
+                    credit = self.credit_repo.find_active_credit(
+                        db, tenant_id, item.pet_id, service.id
+                    )
+                    if credit:
+                        self.credit_repo.consume_credit(db, credit)
+                        self.repo.create_coverage(
+                            db,
+                            appointment_item_id=item.id,
+                            service_id=service.id,
+                            client_package_credit_id=credit.id,
+                        )
+            db.commit()
+            # Recarrega com as coverages para o response final
+            result = self.repo.get_with_relations(db, appointment.id)
+
+        return result

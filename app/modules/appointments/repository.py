@@ -2,7 +2,7 @@ from datetime import date, datetime
 from sqlalchemy.orm import Session,joinedload, selectinload
 from sqlalchemy import func
 
-from .models import Appointment, AppointmentItem
+from .models import Appointment, AppointmentItem, AppointmentPackageCoverage
 from app.modules.tenant_services.models import Service
 
 
@@ -76,6 +76,8 @@ class AppointmentRepository:
                     .joinedload(AppointmentItem.pet),
                 joinedload(Appointment.items)
                     .joinedload(AppointmentItem.services),
+                joinedload(Appointment.items)
+                    .joinedload(AppointmentItem.coverages),
             )
             .filter(
                 Appointment.tenant_id == tenant_id,
@@ -84,6 +86,21 @@ class AppointmentRepository:
             .order_by(Appointment.scheduled_at)
             .all()
         )
+
+    def create_coverage(
+        self,
+        db: Session,
+        appointment_item_id: int,
+        service_id: int,
+        client_package_credit_id: int | None,
+    ) -> AppointmentPackageCoverage:
+        coverage = AppointmentPackageCoverage(
+            appointment_item_id=appointment_item_id,
+            service_id=service_id,
+            client_package_credit_id=client_package_credit_id,
+        )
+        db.add(coverage)
+        return coverage
 
     def list_by_client(
         self,
@@ -168,6 +185,8 @@ class AppointmentRepository:
                 .selectinload(AppointmentItem.pet),
                 selectinload(Appointment.items)
                 .selectinload(AppointmentItem.services),
+                selectinload(Appointment.items)
+                .selectinload(AppointmentItem.coverages),
             )
             .filter(Appointment.id == appointment_id)
             .first()

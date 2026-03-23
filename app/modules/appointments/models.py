@@ -36,6 +36,29 @@ appointment_item_services = Table(
     ),
 )
 
+
+class AppointmentPackageCoverage(Base):
+    """Registra quais serviços de um appointment_item foram cobertos por pacote."""
+
+    __tablename__ = "appointment_package_coverages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    appointment_item_id: Mapped[int] = mapped_column(
+        ForeignKey("appointment_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    service_id: Mapped[int] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    client_package_credit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_package_credits.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    item = relationship("AppointmentItem", back_populates="coverages")
+
 class AppointmentStatus(str, Enum):
     PENDING = "pending"            # criado, aguardando confirmação
     CONFIRMED = "confirmed"        # confirmado pelo cliente
@@ -132,4 +155,10 @@ class AppointmentItem(Base):
     services = relationship(
         "Service",
         secondary="appointment_item_services",
+    )
+
+    coverages = relationship(
+        "AppointmentPackageCoverage",
+        back_populates="item",
+        cascade="all, delete-orphan",
     )
