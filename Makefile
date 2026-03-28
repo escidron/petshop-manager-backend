@@ -1,4 +1,4 @@
-.PHONY: run install shell test lint format migrate revision upgrade downgrade reset-db
+.PHONY: run install shell test lint format migrate revision upgrade downgrade reset-db seed-demo
 
 APP=app.main:app
 
@@ -34,3 +34,6 @@ downgrade:
 
 reset-db:
 	poetry run python app/scripts/reset_db.py
+
+seed-demo:
+	poetry run python -m app.scripts.seed_demo_data $(tenant)
