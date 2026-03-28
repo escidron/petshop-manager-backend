@@ -122,15 +122,27 @@ class AppointmentRepository:
         self,
         db: Session,
         tenant_id: int,
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> list[Appointment]:
-        return (
+        q = (
             db.query(Appointment)
-            .filter(
-                Appointment.tenant_id == tenant_id,
+            .options(
+                joinedload(Appointment.client),
+                joinedload(Appointment.items)
+                    .joinedload(AppointmentItem.pet),
+                joinedload(Appointment.items)
+                    .joinedload(AppointmentItem.services),
+                joinedload(Appointment.items)
+                    .joinedload(AppointmentItem.coverages),
             )
-            .order_by(Appointment.scheduled_at.desc())
-            .all()
+            .filter(Appointment.tenant_id == tenant_id)
         )
+        if start_date:
+            q = q.filter(func.date(Appointment.scheduled_at) >= start_date)
+        if end_date:
+            q = q.filter(func.date(Appointment.scheduled_at) <= end_date)
+        return q.order_by(Appointment.scheduled_at.desc()).all()
 
     def update(
         self,

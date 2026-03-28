@@ -121,8 +121,10 @@ class AppointmentService:
         self,
         db: Session,
         tenant_id: int,
+        start_date=None,
+        end_date=None,
     ):
-        return self.repo.list_by_tenant(db, tenant_id)
+        return self.repo.list_by_tenant(db, tenant_id, start_date=start_date, end_date=end_date)
 
     # ---------- UPDATE ----------
     def update(
