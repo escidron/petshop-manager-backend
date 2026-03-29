@@ -101,8 +101,8 @@ class SalesService:
             raise HTTPException(status_code=404, detail="Venda não encontrada.")
         return sale
 
-    def list_sales(self, db: Session, tenant_id: int, skip: int = 0, limit: int = 100) -> List[Sale]:
-        return self.repository.list(db, tenant_id, skip, limit)
+    def list_sales(self, db: Session, tenant_id: int, skip: int = 0, limit: int = 100, start_date=None, end_date=None) -> List[Sale]:
+        return self.repository.list(db, tenant_id, skip, limit, start_date=start_date, end_date=end_date)
 
     def cancel_sale(self, db: Session, tenant_id: int, sale_id: int) -> Sale:
         sale = self.get_sale(db, tenant_id, sale_id)
