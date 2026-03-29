@@ -5,6 +5,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     String,
+    Index,
     func,
     Table,
     Enum as SAEnum
@@ -76,6 +77,9 @@ class AppointmentAction(str, Enum):
         
 class Appointment(Base):
     __tablename__ = "appointments"
+    __table_args__ = (
+        Index("ix_appointments_tenant_scheduled", "tenant_id", "scheduled_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

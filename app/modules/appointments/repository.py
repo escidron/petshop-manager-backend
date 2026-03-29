@@ -1,9 +1,22 @@
-from datetime import date, datetime
-from sqlalchemy.orm import Session,joinedload, selectinload
+from datetime import date, datetime, time
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func
 
 from .models import Appointment, AppointmentItem, AppointmentPackageCoverage
 from app.modules.tenant_services.models import Service
+
+
+def _eager_options():
+    """Opções de eager loading reutilizáveis para evitar N+1."""
+    return [
+        joinedload(Appointment.client),                          # many-to-one → joinedload ok
+        selectinload(Appointment.items)                          # one-to-many → selectinload
+            .joinedload(AppointmentItem.pet),                    # many-to-one dentro do item
+        selectinload(Appointment.items)
+            .selectinload(AppointmentItem.services),             # many-to-many → selectinload
+        selectinload(Appointment.items)
+            .selectinload(AppointmentItem.coverages),            # one-to-many → selectinload
+    ]
 
 
 class AppointmentRepository:
@@ -67,21 +80,16 @@ class AppointmentRepository:
         tenant_id: int,
         day: date,
     ) -> list[Appointment]:
-
+        # Usa range em vez de func.date() para aproveitar o índice em scheduled_at
+        start = datetime.combine(day, time.min)
+        end = datetime.combine(day, time.max)
         return (
             db.query(Appointment)
-            .options(
-                joinedload(Appointment.client),
-                joinedload(Appointment.items)
-                    .joinedload(AppointmentItem.pet),
-                joinedload(Appointment.items)
-                    .joinedload(AppointmentItem.services),
-                joinedload(Appointment.items)
-                    .joinedload(AppointmentItem.coverages),
-            )
+            .options(*_eager_options())
             .filter(
                 Appointment.tenant_id == tenant_id,
-                func.date(Appointment.scheduled_at) == day,
+                Appointment.scheduled_at >= start,
+                Appointment.scheduled_at <= end,
             )
             .order_by(Appointment.scheduled_at)
             .all()
@@ -127,21 +135,13 @@ class AppointmentRepository:
     ) -> list[Appointment]:
         q = (
             db.query(Appointment)
-            .options(
-                joinedload(Appointment.client),
-                joinedload(Appointment.items)
-                    .joinedload(AppointmentItem.pet),
-                joinedload(Appointment.items)
-                    .joinedload(AppointmentItem.services),
-                joinedload(Appointment.items)
-                    .joinedload(AppointmentItem.coverages),
-            )
+            .options(*_eager_options())
             .filter(Appointment.tenant_id == tenant_id)
         )
         if start_date:
-            q = q.filter(func.date(Appointment.scheduled_at) >= start_date)
+            q = q.filter(Appointment.scheduled_at >= datetime.combine(start_date, time.min))
         if end_date:
-            q = q.filter(func.date(Appointment.scheduled_at) <= end_date)
+            q = q.filter(Appointment.scheduled_at <= datetime.combine(end_date, time.max))
         return q.order_by(Appointment.scheduled_at.desc()).all()
 
     def update(
@@ -188,20 +188,9 @@ class AppointmentRepository:
         db: Session,
         appointment_id: int,
     ) -> Appointment:
-
-        appointment = (
+        return (
             db.query(Appointment)
-            .options(
-                selectinload(Appointment.client),
-                selectinload(Appointment.items)
-                .selectinload(AppointmentItem.pet),
-                selectinload(Appointment.items)
-                .selectinload(AppointmentItem.services),
-                selectinload(Appointment.items)
-                .selectinload(AppointmentItem.coverages),
-            )
+            .options(*_eager_options())
             .filter(Appointment.id == appointment_id)
             .first()
         )
-
-        return appointment

@@ -23,6 +23,10 @@ class Base(DeclarativeBase):
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+    pool_recycle=600,   # recicla conexões a cada 10 min (importante para Supabase)
     echo=settings.ENVIRONMENT == "development",
 )
 
