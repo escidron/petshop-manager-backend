@@ -10,6 +10,7 @@ from app.modules.pets.models import Pet
 from app.modules.clients.models import Client
 from app.modules.tenant_services.models import Service
 from app.modules.client_packages.repository import ClientPackageRepository
+from app.modules.tenants.models import Tenant
 
 
 class AppointmentService:
@@ -39,7 +40,6 @@ class AppointmentService:
         tenant_id: int,
         data: AppointmentCreate,
     ):
-        print('dataaa', data)
         # 1️⃣ Validar cliente primeiro (uma única vez)
         client = (
             db.query(Client)
@@ -84,6 +84,11 @@ class AppointmentService:
                 pet_id=item.pet_id,
                 services=services,
             )
+
+        # Marca onboarding como concluído no primeiro agendamento criado
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        if tenant and tenant.onboarding_step != "completed":
+            tenant.onboarding_step = "completed"
 
         db.commit()
 
