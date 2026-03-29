@@ -50,22 +50,23 @@ def seed_demo(tenant_id: int):
         print(f"🌱 Populando dados demo para tenant_id={tenant_id}...\n")
 
         # ── PRODUTOS ──────────────────────────────────────────────────────────
+        # Preços em centavos (o frontend armazena e lê como centavos via mapProductFromApi)
         products_data = [
-            dict(name="Ração Golden Adulto 15kg",         category="Ração",      price=Decimal("189.90"), cost=Decimal("120.00"), quantity=50, min_stock=5,  sku="RAC-GLD-15"),
-            dict(name="Ração Royal Canin Filhote 3kg",    category="Ração",      price=Decimal("89.90"),  cost=Decimal("55.00"),  quantity=30, min_stock=3,  sku="RAC-RC-3"),
-            dict(name="Ração Gourmet Felino 2kg",         category="Ração",      price=Decimal("69.90"),  cost=Decimal("40.00"),  quantity=25, min_stock=3,  sku="RAC-GT-2"),
-            dict(name="Shampoo Neutro Petshop 500ml",     category="Higiene",    price=Decimal("28.90"),  cost=Decimal("14.00"),  quantity=40, min_stock=5,  sku="SHA-NEU-500"),
-            dict(name="Shampoo Antipulgas 500ml",         category="Higiene",    price=Decimal("34.90"),  cost=Decimal("18.00"),  quantity=35, min_stock=5,  sku="SHA-APU-500"),
-            dict(name="Condicionador Pelagem Longa 500ml",category="Higiene",    price=Decimal("32.90"),  cost=Decimal("16.00"),  quantity=30, min_stock=4,  sku="CON-PEL-500"),
-            dict(name="Coleira Antiparasitária P",        category="Saúde",      price=Decimal("45.00"),  cost=Decimal("22.00"),  quantity=20, min_stock=3,  sku="COL-ANT-P"),
-            dict(name="Coleira Antiparasitária G",        category="Saúde",      price=Decimal("55.00"),  cost=Decimal("28.00"),  quantity=15, min_stock=3,  sku="COL-ANT-G"),
-            dict(name="Vermífugo Drontal Plus",           category="Saúde",      price=Decimal("38.00"),  cost=Decimal("18.00"),  quantity=25, min_stock=5,  sku="VER-DRO-1"),
-            dict(name="Brinquedo Corda Pet",              category="Acessórios", price=Decimal("24.90"),  cost=Decimal("10.00"),  quantity=15, min_stock=2,  sku="BRI-COR-1"),
-            dict(name="Cama Pet M",                       category="Acessórios", price=Decimal("89.90"),  cost=Decimal("45.00"),  quantity=10, min_stock=2,  sku="CAM-PET-M"),
-            dict(name="Pente Fino para Tosa",             category="Grooming",   price=Decimal("19.90"),  cost=Decimal("8.00"),   quantity=20, min_stock=3,  sku="PEN-FIN-1"),
-            dict(name="Escova Dupla Face",                category="Grooming",   price=Decimal("29.90"),  cost=Decimal("12.00"),  quantity=18, min_stock=3,  sku="ESC-DUP-1"),
-            dict(name="Petisco Ossinho Natural 100g",     category="Petiscos",   price=Decimal("14.90"),  cost=Decimal("6.00"),   quantity=60, min_stock=10, sku="PET-OSS-100"),
-            dict(name="Petisco Frango Desidratado 80g",   category="Petiscos",   price=Decimal("18.90"),  cost=Decimal("8.00"),   quantity=50, min_stock=10, sku="PET-FRA-80"),
+            dict(name="Ração Golden Adulto 15kg",         category="Ração",      price=18990, cost=12000, quantity=50, min_stock=5,  sku="RAC-GLD-15"),
+            dict(name="Ração Royal Canin Filhote 3kg",    category="Ração",      price=8990,  cost=5500,  quantity=30, min_stock=3,  sku="RAC-RC-3"),
+            dict(name="Ração Gourmet Felino 2kg",         category="Ração",      price=6990,  cost=4000,  quantity=25, min_stock=3,  sku="RAC-GT-2"),
+            dict(name="Shampoo Neutro Petshop 500ml",     category="Higiene",    price=2890,  cost=1400,  quantity=40, min_stock=5,  sku="SHA-NEU-500"),
+            dict(name="Shampoo Antipulgas 500ml",         category="Higiene",    price=3490,  cost=1800,  quantity=35, min_stock=5,  sku="SHA-APU-500"),
+            dict(name="Condicionador Pelagem Longa 500ml",category="Higiene",    price=3290,  cost=1600,  quantity=30, min_stock=4,  sku="CON-PEL-500"),
+            dict(name="Coleira Antiparasitária P",        category="Saúde",      price=4500,  cost=2200,  quantity=20, min_stock=3,  sku="COL-ANT-P"),
+            dict(name="Coleira Antiparasitária G",        category="Saúde",      price=5500,  cost=2800,  quantity=15, min_stock=3,  sku="COL-ANT-G"),
+            dict(name="Vermífugo Drontal Plus",           category="Saúde",      price=3800,  cost=1800,  quantity=25, min_stock=5,  sku="VER-DRO-1"),
+            dict(name="Brinquedo Corda Pet",              category="Acessórios", price=2490,  cost=1000,  quantity=15, min_stock=2,  sku="BRI-COR-1"),
+            dict(name="Cama Pet M",                       category="Acessórios", price=8990,  cost=4500,  quantity=10, min_stock=2,  sku="CAM-PET-M"),
+            dict(name="Pente Fino para Tosa",             category="Grooming",   price=1990,  cost=800,   quantity=20, min_stock=3,  sku="PEN-FIN-1"),
+            dict(name="Escova Dupla Face",                category="Grooming",   price=2990,  cost=1200,  quantity=18, min_stock=3,  sku="ESC-DUP-1"),
+            dict(name="Petisco Ossinho Natural 100g",     category="Petiscos",   price=1490,  cost=600,   quantity=60, min_stock=10, sku="PET-OSS-100"),
+            dict(name="Petisco Frango Desidratado 80g",   category="Petiscos",   price=1890,  cost=800,   quantity=50, min_stock=10, sku="PET-FRA-80"),
         ]
 
         products = []
@@ -347,7 +348,7 @@ def seed_demo(tenant_id: int):
         ]
 
         for client, prods, days_ago in product_sales:
-            total = sum(p.price for p in prods)
+            total = Decimal(sum(p.price for p in prods)) / 100
             sale = Sale(
                 tenant_id=tenant_id,
                 client_id=client.id,
@@ -360,14 +361,15 @@ def seed_demo(tenant_id: int):
             sale.created_at = now - timedelta(days=days_ago)
 
             for prod in prods:
+                unit = Decimal(prod.price) / 100
                 db.add(SaleItem(
                     sale_id=sale.id,
                     item_type="product",
                     item_id=prod.id,
                     name=prod.name,
                     quantity=1,
-                    unit_price=prod.price,
-                    subtotal=prod.price,
+                    unit_price=unit,
+                    subtotal=unit,
                 ))
 
         print(f"  ✔ {len(product_sales)} vendas avulsas de produtos criadas")
