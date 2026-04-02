@@ -7,6 +7,8 @@ import app.modules.products.models
 import app.modules.sales.models
 import app.modules.client_packages.models
 import app.modules.appointments.models
+import app.modules.subscriptions.models
+import app.modules.plans.models
 
 def create_app() -> FastAPI:
     from app.config.settings import settings

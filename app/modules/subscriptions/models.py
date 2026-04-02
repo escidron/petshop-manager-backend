@@ -47,6 +47,10 @@ class Subscription(Base):
         nullable=True,
     )
 
+    stripe_subscription_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, unique=True
+    )
+
     payment_method: Mapped[str | None] = mapped_column(
         String(20),
         nullable=True,

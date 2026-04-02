@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     COOKIE_REFRESH_NAME: str = "refresh_token"
     CEP_BASE_URL: str
 
+    # Stripe
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+
     # CORS — comma-separated list of allowed origins
     # Ex: "https://meuapp.vercel.app,https://www.meuapp.com"
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
