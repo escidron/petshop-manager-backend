@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -98,3 +100,44 @@ def require_owner(
             detail="Only owners can perform this action",
         )
     return context
+
+
+def require_active_subscription(
+    context: dict = Depends(get_current_tenant),
+):
+    """
+    Permite apenas operações de escrita quando a assinatura está ativa.
+    - status == 'active' → OK
+    - status == 'trialing' AND trial_ends_at > now → OK
+    - qualquer outro caso → 403 com código 'subscription_required' ou 'trial_expired'
+    """
+    sub = context["tenant"].subscription
+
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="subscription_required",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    if sub.status == "active":
+        return context
+
+    if sub.status == "trialing":
+        trial_end = sub.trial_ends_at
+        if trial_end is not None:
+            # Garante comparação timezone-aware
+            if trial_end.tzinfo is None:
+                trial_end = trial_end.replace(tzinfo=timezone.utc)
+            if now < trial_end:
+                return context
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="trial_expired",
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="subscription_required",
+    )

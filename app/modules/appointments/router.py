@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
-from app.modules.auth.dependencies import get_current_tenant
+from app.modules.auth.dependencies import get_current_tenant, require_active_subscription
 from .schemas import (
     AppointmentActionRequest,
     AppointmentCreate,
@@ -21,7 +21,7 @@ router = APIRouter(
 )
 
 
-@router.post("/", response_model=AppointmentResponse)
+@router.post("/", response_model=AppointmentResponse, dependencies=[Depends(require_active_subscription)])
 def create_appointment(
     data: AppointmentCreate,
     request: Request,
@@ -86,7 +86,7 @@ def list_appointments_by_tenant(
     )
 
 
-@router.patch("/{appointment_id}", response_model=AppointmentResponse)
+@router.patch("/{appointment_id}", response_model=AppointmentResponse, dependencies=[Depends(require_active_subscription)])
 def update_appointment(
     appointment_id: int,
     data: AppointmentUpdate,
@@ -99,7 +99,7 @@ def update_appointment(
     )
 
 
-@router.delete("/{appointment_id}", status_code=204)
+@router.delete("/{appointment_id}", status_code=204, dependencies=[Depends(require_active_subscription)])
 def delete_appointment(
     appointment_id: int,
     request: Request,
@@ -113,6 +113,7 @@ def delete_appointment(
 @router.post(
     "/{appointment_id}/actions",
     response_model=AppointmentResponse,
+    dependencies=[Depends(require_active_subscription)],
 )
 def appointment_action(
     appointment_id: int,

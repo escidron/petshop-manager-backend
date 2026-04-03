@@ -96,6 +96,7 @@ def create_checkout(
                 "canceled_at": None,
             },
         )
+        db.commit()
     else:
         _repo.create(
             db=db,
@@ -107,8 +108,20 @@ def create_checkout(
         )
         db.commit()
 
-    payments = stripe_sub["latest_invoice"]["payments"]["data"]
-    payment_intent_id = payments[0]["payment_intent"]
+    # API Stripe ≥ 2025-03-31: InvoicePayment.payment_intent está em .payment.payment_intent
+    invoice_payments = stripe_sub["latest_invoice"]["payments"]["data"]
+    inv_payment = invoice_payments[0]
+
+    # Estrutura nova: { "payment": { "payment_intent": "pi_xxx", "type": "payment_intent" } }
+    try:
+        payment_intent_id = inv_payment["payment"]["payment_intent"]
+    except KeyError:
+        import logging
+        logging.error("InvoicePayment keys: %s", list(inv_payment.keys()))
+        for k, v in inv_payment.items():
+            logging.error("  %s = %r", k, v)
+        raise
+
     payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
 
     return {
@@ -137,7 +150,8 @@ def list_payment_methods(tenant: Tenant) -> list[dict]:
         return []
 
     customer = stripe.Customer.retrieve(tenant.stripe_customer_id)
-    default_pm = customer.get("invoice_settings", {}).get("default_payment_method")
+    invoice_settings = getattr(customer, "invoice_settings", None)
+    default_pm = getattr(invoice_settings, "default_payment_method", None) if invoice_settings else None
 
     pms = stripe.PaymentMethod.list(
         customer=tenant.stripe_customer_id,
@@ -159,6 +173,23 @@ def list_payment_methods(tenant: Tenant) -> list[dict]:
         )
 
     return result
+
+
+def set_default_payment_method(tenant: Tenant, pm_id: str) -> None:
+    if not tenant.stripe_customer_id:
+        raise HTTPException(status_code=400, detail="Cliente Stripe não encontrado")
+    stripe.Customer.modify(
+        tenant.stripe_customer_id,
+        invoice_settings={"default_payment_method": pm_id},
+    )
+
+
+def detach_payment_method(tenant: Tenant, pm_id: str) -> None:
+    # Verifica que o PM pertence ao customer antes de remover
+    pm = stripe.PaymentMethod.retrieve(pm_id)
+    if getattr(pm, "customer", None) != tenant.stripe_customer_id:
+        raise HTTPException(status_code=403, detail="Cartão não pertence a este cliente")
+    stripe.PaymentMethod.detach(pm_id)
 
 
 def create_setup_intent(tenant: Tenant, user_email: str, db: Session) -> str:
@@ -188,8 +219,12 @@ def handle_webhook_event(payload: bytes, sig_header: str) -> None:
     try:
         event_type = event["type"]
 
-        if event_type == "invoice.payment_succeeded":
+        if event_type in ("invoice.payment_succeeded", "invoice.paid"):
             _on_invoice_paid(db, event["data"]["object"])
+
+        elif event_type == "invoice_payment.paid":
+            # Stripe ≥ 2025-03-31: novo evento granular de pagamento
+            _on_invoice_payment_paid(db, event["data"]["object"])
 
         elif event_type == "invoice.payment_failed":
             _on_invoice_failed(db, event["data"]["object"])
@@ -201,21 +236,27 @@ def handle_webhook_event(payload: bytes, sig_header: str) -> None:
         db.close()
 
 
-def _on_invoice_paid(db: Session, invoice: dict) -> None:
-    stripe_sub_id = invoice.get("subscription")
+def _on_invoice_paid(db: Session, invoice) -> None:
+    stripe_sub_id = getattr(invoice, "subscription", None)
     if not stripe_sub_id:
         return
 
-    stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
-    period_end = datetime.fromtimestamp(stripe_sub["current_period_end"], tz=timezone.utc)
+    # Stripe ≥ 2025-03-31: current_period_end foi removido de Subscription.
+    # O período correto está no próprio objeto Invoice (period_end).
+    period_end_ts = getattr(invoice, "period_end", None)
+    period_end = (
+        datetime.fromtimestamp(period_end_ts, tz=timezone.utc)
+        if period_end_ts
+        else datetime.now(timezone.utc) + timedelta(days=30)
+    )
 
     sub = _repo.get_by_stripe_subscription_id(db, stripe_sub_id)
     if sub:
         _repo.update(db, sub, {"status": "active", "current_period_end": period_end})
 
 
-def _on_invoice_failed(db: Session, invoice: dict) -> None:
-    stripe_sub_id = invoice.get("subscription")
+def _on_invoice_failed(db: Session, invoice) -> None:
+    stripe_sub_id = getattr(invoice, "subscription", None)
     if not stripe_sub_id:
         return
 
@@ -224,24 +265,50 @@ def _on_invoice_failed(db: Session, invoice: dict) -> None:
         _repo.update(db, sub, {"status": "past_due"})
 
 
-def _on_subscription_updated(db: Session, stripe_sub: dict) -> None:
+def _on_subscription_updated(db: Session, stripe_sub) -> None:
     sub = _repo.get_by_stripe_subscription_id(db, stripe_sub["id"])
     if not sub:
         return
 
-    period_end = datetime.fromtimestamp(stripe_sub["current_period_end"], tz=timezone.utc)
     status = stripe_sub["status"]
 
     canceled_at = None
-    if stripe_sub.get("canceled_at"):
-        canceled_at = datetime.fromtimestamp(stripe_sub["canceled_at"], tz=timezone.utc)
+    raw_canceled = getattr(stripe_sub, "canceled_at", None)
+    if raw_canceled:
+        canceled_at = datetime.fromtimestamp(raw_canceled, tz=timezone.utc)
 
+    # current_period_end é atualizado apenas via invoice.payment_succeeded
     _repo.update(
         db,
         sub,
         {
             "status": status,
-            "current_period_end": period_end,
             "canceled_at": canceled_at,
         },
     )
+
+
+def _on_invoice_payment_paid(db: Session, inv_payment) -> None:
+    """Handler para invoice_payment.paid (Stripe ≥ 2025-03-31)."""
+    stripe_sub_id = getattr(inv_payment, "subscription", None)
+    if not stripe_sub_id:
+        # Tenta pelo invoice expandido
+        invoice = getattr(inv_payment, "invoice", None)
+        stripe_sub_id = getattr(invoice, "subscription", None) if invoice else None
+    if not stripe_sub_id:
+        return
+
+    period_end_ts = getattr(inv_payment, "period_end", None)
+    if period_end_ts is None:
+        invoice = getattr(inv_payment, "invoice", None)
+        period_end_ts = getattr(invoice, "period_end", None) if invoice else None
+
+    period_end = (
+        datetime.fromtimestamp(period_end_ts, tz=timezone.utc)
+        if period_end_ts
+        else datetime.now(timezone.utc) + timedelta(days=30)
+    )
+
+    sub = _repo.get_by_stripe_subscription_id(db, stripe_sub_id)
+    if sub:
+        _repo.update(db, sub, {"status": "active", "current_period_end": period_end})

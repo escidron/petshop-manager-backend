@@ -64,8 +64,24 @@ def setup_payment_method(
     ctx: dict = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    """Cria um SetupIntent para trocar o cartão sem cobrar nada."""
+    """Cria um SetupIntent para adicionar cartão sem cobrar nada."""
     tenant = ctx["tenant"]
     user = ctx["user"]
     client_secret = service.create_setup_intent(tenant, user.email, db)
     return {"client_secret": client_secret}
+
+
+@router.post("/payment-methods/{pm_id}/default", status_code=204)
+def set_default(
+    pm_id: str,
+    ctx: dict = Depends(require_owner),
+):
+    service.set_default_payment_method(ctx["tenant"], pm_id)
+
+
+@router.delete("/payment-methods/{pm_id}", status_code=204)
+def remove_payment_method(
+    pm_id: str,
+    ctx: dict = Depends(require_owner),
+):
+    service.detach_payment_method(ctx["tenant"], pm_id)

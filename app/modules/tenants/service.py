@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -54,7 +54,7 @@ class TenantService:
                 detail="Invalid plan",
             )
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # 5️⃣ Criar Subscription
         if plan.trial_days > 0:
@@ -69,13 +69,14 @@ class TenantService:
                 current_period_end=trial_end,
             )
         else:
+            # Plano pago sem trial: cria como "incomplete" até o pagamento ser confirmado via webhook
             period_end = now + timedelta(days=30)
 
             self.subscription_repository.create(
                 db=db,
                 tenant_id=tenant.id,
                 plan_id=plan.id,
-                status="active",
+                status="incomplete",
                 current_period_end=period_end,
             )
 
