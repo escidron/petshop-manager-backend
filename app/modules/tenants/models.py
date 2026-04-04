@@ -32,7 +32,7 @@ class Tenant(Base):
         default="services",
         nullable=False,
     )
-    stripe_customer_id: Mapped[str | None] = mapped_column(
+    pagarme_customer_id: Mapped[str | None] = mapped_column(
         String(100), nullable=True, unique=True
     )
 

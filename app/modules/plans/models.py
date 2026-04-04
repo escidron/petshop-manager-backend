@@ -24,7 +24,7 @@ class Plan(Base):
 
     trial_days: Mapped[int] = mapped_column(default=0)
 
-    stripe_price_id: Mapped[str | None] = mapped_column(
+    pagarme_plan_id: Mapped[str | None] = mapped_column(
         String(100), nullable=True
     )
 

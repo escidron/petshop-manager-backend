@@ -122,6 +122,17 @@ def require_active_subscription(
     now = datetime.now(timezone.utc)
 
     if sub.status == "active":
+        # PIX não tem subscription recorrente: verifica se o período ainda é válido
+        if sub.payment_method == "pix":
+            period_end = sub.current_period_end
+            if period_end is not None:
+                if period_end.tzinfo is None:
+                    period_end = period_end.replace(tzinfo=timezone.utc)
+                if now > period_end:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="subscription_required",
+                    )
         return context
 
     if sub.status == "trialing":

@@ -14,7 +14,7 @@ class SubscriptionRepository:
         status: str,
         current_period_end: datetime,
         trial_ends_at: datetime | None = None,
-        stripe_subscription_id: str | None = None,
+        pagarme_subscription_id: str | None = None,
     ) -> Subscription:
         subscription = Subscription(
             tenant_id=tenant_id,
@@ -22,7 +22,7 @@ class SubscriptionRepository:
             status=status,
             trial_ends_at=trial_ends_at,
             current_period_end=current_period_end,
-            stripe_subscription_id=stripe_subscription_id,
+            pagarme_subscription_id=pagarme_subscription_id,
         )
 
         db.add(subscription)
@@ -38,12 +38,12 @@ class SubscriptionRepository:
             .first()
         )
 
-    def get_by_stripe_subscription_id(
-        self, db: Session, stripe_subscription_id: str
+    def get_by_pagarme_subscription_id(
+        self, db: Session, pagarme_subscription_id: str
     ) -> Subscription | None:
         return (
             db.query(Subscription)
-            .filter(Subscription.stripe_subscription_id == stripe_subscription_id)
+            .filter(Subscription.pagarme_subscription_id == pagarme_subscription_id)
             .first()
         )
 
