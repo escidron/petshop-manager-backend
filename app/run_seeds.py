@@ -9,7 +9,7 @@ def run_seed():
     try:
         seed_plans(db)
         seed_tenant_types(db)
-        print("Required metadata seeded successfully 🚀")
+        print("Required metadata seeded successfully 🚀.")
     finally:
         db.close()
 
