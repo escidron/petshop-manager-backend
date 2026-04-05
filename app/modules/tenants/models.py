@@ -22,6 +22,7 @@ class Tenant(Base):
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    document: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     type_id: Mapped[int] = mapped_column(
         ForeignKey("tenant_types.id"),

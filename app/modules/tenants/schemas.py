@@ -11,6 +11,7 @@ class TenantBase(BaseModel):
     phone:str
     plan_code: str
     onboarding_step: str = "services"
+    document: Optional[str] = None
 
 class TenantCreate(TenantBase):
     pass
@@ -19,6 +20,7 @@ class TenantCreate(TenantBase):
 class TenantUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
+    document: Optional[str] = None
     type_id: Optional[int] = None
     is_active: Optional[bool] = None
 
@@ -35,6 +37,7 @@ class TenantResponse(BaseModel):
     id: int
     name: str
     phone: str
+    document: Optional[str] = None
     is_active: bool
     onboarding_step: str
     created_at: datetime
