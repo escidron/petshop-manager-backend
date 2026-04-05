@@ -35,6 +35,7 @@ def checkout(
         payment_method=body.payment_method,
         document=body.document,
         billing_address=body.billing_address.model_dump() if body.billing_address else None,
+        start_at=body.start_at,
     )
 
 

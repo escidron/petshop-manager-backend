@@ -19,6 +19,7 @@ class CheckoutRequest(BaseModel):
     card_token: Optional[str] = None     # obrigatório se payment_method == "credit_card"
     document: Optional[str] = None       # CPF ou CNPJ do titular
     billing_address: Optional[BillingAddressSchema] = None
+    start_at: Optional[str] = None       # ISO 8601 — para migrar de PIX para cartão sem sobreposição
 
 
 class CheckoutResponse(BaseModel):

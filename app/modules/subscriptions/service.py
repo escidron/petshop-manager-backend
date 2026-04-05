@@ -97,6 +97,7 @@ def create_checkout(
     payment_method: str = "credit_card",
     document: str | None = None,
     billing_address: dict | None = None,
+    start_at: str | None = None,
 ) -> dict:
     plan: Plan | None = db.query(Plan).filter(Plan.code == plan_code, Plan.is_active == True).first()
 
@@ -155,6 +156,8 @@ def create_checkout(
         "payment_method": "credit_card",
         "card_id": card_resp.json()["id"],
     }
+    if start_at:
+        sub_payload["start_at"] = start_at
 
     with _pagarme_client() as client:
         resp = client.post("/subscriptions", json=sub_payload)
@@ -171,7 +174,14 @@ def create_checkout(
     period_end = datetime.now(timezone.utc) + timedelta(days=30)
 
     existing = _repo.get_active_by_tenant(db, tenant.id)
-    if existing:
+    if existing and start_at:
+        # Migração PIX→Cartão: período atual já está pago via PIX.
+        # Mantém status e current_period_end — só troca o ID e o método.
+        _repo.update(db, existing, {
+            "pagarme_subscription_id": pagarme_sub["id"],
+            "payment_method": "card",
+        })
+    elif existing:
         _repo.update(db, existing, {
             "plan_id": plan.id,
             "status": _map_status(pagarme_sub.get("status", "pending")),
@@ -303,7 +313,8 @@ def cancel_subscription(db: Session, tenant: Tenant) -> Subscription:
     if not sub:
         raise HTTPException(status_code=404, detail="Assinatura não encontrada")
 
-    if sub.pagarme_subscription_id:
+    # PIX usa cobranças avulsas (charge ID), não subscriptions — não há subscription para cancelar no Pagar.me
+    if sub.pagarme_subscription_id and sub.payment_method != "pix":
         with _pagarme_client() as client:
             resp = client.delete(f"/subscriptions/{sub.pagarme_subscription_id}")
             if resp.status_code not in (200, 204):
@@ -478,8 +489,15 @@ def _on_subscription_created(db: Session, data: dict) -> None:
         return
 
     sub = _repo.get_by_pagarme_subscription_id(db, sub_id)
-    if sub:
-        _repo.update(db, sub, {"status": _map_status(data.get("status", "pending"))})
+    if not sub:
+        return
+
+    # Subscription futura (start_at no futuro): status "future" no Pagar.me não deve
+    # sobrescrever uma subscription já ativa (ex: migração PIX→Cartão agendada)
+    if sub.status == "active" and data.get("status") == "future":
+        return
+
+    _repo.update(db, sub, {"status": _map_status(data.get("status", "pending"))})
 
 
 def _on_pix_charge_paid(db: Session, data: dict) -> None:
