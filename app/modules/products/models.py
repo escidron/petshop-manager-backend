@@ -43,6 +43,39 @@ class Product(Base):
         Integer, default=0
     )
 
+    barcode: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    
+    ncm: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    
+    cest: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    
+    cfop: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    
+    csosn: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    
+    cst_pis: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    
+    cst_cofins: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+
+    supplier_id: Mapped[int | None] = mapped_column(
+        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     min_stock: Mapped[int] = mapped_column(
         Integer, default=0
     )

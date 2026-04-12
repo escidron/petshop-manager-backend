@@ -11,6 +11,16 @@ class ProductBase(BaseModel):
     cost: Optional[float] = None
     quantity: int = 0
     min_stock: int = 0
+    
+    barcode: Optional[str] = None
+    ncm: Optional[str] = None
+    cest: Optional[str] = None
+    cfop: Optional[str] = None
+    csosn: Optional[str] = None
+    cst_pis: Optional[str] = None
+    cst_cofins: Optional[str] = None
+    supplier_id: Optional[int] = None
+    
     is_active: bool = True
 
 
@@ -27,6 +37,16 @@ class ProductUpdate(BaseModel):
     cost: Optional[float] = None
     quantity: Optional[int] = None
     min_stock: Optional[int] = None
+    
+    barcode: Optional[str] = None
+    ncm: Optional[str] = None
+    cest: Optional[str] = None
+    cfop: Optional[str] = None
+    csosn: Optional[str] = None
+    cst_pis: Optional[str] = None
+    cst_cofins: Optional[str] = None
+    supplier_id: Optional[int] = None
+    
     is_active: Optional[bool] = None
 
 

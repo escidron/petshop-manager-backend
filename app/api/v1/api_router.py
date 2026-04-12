@@ -14,10 +14,12 @@ from app.modules.sales.router import router as sales_router
 from app.modules.client_packages.router import router as client_packages_router
 from app.modules.subscriptions.router import router as subscriptions_router
 from app.modules.webhooks.router import router as webhooks_router
+from app.modules.suppliers.router import router as suppliers_router
 
 api_router = APIRouter()
 
 api_router.include_router(users_router)
+api_router.include_router(suppliers_router)
 api_router.include_router(clients_router)
 api_router.include_router(tenants_router)
 api_router.include_router(pets_router)
