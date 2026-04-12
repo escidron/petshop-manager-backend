@@ -113,14 +113,19 @@ def delete_appointment(
 @router.post(
     "/{appointment_id}/actions",
     response_model=AppointmentResponse,
-    dependencies=[Depends(require_active_subscription)],
 )
 def appointment_action(
     appointment_id: int,
     data: AppointmentActionRequest,
     request: Request,
     db: Session = Depends(get_db),
+    tenant_ctx: dict = Depends(get_current_tenant),
 ):
+    from app.modules.appointments.models import AppointmentAction
+    
+    if data.action != AppointmentAction.CANCEL:
+        require_active_subscription(tenant_ctx)
+
     tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().apply_action(
         db=db,
