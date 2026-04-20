@@ -1,27 +1,28 @@
-[tool.poetry]
+[project]
 name = "petshop-manager"
 version = "0.1.0"
 description = ""
-authors = ["escidron <eduardosanchezcidron@gmail.com>"]
+authors = [
+    { name = "escidron", email = "eduardosanchezcidron@gmail.com" }
+]
+dependencies = [
+    "fastapi>=0.128.0",
+    "uvicorn>=0.40.0",
+    "email-validator>=2.3.0",
+    "sqlalchemy>=2.0.45",
+    "pydantic-settings>=2.12.0",
+    "psycopg2-binary>=2.9.11",
+    "psycopg>=3.3.2",
+    "alembic>=1.18.1",
+    "python-jose>=3.5.0",
+    "passlib[argon2]>=1.7.4",
+    "argon2-cffi>=23.1.0",
+    "httpx>=0.28.1",
+]
+requires-python = ">=3.12,<3.14"
+
+[tool.poetry]
 package-mode = false
-
-[tool.poetry.dependencies]
-python = ">=3.12,<3.14"
-
-fastapi = "^0.128.0"
-uvicorn = "^0.40.0"
-email-validator = "^2.3.0"
-sqlalchemy = "^2.0.45"
-pydantic-settings = "^2.12.0"
-psycopg2-binary = "^2.9.11"
-psycopg = "^3.3.2"
-alembic = "^1.18.1"
-
-python-jose = "^3.5.0"
-passlib = { version = "^1.7.4", extras = ["argon2"] }
-argon2-cffi = "^23.1.0"
-httpx = "^0.28.1"
-
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
