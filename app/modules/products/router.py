@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Request
+import io
+from fastapi import APIRouter, Depends, Request, File, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant
@@ -76,3 +78,31 @@ def list_low_stock_products(request: Request, db: Session = Depends(get_db)):
     tenant_id = request.state.tenant_user.tenant_id
     all_products = service.list_products(db, tenant_id)
     return [p for p in all_products if p.quantity <= p.min_stock]
+
+@router.get("/import/template")
+def get_import_template():
+    # BOM for UTF-8 (essential for Excel to recognize UTF-8 correctly)
+    bom = "\ufeff"
+    header = "nome,sku,descricao,categoria,preco_venda,custo,quantidade,estoque_minimo,codigo_barras,ncm,cest,cfop,csosn,cst_pis,cst_cofins\n"
+    example = "Produto Exemplo,SKU-001,Descrição do produto,Categoria Exemplo,29.90,15.00,10,2,7891234567890,3801.10.00,01.001.00,5102,102,01,01"
+    content = bom + header + example
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=template_produtos.csv"}
+    )
+
+@router.post("/import")
+async def import_products(
+    file: UploadFile = File(...),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    service = ProductService()
+    tenant_id = request.state.tenant_user.tenant_id
+    content = await file.read()
+    try:
+        return await service.import_products_from_csv(db, tenant_id, content.decode("utf-8-sig"))
+    except UnicodeDecodeError:
+        # Try latin-1 if utf-8 fails (common with Excel CSV exports in Brazil)
+        return await service.import_products_from_csv(db, tenant_id, content.decode("latin-1"))
