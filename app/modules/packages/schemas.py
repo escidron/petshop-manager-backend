@@ -20,6 +20,7 @@ class PackageBase(BaseModel):
     name: str
     description: Optional[str] = None
     price_cents: int
+    validity_days: Optional[int] = None
     is_active: bool = True
 
 class PackageCreate(PackageBase):
@@ -29,6 +30,7 @@ class PackageUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     price_cents: Optional[int] = None
+    validity_days: Optional[int] = None
     is_active: Optional[bool] = None
     items: Optional[List[PackageItemCreate]] = None
 

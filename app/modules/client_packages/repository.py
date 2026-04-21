@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session, selectinload
 from .models import ClientPackage, ClientPackageCredit
-
+from datetime import datetime
 
 class ClientPackageRepository:
     def create(
@@ -12,6 +12,7 @@ class ClientPackageRepository:
         package_id: int,
         package_name: str,
         credits_data: list[dict],
+        expires_at: datetime | None = None,
     ) -> ClientPackage:
         client_package = ClientPackage(
             tenant_id=tenant_id,
@@ -19,6 +20,7 @@ class ClientPackageRepository:
             pet_id=pet_id,
             package_id=package_id,
             package_name=package_name,
+            expires_at=expires_at,
         )
         db.add(client_package)
         db.flush()
@@ -108,6 +110,7 @@ class ClientPackageRepository:
                 ClientPackage.is_active == True,
                 ClientPackageCredit.service_id == service_id,
                 ClientPackageCredit.used_qty < ClientPackageCredit.total_qty,
+                (ClientPackage.expires_at == None) | (ClientPackage.expires_at > func.now()),
             )
             .order_by(ClientPackage.created_at)
             .first()

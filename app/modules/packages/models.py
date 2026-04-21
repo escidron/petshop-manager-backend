@@ -14,6 +14,7 @@ class Package(Base):
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    validity_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     items = relationship("PackageItem", back_populates="package", cascade="all, delete-orphan")

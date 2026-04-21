@@ -28,6 +28,7 @@ class ClientPackageResponse(BaseModel):
     package_name: str
     is_active: bool
     created_at: datetime
+    expires_at: datetime | None
     credits: list[ClientPackageCreditResponse]
 
     class Config:

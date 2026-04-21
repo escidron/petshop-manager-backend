@@ -63,6 +63,11 @@ class ClientPackageService:
             for item in service_items
         ]
 
+        expires_at = None
+        if package.validity_days:
+            from datetime import UTC, datetime, timedelta
+            expires_at = datetime.now(UTC) + timedelta(days=package.validity_days)
+
         return self.repo.create(
             db=db,
             tenant_id=tenant_id,
@@ -71,6 +76,7 @@ class ClientPackageService:
             package_id=package.id,
             package_name=package.name,
             credits_data=credits_data,
+            expires_at=expires_at,
         )
 
     def list_by_pet(
