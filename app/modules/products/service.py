@@ -51,6 +51,8 @@ class ProductService:
             db, tenant_id, product_id, quantity_change, change_type, notes
         )
         db.commit()
+        db.refresh(product)
+        return product
     async def import_products_from_csv(self, db: Session, tenant_id: int, csv_content: str):
         f = io.StringIO(csv_content)
         # We try to detect the delimiter (comma or semicolon are common in Brazil)
