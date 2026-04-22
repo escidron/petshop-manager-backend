@@ -1,6 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel
-
+from pydantic import BaseModel, ConfigDict
+from app.modules.tenant_services.schemas import ServiceResponse
 
 class ClientPackageCreditResponse(BaseModel):
     id: int
@@ -9,9 +9,9 @@ class ClientPackageCreditResponse(BaseModel):
     total_qty: int
     used_qty: int
     remaining_qty: int
+    service: ServiceResponse | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ClientPackageSellRequest(BaseModel):
@@ -31,5 +31,4 @@ class ClientPackageResponse(BaseModel):
     expires_at: datetime | None
     credits: list[ClientPackageCreditResponse]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

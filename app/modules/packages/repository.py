@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from .models import Package, PackageItem
 from .schemas import PackageCreate, PackageUpdate, PackageItemCreate
 
@@ -30,6 +30,10 @@ class PackageRepository:
     def get_by_id(self, db: Session, tenant_id: int, package_id: int) -> Package | None:
         return (
             db.query(Package)
+            .options(
+                joinedload(Package.items).joinedload(PackageItem.service),
+                joinedload(Package.items).joinedload(PackageItem.product),
+            )
             .filter(
                 Package.id == package_id,
                 Package.tenant_id == tenant_id,
@@ -40,6 +44,10 @@ class PackageRepository:
     def list(self, db: Session, tenant_id: int) -> list[Package]:
         return (
             db.query(Package)
+            .options(
+                joinedload(Package.items).joinedload(PackageItem.service),
+                joinedload(Package.items).joinedload(PackageItem.product),
+            )
             .filter(Package.tenant_id == tenant_id)
             .order_by(Package.name)
             .all()

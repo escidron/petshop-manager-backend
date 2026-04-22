@@ -1,5 +1,8 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
+
+from app.modules.tenant_services.schemas import ServiceResponse
+from app.modules.products.schemas import ProductResponse
 
 class PackageItemBase(BaseModel):
     service_id: Optional[int] = None
@@ -12,9 +15,10 @@ class PackageItemCreate(PackageItemBase):
 class PackageItem(PackageItemBase):
     id: int
     package_id: int
+    service: Optional[ServiceResponse] = None
+    product: Optional[ProductResponse] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PackageBase(BaseModel):
     name: str
@@ -39,5 +43,4 @@ class Package(PackageBase):
     tenant_id: int
     items: List[PackageItem]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

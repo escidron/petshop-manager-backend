@@ -43,7 +43,9 @@ class ClientPackageRepository:
     def get_by_id(self, db: Session, client_package_id: int) -> ClientPackage | None:
         return (
             db.query(ClientPackage)
-            .options(selectinload(ClientPackage.credits))
+            .options(
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service)
+            )
             .filter(ClientPackage.id == client_package_id)
             .first()
         )
@@ -53,7 +55,9 @@ class ClientPackageRepository:
     ) -> ClientPackage | None:
         return (
             db.query(ClientPackage)
-            .options(selectinload(ClientPackage.credits))
+            .options(
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service)
+            )
             .filter(
                 ClientPackage.id == client_package_id,
                 ClientPackage.tenant_id == tenant_id,
@@ -66,7 +70,9 @@ class ClientPackageRepository:
     ) -> list[ClientPackage]:
         return (
             db.query(ClientPackage)
-            .options(selectinload(ClientPackage.credits))
+            .options(
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service)
+            )
             .filter(
                 ClientPackage.tenant_id == tenant_id,
                 ClientPackage.pet_id == pet_id,
@@ -81,7 +87,9 @@ class ClientPackageRepository:
     ) -> list[ClientPackage]:
         return (
             db.query(ClientPackage)
-            .options(selectinload(ClientPackage.credits))
+            .options(
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service)
+            )
             .filter(
                 ClientPackage.tenant_id == tenant_id,
                 ClientPackage.client_id == client_id,
