@@ -12,7 +12,7 @@ CommissionStatus = Literal["pending", "paid"]
 class CommissionRuleBase(BaseModel):
     name: str
     employee_id: Optional[int] = None
-    service_id: Optional[int] = None
+    service_ids: List[int] = []
     applies_to: AppliesTo = "service"
     commission_type: CommissionType
     value: Decimal
@@ -28,7 +28,7 @@ class CommissionRuleCreate(CommissionRuleBase):
 class CommissionRuleUpdate(BaseModel):
     name: Optional[str] = None
     employee_id: Optional[int] = None
-    service_id: Optional[int] = None
+    service_ids: Optional[List[int]] = None  # None = não altera; [] = limpa todos
     applies_to: Optional[AppliesTo] = None
     commission_type: Optional[CommissionType] = None
     value: Optional[Decimal] = None
@@ -70,17 +70,6 @@ class CommissionPayRequest(BaseModel):
     employee_id: int
     entry_ids: List[int]
     notes: Optional[str] = None
-
-
-class CommissionReportEntry(BaseModel):
-    employee_id: int
-    employee_name: str
-    total_pending: Decimal
-    total_paid: Decimal
-    entries: List[CommissionEntryResponse]
-
-    class Config:
-        from_attributes = True
 
 
 class AssignEmployeeRequest(BaseModel):

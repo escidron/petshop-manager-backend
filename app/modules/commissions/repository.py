@@ -1,26 +1,37 @@
 from datetime import date
 from decimal import Decimal
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 
 from .models import CommissionRule, CommissionEntry
 from .schemas import CommissionRuleCreate, CommissionRuleUpdate
+from app.modules.tenant_services.models import Service
 
 
 def _specificity(rule: CommissionRule) -> int:
-    """employee+service=3, só employee=2, só service=1, global=0"""
+    """employee+services=3, só employee=2, só services=1, global=0"""
     score = 0
     if rule.employee_id is not None:
         score += 2
-    if rule.service_id is not None:
+    if rule.services:
         score += 1
     return score
 
 
 class CommissionRuleRepository:
+    def _load_services(self, db: Session, service_ids: list[int]) -> list[Service]:
+        if not service_ids:
+            return []
+        return db.query(Service).filter(Service.id.in_(service_ids)).all()
+
     def create(self, db: Session, tenant_id: int, data: CommissionRuleCreate) -> CommissionRule:
-        rule = CommissionRule(tenant_id=tenant_id, **data.model_dump())
+        rule = CommissionRule(
+            tenant_id=tenant_id,
+            **data.model_dump(exclude={"service_ids"}),
+        )
         db.add(rule)
+        db.flush()
+        rule.services = self._load_services(db, data.service_ids)
         db.commit()
         db.refresh(rule)
         return rule
@@ -28,6 +39,7 @@ class CommissionRuleRepository:
     def get_by_id(self, db: Session, tenant_id: int, rule_id: int) -> CommissionRule | None:
         return (
             db.query(CommissionRule)
+            .options(joinedload(CommissionRule.services))
             .filter(CommissionRule.id == rule_id, CommissionRule.tenant_id == tenant_id)
             .first()
         )
@@ -35,6 +47,7 @@ class CommissionRuleRepository:
     def list(self, db: Session, tenant_id: int) -> list[CommissionRule]:
         rules = (
             db.query(CommissionRule)
+            .options(joinedload(CommissionRule.services))
             .filter(CommissionRule.tenant_id == tenant_id)
             .order_by(CommissionRule.name)
             .all()
@@ -42,8 +55,12 @@ class CommissionRuleRepository:
         return sorted(rules, key=lambda r: -_specificity(r))
 
     def update(self, db: Session, rule: CommissionRule, data: CommissionRuleUpdate) -> CommissionRule:
-        for field, value in data.model_dump(exclude_unset=True).items():
+        for field, value in data.model_dump(exclude_unset=True, exclude={"service_ids"}).items():
             setattr(rule, field, value)
+
+        if "service_ids" in data.model_fields_set:
+            rule.services = self._load_services(db, data.service_ids or [])
+
         db.commit()
         db.refresh(rule)
         return rule
@@ -63,6 +80,7 @@ class CommissionRuleRepository:
     ) -> CommissionRule | None:
         candidates = (
             db.query(CommissionRule)
+            .options(joinedload(CommissionRule.services))
             .filter(
                 CommissionRule.tenant_id == tenant_id,
                 CommissionRule.is_active == True,
@@ -75,14 +93,16 @@ class CommissionRuleRepository:
         matching = [
             r for r in candidates
             if (r.employee_id is None or r.employee_id == employee_id)
-            and (r.service_id is None or r.service_id == service_id)
+            and (
+                not r.services
+                or (service_id is not None and service_id in {s.id for s in r.services})
+            )
             and (r.applies_to == "both" or r.applies_to == item_type)
         ]
 
         if not matching:
             return None
 
-        # Mais específica primeiro; desempate pelo id mais antigo
         return max(matching, key=lambda r: (_specificity(r), -r.id))
 
 

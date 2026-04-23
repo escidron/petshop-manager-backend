@@ -2,11 +2,19 @@ from datetime import date, datetime
 from decimal import Decimal
 from sqlalchemy import (
     String, Boolean, ForeignKey, DateTime, Date,
-    Numeric, func, Enum as SAEnum,
+    Numeric, func, Enum as SAEnum, Table, Column,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config.database import Base
+
+
+commission_rule_services = Table(
+    "commission_rule_services",
+    Base.metadata,
+    Column("rule_id", ForeignKey("commission_rules.id", ondelete="CASCADE"), primary_key=True),
+    Column("service_id", ForeignKey("services.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class CommissionRule(Base):
@@ -24,12 +32,6 @@ class CommissionRule(Base):
 
     employee_id: Mapped[int | None] = mapped_column(
         ForeignKey("employees.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-
-    service_id: Mapped[int | None] = mapped_column(
-        ForeignKey("services.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -59,6 +61,11 @@ class CommissionRule(Base):
     )
 
     employee = relationship("Employee", foreign_keys=[employee_id])
+    services = relationship("Service", secondary="commission_rule_services")
+
+    @property
+    def service_ids(self) -> list[int]:
+        return [s.id for s in self.services]
 
 
 class CommissionEntry(Base):
