@@ -14,10 +14,12 @@ class SaleItemBase(BaseModel):
 
 class SaleItemCreate(SaleItemBase):
     pet_id: int | None = None  # Para pacotes: gera ClientPackage automaticamente na venda
+    employee_id: int | None = None  # Funcionário responsável pelo item (gera comissão)
 
 class SaleItemResponse(SaleItemBase):
     id: int
     sale_id: int
+    employee_id: int | None = None
 
     class Config:
         from_attributes = True

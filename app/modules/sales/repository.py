@@ -27,7 +27,8 @@ class SalesRepository:
                 name=item.name,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
-                subtotal=item.subtotal
+                subtotal=item.subtotal,
+                employee_id=item.employee_id,
             )
             db.add(db_item)
 

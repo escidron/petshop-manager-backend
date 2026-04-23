@@ -1,3 +1,4 @@
+from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from typing import List
@@ -10,6 +11,7 @@ from app.modules.appointments.service import AppointmentService
 from app.modules.packages.service import PackageService
 from app.modules.client_packages.service import ClientPackageService
 from app.modules.client_packages.schemas import ClientPackageSellRequest
+from app.modules.commissions.service import CommissionService
 
 class SalesService:
     def __init__(self):
@@ -18,6 +20,7 @@ class SalesService:
         self.appointment_service = AppointmentService()
         self.package_service = PackageService()
         self.client_package_service = ClientPackageService()
+        self.commission_service = CommissionService()
 
     def create_sale(self, db: Session, tenant_id: int, data: SaleCreate) -> Sale:
         
@@ -79,7 +82,28 @@ class SalesService:
                         # Não bloqueia a venda se falhar ao criar o pacote do cliente
                         pass
 
-        # 4. If it's linked to an appointment, mark appointment as completed
+        # 4. Generate commission entries for items with employee_id
+        for item in sale.items:
+            if not item.employee_id:
+                continue
+            try:
+                self.commission_service.generate_entry(
+                    db=db,
+                    tenant_id=tenant_id,
+                    sale_id=sale.id,
+                    sale_item_id=item.id,
+                    employee_id=item.employee_id,
+                    service_id=item.item_id if item.item_type == "service" else None,
+                    item_type=item.item_type,
+                    subtotal=Decimal(str(item.subtotal)),
+                    ref_date=sale.created_at.date(),
+                )
+            except Exception:
+                pass  # Não bloqueia a venda se a geração de comissão falhar
+
+        db.commit()
+
+        # 5. If it's linked to an appointment, mark appointment as completed
         if data.appointment_id:
             try:
                 self.appointment_service.apply_action(
@@ -103,6 +127,41 @@ class SalesService:
 
     def list_sales(self, db: Session, tenant_id: int, skip: int = 0, limit: int = 100, start_date=None, end_date=None) -> List[Sale]:
         return self.repository.list(db, tenant_id, skip, limit, start_date=start_date, end_date=end_date)
+
+    def assign_employee_to_item(
+        self, db: Session, tenant_id: int, sale_id: int, item_id: int, employee_id: int
+    ) -> Sale:
+        sale = self.get_sale(db, tenant_id, sale_id)
+        item = next((i for i in sale.items if i.id == item_id), None)
+        if not item:
+            raise HTTPException(status_code=404, detail="Item não encontrado nesta venda.")
+        if item.employee_id is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Funcionário já atribuído a este item. Comissão existente não pode ser sobrescrita.",
+            )
+
+        item.employee_id = employee_id
+        db.flush()
+
+        try:
+            self.commission_service.generate_retroactive(
+                db=db,
+                tenant_id=tenant_id,
+                sale_id=sale.id,
+                sale_item_id=item.id,
+                employee_id=employee_id,
+                service_id=item.item_id if item.item_type == "service" else None,
+                item_type=item.item_type,
+                subtotal=Decimal(str(item.subtotal)),
+                ref_date=sale.created_at.date(),
+            )
+        except HTTPException:
+            pass
+
+        db.commit()
+        db.refresh(sale)
+        return sale
 
     def cancel_sale(self, db: Session, tenant_id: int, sale_id: int) -> Sale:
         sale = self.get_sale(db, tenant_id, sale_id)

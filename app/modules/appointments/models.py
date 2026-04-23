@@ -20,6 +20,7 @@ from app.config.database import Base
 
 from sqlalchemy import (
     Column,
+    Integer,
 )
 
 appointment_item_services = Table(
@@ -159,6 +160,11 @@ class AppointmentItem(Base):
     services = relationship(
         "Service",
         secondary="appointment_item_services",
+    )
+
+    employee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employees.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     coverages = relationship(

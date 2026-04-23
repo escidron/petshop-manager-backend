@@ -7,6 +7,7 @@ from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant
 from .schemas import SaleCreate, SaleResponse
 from .service import SalesService
+from app.modules.commissions.schemas import AssignEmployeeRequest
 
 router = APIRouter(prefix="/sales", tags=["PDV / Vendas"], dependencies=[Depends(get_current_tenant)])
 
@@ -44,3 +45,16 @@ def cancel_sale(sale_id: int, request: Request, db: Session = Depends(get_db)):
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
     return service.cancel_sale(db, tenant_id, sale_id)
+
+
+@router.patch("/{sale_id}/items/{item_id}/employee", response_model=SaleResponse)
+def assign_employee_to_item(
+    sale_id: int,
+    item_id: int,
+    data: AssignEmployeeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    service = SalesService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.assign_employee_to_item(db, tenant_id, sale_id, item_id, data.employee_id)

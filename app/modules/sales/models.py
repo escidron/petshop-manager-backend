@@ -108,4 +108,9 @@ class SaleItem(Base):
         Numeric(10, 2), nullable=False
     )
 
+    employee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employees.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     sale = relationship("Sale", back_populates="items")
