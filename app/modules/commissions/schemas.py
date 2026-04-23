@@ -16,7 +16,6 @@ class CommissionRuleBase(BaseModel):
     applies_to: AppliesTo = "service"
     commission_type: CommissionType
     value: Decimal
-    priority: int = 100
     valid_from: Optional[date] = None
     valid_until: Optional[date] = None
     is_active: bool = True
@@ -33,7 +32,6 @@ class CommissionRuleUpdate(BaseModel):
     applies_to: Optional[AppliesTo] = None
     commission_type: Optional[CommissionType] = None
     value: Optional[Decimal] = None
-    priority: Optional[int] = None
     valid_from: Optional[date] = None
     valid_until: Optional[date] = None
     is_active: Optional[bool] = None

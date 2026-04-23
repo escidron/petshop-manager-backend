@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from sqlalchemy import (
     String, Boolean, ForeignKey, DateTime, Date,
-    Numeric, Integer, func, Enum as SAEnum,
+    Numeric, func, Enum as SAEnum,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,8 +46,6 @@ class CommissionRule(Base):
     )
 
     value: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
-
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
 
     valid_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)

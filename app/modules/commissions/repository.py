@@ -7,6 +7,16 @@ from .models import CommissionRule, CommissionEntry
 from .schemas import CommissionRuleCreate, CommissionRuleUpdate
 
 
+def _specificity(rule: CommissionRule) -> int:
+    """employee+service=3, só employee=2, só service=1, global=0"""
+    score = 0
+    if rule.employee_id is not None:
+        score += 2
+    if rule.service_id is not None:
+        score += 1
+    return score
+
+
 class CommissionRuleRepository:
     def create(self, db: Session, tenant_id: int, data: CommissionRuleCreate) -> CommissionRule:
         rule = CommissionRule(tenant_id=tenant_id, **data.model_dump())
@@ -23,12 +33,13 @@ class CommissionRuleRepository:
         )
 
     def list(self, db: Session, tenant_id: int) -> list[CommissionRule]:
-        return (
+        rules = (
             db.query(CommissionRule)
             .filter(CommissionRule.tenant_id == tenant_id)
-            .order_by(CommissionRule.priority, CommissionRule.name)
+            .order_by(CommissionRule.name)
             .all()
         )
+        return sorted(rules, key=lambda r: -_specificity(r))
 
     def update(self, db: Session, rule: CommissionRule, data: CommissionRuleUpdate) -> CommissionRule:
         for field, value in data.model_dump(exclude_unset=True).items():
@@ -50,7 +61,7 @@ class CommissionRuleRepository:
         item_type: str,
         ref_date: date,
     ) -> CommissionRule | None:
-        rules = (
+        candidates = (
             db.query(CommissionRule)
             .filter(
                 CommissionRule.tenant_id == tenant_id,
@@ -58,20 +69,21 @@ class CommissionRuleRepository:
                 or_(CommissionRule.valid_from == None, CommissionRule.valid_from <= ref_date),
                 or_(CommissionRule.valid_until == None, CommissionRule.valid_until >= ref_date),
             )
-            .order_by(CommissionRule.priority.asc())
             .all()
         )
 
-        for rule in rules:
-            if rule.employee_id and rule.employee_id != employee_id:
-                continue
-            if rule.service_id and rule.service_id != service_id:
-                continue
-            if rule.applies_to != "both" and rule.applies_to != item_type:
-                continue
-            return rule
+        matching = [
+            r for r in candidates
+            if (r.employee_id is None or r.employee_id == employee_id)
+            and (r.service_id is None or r.service_id == service_id)
+            and (r.applies_to == "both" or r.applies_to == item_type)
+        ]
 
-        return None
+        if not matching:
+            return None
+
+        # Mais específica primeiro; desempate pelo id mais antigo
+        return max(matching, key=lambda r: (_specificity(r), -r.id))
 
 
 class CommissionEntryRepository:
