@@ -32,6 +32,18 @@ def create_appointment(
     return AppointmentService().create(db, tenant_id, data)
 
 
+@router.get(
+    "/open-invoices",
+    response_model=list[AppointmentResponse],
+)
+def list_open_invoices(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return AppointmentService().list_open_invoices(db, tenant_id)
+
+
 @router.get("/{appointment_id}", response_model=AppointmentResponse)
 def get_appointment(
     appointment_id: int,
@@ -85,6 +97,7 @@ def list_appointments_by_tenant(
     return AppointmentService().list_by_tenant(
         db, tenant_id, start_date=start_date, end_date=end_date
     )
+
 
 
 @router.patch("/{appointment_id}", response_model=AppointmentResponse, dependencies=[Depends(require_active_subscription)])

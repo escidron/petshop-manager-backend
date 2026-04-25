@@ -209,3 +209,37 @@ class AppointmentRepository:
             .filter(Appointment.id == appointment_id)
             .first()
         )
+
+    def list_open_invoices(
+        self,
+        db: Session,
+        tenant_id: int,
+    ) -> list[Appointment]:
+        """Appointments completed but not yet paid — the 'open tabs'.
+
+        is_paid is a Python property (not a DB column), so we use a NOT EXISTS
+        subquery against the sales table to detect unpaid appointments.
+        """
+        from app.modules.sales.models import Sale
+
+        # Subquery: any completed sale linked to this appointment?
+        paid_subquery = (
+            db.query(Sale.id)
+            .filter(
+                Sale.appointment_id == Appointment.id,
+                Sale.status == "completed",
+            )
+            .exists()
+        )
+
+        return (
+            db.query(Appointment)
+            .options(*_eager_options())
+            .filter(
+                Appointment.tenant_id == tenant_id,
+                Appointment.status == "completed",
+                ~paid_subquery,  # NOT EXISTS: no completed sale attached
+            )
+            .order_by(Appointment.scheduled_at.desc())
+            .all()
+        )

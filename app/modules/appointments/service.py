@@ -296,3 +296,6 @@ class AppointmentService:
             result = self.repo.get_with_relations(db, appointment.id)
 
         return result
+
+    def list_open_invoices(self, db: Session, tenant_id: int):
+        return self.repo.list_open_invoices(db, tenant_id)
