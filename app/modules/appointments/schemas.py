@@ -24,6 +24,7 @@ class ServiceInAppointmentResponse(BaseModel):
     price_cents: int
     duration_minutes: int | None = None
     is_package_covered: bool = False
+    employee_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -42,8 +43,9 @@ class AppointmentItemResponse(BaseModel):
     def attach_coverage(cls, data):
         if isinstance(data, dict):
             return data
-        # ORM object: injeta is_package_covered em cada serviço
+        # ORM object: injeta is_package_covered e employee_id em cada serviço
         covered_ids = {c.service_id for c in getattr(data, "coverages", [])}
+        emp_map = {item_svc.service_id: item_svc.employee_id for item_svc in getattr(data, "item_services", [])}
         services_data = [
             {
                 "id": svc.id,
@@ -51,6 +53,7 @@ class AppointmentItemResponse(BaseModel):
                 "price_cents": svc.price_cents,
                 "duration_minutes": getattr(svc, "duration_minutes", None),
                 "is_package_covered": svc.id in covered_ids,
+                "employee_id": emp_map.get(svc.id),
             }
             for svc in data.services
         ]
@@ -106,3 +109,16 @@ class AppointmentResponse(BaseModel):
 
 class AppointmentActionRequest(BaseModel):
     action: AppointmentAction
+
+
+# ============================================================
+# Assignment Schema
+# ============================================================
+
+class ServiceEmployeeAssignment(BaseModel):
+    appointment_item_id: int
+    service_id: int
+    employee_id: int | None
+
+class AppointmentEmployeeAssignmentRequest(BaseModel):
+    assignments: List[ServiceEmployeeAssignment]

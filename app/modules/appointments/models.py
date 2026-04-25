@@ -23,20 +23,21 @@ from sqlalchemy import (
     Integer,
 )
 
-appointment_item_services = Table(
-    "appointment_item_services",
-    Base.metadata,
-    Column(
-        "appointment_item_id",
+class AppointmentItemService(Base):
+    __tablename__ = "appointment_item_services"
+
+    appointment_item_id: Mapped[int] = mapped_column(
         ForeignKey("appointment_items.id", ondelete="CASCADE"),
         primary_key=True,
-    ),
-    Column(
-        "service_id",
+    )
+    service_id: Mapped[int] = mapped_column(
         ForeignKey("services.id", ondelete="CASCADE"),
         primary_key=True,
-    ),
-)
+    )
+    employee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employees.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 class AppointmentPackageCoverage(Base):
@@ -160,6 +161,12 @@ class AppointmentItem(Base):
     services = relationship(
         "Service",
         secondary="appointment_item_services",
+    )
+
+    item_services = relationship(
+        "AppointmentItemService",
+        cascade="all, delete-orphan",
+        viewonly=True, # Prevent it from interfering with `services`
     )
 
     employee_id: Mapped[int | None] = mapped_column(

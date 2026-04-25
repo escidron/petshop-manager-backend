@@ -10,6 +10,7 @@ from .schemas import (
     AppointmentCreate,
     AppointmentUpdate,
     AppointmentResponse,
+    AppointmentEmployeeAssignmentRequest,
 )
 from .service import AppointmentService
 
@@ -98,6 +99,18 @@ def update_appointment(
         db, tenant_id, appointment_id, data
     )
 
+
+@router.patch("/{appointment_id}/assign-employees", response_model=AppointmentResponse, dependencies=[Depends(require_active_subscription)])
+def assign_appointment_employees(
+    appointment_id: int,
+    data: AppointmentEmployeeAssignmentRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return AppointmentService().assign_employees(
+        db, tenant_id, appointment_id, data.assignments
+    )
 
 @router.delete("/{appointment_id}", status_code=204, dependencies=[Depends(require_active_subscription)])
 def delete_appointment(

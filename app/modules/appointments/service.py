@@ -180,6 +180,17 @@ class AppointmentService:
         db.commit()
 
         return self.repo.get_with_relations(db, appointment.id)
+        
+    def assign_employees(
+        self,
+        db: Session,
+        tenant_id: int,
+        appointment_id: int,
+        assignments: list,
+    ):
+        appointment = self.get(db, tenant_id, appointment_id)
+        return self.repo.assign_employees(db, appointment.id, assignments)
+
     # ---------- DELETE ----------
     def delete(
         self,

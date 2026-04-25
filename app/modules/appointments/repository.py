@@ -176,6 +176,21 @@ class AppointmentRepository:
             db.delete(item)
 
         db.flush()
+
+    def assign_employees(
+        self,
+        db: Session,
+        appointment_id: int,
+        assignments: list,
+    ) -> Appointment:
+        from .models import AppointmentItemService
+        for assignment in assignments:
+            db.query(AppointmentItemService).filter(
+                AppointmentItemService.appointment_item_id == assignment.appointment_item_id,
+                AppointmentItemService.service_id == assignment.service_id,
+            ).update({"employee_id": assignment.employee_id}, synchronize_session=False)
+        db.commit()
+        return self.get_with_relations(db, appointment_id)
         
     def save_action(self, db: Session, appointment: Appointment) -> Appointment:
         db.add(appointment)
