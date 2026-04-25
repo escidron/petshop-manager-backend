@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 from .models import ClientPackage, ClientPackageCredit
 from datetime import datetime
