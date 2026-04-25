@@ -13,13 +13,28 @@ class SaleItemBase(BaseModel):
     subtotal: float = Field(ge=0)
 
 class SaleItemCreate(SaleItemBase):
-    pet_id: int | None = None  # Para pacotes: gera ClientPackage automaticamente na venda
-    employee_id: int | None = None  # Funcionário responsável pelo item (gera comissão)
+    pet_id: int | None = None
+    employee_id: int | None = None
 
 class SaleItemResponse(SaleItemBase):
     id: int
     sale_id: int
     employee_id: int | None = None
+
+    class Config:
+        from_attributes = True
+
+# Nested helpers
+class ClientBrief(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+class AppointmentBrief(BaseModel):
+    id: int
+    client: ClientBrief
 
     class Config:
         from_attributes = True
@@ -44,6 +59,8 @@ class SaleResponse(SaleBase):
     tenant_id: int
     created_at: datetime
     items: list[SaleItemResponse] = []
+    client: ClientBrief | None = None
+    appointment: AppointmentBrief | None = None
 
     class Config:
         from_attributes = True
