@@ -23,7 +23,7 @@ class PetService:
         if not client:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Client not found",
+                detail="Cliente não encontrado",
             )
 
         return self.repository.create(db, tenant_id, data)
@@ -40,7 +40,7 @@ class PetService:
         if not pet:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Pet not found",
+                detail="Pet não encontrado",
             )
         return pet
 

@@ -23,7 +23,7 @@ class ClientService:
         if not client:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Client not found",
+                detail="Cliente não encontrado",
             )
         return client
 

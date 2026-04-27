@@ -31,7 +31,7 @@ class AuthService:
             if existing:
                 raise HTTPException(
                     status_code=400,
-                    detail="Email already registered"
+                    detail="E-mail já cadastrado"
                 )
 
             # 2️⃣ Criar user (SEM COMMIT)

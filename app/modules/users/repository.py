@@ -12,6 +12,6 @@ class UserRepository:
         user = db.query(User).filter(User.id == user_id).first()
 
         if not user:
-            return {"message": "User not found"}
+            return {"message": "Usuário não encontrado"}
 
         return user

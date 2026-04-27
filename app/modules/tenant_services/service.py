@@ -20,7 +20,7 @@ class ServiceService:
             db, tenant_id, service_id
         )
         if not service:
-            raise HTTPException(404, "Service not found")
+            raise HTTPException(404, "Serviço não encontrado")
         return service
 
     def update(self, db, tenant_id, service_id, data):

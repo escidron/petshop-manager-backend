@@ -18,7 +18,7 @@ class PackageService:
         if not package:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Package not found",
+                detail="Pacote não encontrado",
             )
         return package
 

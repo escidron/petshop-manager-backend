@@ -32,7 +32,7 @@ class TenantService:
         if not tenant_type:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid tenant type",
+                detail="Tipo de empresa inválido",
             )
 
         # 2️⃣ Criar Tenant
@@ -51,7 +51,7 @@ class TenantService:
         if not plan:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid plan",
+                detail="Plano inválido",
             )
 
         now = datetime.now(timezone.utc)
@@ -87,7 +87,7 @@ class TenantService:
         if not tenant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Tenant not found",
+                detail="Empresa não encontrada",
             )
         return tenant
 
@@ -109,7 +109,7 @@ class TenantService:
             if not tenant_type:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid tenant type",
+                    detail="Tipo de empresa inválido",
                 )
 
         return self.repository.update(db, tenant, data)
@@ -138,7 +138,7 @@ class TenantService:
             if existing.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already registered",
+                    detail="E-mail já cadastrado",
                 )
             # Reactivate previously deleted user
             existing.is_active = True
@@ -202,13 +202,13 @@ class TenantService:
         if user_id == requesting_user_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="You cannot remove yourself",
+                detail="Você não pode se remover",
             )
         removed = self.tenant_users_repository.soft_delete(db, user_id, tenant_id)
         if not removed:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found in this tenant",
+                detail="Usuário não encontrado nesta empresa",
             )
 
     def update_subscription(
@@ -221,7 +221,7 @@ class TenantService:
         if not subscription:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Subscription not found",
+                detail="Assinatura não encontrada",
             )
         return self.subscription_repository.update(
             db,

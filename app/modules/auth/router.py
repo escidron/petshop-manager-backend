@@ -62,7 +62,7 @@ def login(
     if not result:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
+            detail="Credenciais inválidas",
         )
 
     # Access token cookie
@@ -102,7 +102,7 @@ def refresh_token(
     if not refresh_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token missing",
+            detail="Token de atualização ausente",
         )
 
     payload = decode_token(refresh_token)
@@ -110,7 +110,7 @@ def refresh_token(
     if not payload or payload.get("expired"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+            detail="Token de atualização inválido",
         )
 
     new_access_token = create_access_token({

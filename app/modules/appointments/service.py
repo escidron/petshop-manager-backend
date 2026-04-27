@@ -50,7 +50,7 @@ class AppointmentService:
             .first()
         )
         if not client:
-            raise HTTPException(404, "Client not found")
+            raise HTTPException(404, "Cliente não encontrado")
 
         # 2️⃣ Criar appointment root
         appointment = self.repo.create(
@@ -103,7 +103,7 @@ class AppointmentService:
     ):
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
         if not appointment:
-            raise HTTPException(404, "Appointment not found")
+            raise HTTPException(404, "Agendamento não encontrado")
         return appointment
 
     def list_by_day(
@@ -219,7 +219,7 @@ class AppointmentService:
             .first()
         )
         if not pet:
-            raise HTTPException(404, "Pet not found")
+            raise HTTPException(404, "Pet não encontrado")
         
     def _get_services(
         self,
@@ -239,7 +239,7 @@ class AppointmentService:
 
         if len(services) != len(service_ids):
             raise HTTPException(
-                400, "One or more services are invalid"
+                400, "Um ou mais serviços são inválidos"
             )
 
         return services

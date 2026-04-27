@@ -74,7 +74,7 @@ def get_current_tenant(
     if not user or not tenant:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User or tenant not found",
+            detail="Usuário ou empresa não encontrada",
         )
     
     subscription_repo = SubscriptionRepository()
