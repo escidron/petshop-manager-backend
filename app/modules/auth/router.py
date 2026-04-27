@@ -135,10 +135,16 @@ def logout(response: Response):
     response.delete_cookie(
         key=settings.COOKIE_ACCESS_NAME,
         path="/",
+        httponly=True,
+        secure=True,
+        samesite="none",
     )
     response.delete_cookie(
         key=settings.COOKIE_REFRESH_NAME,
         path="/",
+        httponly=True,
+        secure=True,
+        samesite="none",
     )
     return {"ok": True}
 
