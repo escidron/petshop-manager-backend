@@ -46,6 +46,27 @@ class ServiceRepository:
             .first()
         )
 
+    def get_by_attributes(
+        self,
+        db: Session,
+        tenant_id: int,
+        name: str,
+        species: str | None = None,
+        size: str | None = None,
+        coat_type: str | None = None,
+    ) -> Service | None:
+        return (
+            db.query(Service)
+            .filter(
+                Service.tenant_id == tenant_id,
+                Service.name == name,
+                Service.species == species,
+                Service.size == size,
+                Service.coat_type == coat_type,
+            )
+            .first()
+        )
+
     def update(
         self,
         db: Session,
