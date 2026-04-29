@@ -9,7 +9,7 @@ from app.config.database import Base
 
 class EmployeeRole(str, Enum):
     GROOMER = "groomer"
-    VET = "vet"
+    BATHER = "bather"
     SALESPERSON = "salesperson"
     OTHER = "other"
 
