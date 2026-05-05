@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
@@ -82,6 +83,9 @@ def get_current_tenant(
     tenant.subscription = subscription
 
     request.state.tenant_user = tenant_user
+
+    # 🔐 Set RLS tenant ID for the session
+    db.execute(text("SET LOCAL app.current_tenant_id = :tid"), {"tid": tenant_id})
 
     return {
         "user": user,
