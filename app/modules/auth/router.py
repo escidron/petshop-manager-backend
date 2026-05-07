@@ -35,6 +35,7 @@ def signup(
         secure=True,
         samesite="none",
         path="/",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
     response.set_cookie(
@@ -44,6 +45,7 @@ def signup(
         secure=True,
         samesite="none",
         path="/",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )
 
     return result
@@ -73,6 +75,7 @@ def login(
         secure=True,
         samesite="none",
         path="/",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
     # Refresh token cookie
@@ -83,6 +86,7 @@ def login(
         secure=True,
         samesite="none",
         path="/",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )
     print('userxx',result)
     # Retorno mínimo (frontend não precisa do token)
@@ -126,6 +130,7 @@ def refresh_token(
         secure=True,
         samesite="none",
         path="/",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
     return {"ok": True}
