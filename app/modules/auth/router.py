@@ -148,6 +148,27 @@ def logout(response: Response):
     )
     return {"ok": True}
 
+@router.get("/logout")
+def logout_get(response: Response):
+    """
+    Versão GET do logout para permitir limpeza de cookies via link direto.
+    """
+    response.delete_cookie(
+        key=settings.COOKIE_ACCESS_NAME,
+        path="/",
+        httponly=True,
+        secure=True,
+        samesite="none",
+    )
+    response.delete_cookie(
+        key=settings.COOKIE_REFRESH_NAME,
+        path="/",
+        httponly=True,
+        secure=True,
+        samesite="none",
+    )
+    return {"ok": True, "message": "Sessão limpa com sucesso. Você pode tentar o login agora."}
+
 @router.get("/me", response_model=MeResponse)
 def me(current_data: dict = Depends(get_current_tenant)):
     return current_data
