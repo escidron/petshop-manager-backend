@@ -8,13 +8,17 @@ from app.modules.auth.schemas import AuthResponse, LoginInput, MeResponse, Signu
 from app.modules.auth.service import AuthService, authenticate_user
 from app.modules.auth.token import create_access_token, decode_token
 
+from app.config.limiter import limiter
+
 router = APIRouter(
     prefix="/auth",
     tags=["Auth"],
 )
 
 @router.post("/signup", response_model=AuthResponse)
+@limiter.limit("5/minute")
 def signup(
+    request: Request,
     payload: SignupRequest,
     response: Response,  # 👈 adicionar
     db: Session = Depends(get_db),
@@ -27,7 +31,7 @@ def signup(
         tenant_data=payload.tenant,
     )
 
-    # 🍪 Setar cookies aqui
+    #  Setar cookies aqui
     response.set_cookie(
         key=settings.COOKIE_ACCESS_NAME,
         value=result["access_token"],
@@ -51,7 +55,9 @@ def signup(
     return result
 
 @router.post("/login")
+@limiter.limit("5/minute")
 def login(
+    request: Request,
     data: LoginInput,
     response: Response,
     db: Session = Depends(get_db),
@@ -95,6 +101,7 @@ def login(
     }
 
 @router.post("/refresh")
+@limiter.limit("10/minute")
 def refresh_token(
     request: Request,
     response: Response,

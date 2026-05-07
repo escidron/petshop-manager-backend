@@ -86,14 +86,15 @@ def authenticate_user(
         .filter(User.email == email)
         .first()
     )
+    if not user:
+        return None
+
     # handle user having multiple tenants
     tenant: TenantUser | None = (
         db.query(TenantUser)
         .filter(TenantUser.user_id == user.id)
         .first()
     )
-    if not user:
-        return None
 
     if not verify_password(password, user.password):
         return None
