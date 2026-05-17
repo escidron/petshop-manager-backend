@@ -83,8 +83,8 @@ def list_low_stock_products(request: Request, db: Session = Depends(get_db)):
 def get_import_template():
     # BOM for UTF-8 (essential for Excel to recognize UTF-8 correctly)
     bom = "\ufeff"
-    header = "nome,sku,descricao,categoria,preco_venda,custo,quantidade,estoque_minimo,codigo_barras,ncm,cest,cfop,csosn,cst_pis,cst_cofins\n"
-    example = "Produto Exemplo,SKU-001,Descrição do produto,Categoria Exemplo,29.90,15.00,10,2,7891234567890,3801.10.00,01.001.00,5102,102,01,01"
+    header = "nome *,preco_venda *,sku,descricao,categoria,custo,quantidade,estoque_minimo,codigo_barras,ncm,cest,cfop,csosn,cst_pis,cst_cofins\n"
+    example = "Produto Exemplo,29.90,SKU-001,Descrição do produto,Categoria Exemplo,15.00,10,2,7891234567890,3801.10.00,01.001.00,5102,102,01,01"
     content = bom + header + example
     return StreamingResponse(
         io.BytesIO(content.encode("utf-8")),

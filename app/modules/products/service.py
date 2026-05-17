@@ -71,7 +71,7 @@ class ProductService:
             reader = csv.DictReader(f)
         
         # Header validation
-        fieldnames = [str(f).strip().lower() for f in (reader.fieldnames or [])]
+        fieldnames = [str(f).strip().lower().replace("*", "").strip() for f in (reader.fieldnames or [])]
         required_cols = ["nome", "preco_venda"]
         missing_cols = [col for col in required_cols if col not in fieldnames]
         
@@ -114,7 +114,7 @@ class ProductService:
         for row_idx, raw_row in enumerate(reader, start=2):
             try:
                 # Clean row: strip whitespace from keys and values, handle casing
-                row = {str(k).strip().lower(): str(v).strip() for k, v in raw_row.items() if k is not None}
+                row = {str(k).strip().lower().replace("*", "").strip(): str(v).strip() for k, v in raw_row.items() if k is not None}
                 
                 # Handle potential empty rows
                 if not any(row.values()):
@@ -143,7 +143,7 @@ class ProductService:
                     price=float(price),
                     cost=float(cost) if cost is not None else None,
                     quantity=int(row.get("quantidade") or 0),
-                    min_stock=max(1, int(row.get("estoque_minimo") or 1)),
+                    min_stock=int(row.get("estoque_minimo") or 0),
                     barcode=row.get("codigo_barras") or None,
                     ncm=row.get("ncm") or None,
                     cest=row.get("cest") or None,
