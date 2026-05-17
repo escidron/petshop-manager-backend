@@ -54,39 +54,94 @@ class ProductService:
         db.refresh(product)
         return product
     async def import_products_from_csv(self, db: Session, tenant_id: int, csv_content: str):
+        if not csv_content.strip():
+            return {"imported": 0, "errors": ["Arquivo CSV está vazio"]}
+
         f = io.StringIO(csv_content)
-        # We try to detect the delimiter (comma or semicolon are common in Brazil)
-        # But we'll stick to comma for the base template
-        reader = csv.DictReader(f)
         
+        try:
+            # Try to detect the delimiter (comma, semicolon, tab)
+            sample = csv_content[:4096]
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+            f.seek(0)
+            reader = csv.DictReader(f, dialect=dialect)
+        except Exception:
+            # Fallback to default if sniffer fails
+            f.seek(0)
+            reader = csv.DictReader(f)
+        
+        # Header validation
+        fieldnames = [str(f).strip().lower() for f in (reader.fieldnames or [])]
+        required_cols = ["nome", "preco_venda"]
+        missing_cols = [col for col in required_cols if col not in fieldnames]
+        
+        if missing_cols:
+            return {
+                "imported": 0, 
+                "errors": [f"Colunas obrigatórias ausentes no CSV: {', '.join(missing_cols)}"]
+            }
+
         imported_count = 0
         errors = []
         
-        for row_idx, row in enumerate(reader, start=2):
+        # Helper to parse prices/costs robustly
+        def parse_money(val_str):
+            if not val_str or str(val_str).strip() == "": 
+                return None
             try:
+                # Remove R$, whitespace, and dots used as thousand separators
+                # Brazilian format: 1.234,56 -> we want 1234.56
+                # US format: 1,234.56 -> we want 1234.56
+                cleaned = str(val_str).replace("R$", "").strip()
+                
+                # Check which one is the decimal separator
+                if "," in cleaned and "." in cleaned:
+                    # Mixed format: if comma comes after dot, it's Brazilian 1.234,56
+                    if cleaned.rfind(",") > cleaned.rfind("."):
+                        cleaned = cleaned.replace(".", "").replace(",", ".")
+                    else:
+                        # US format 1,234.56
+                        cleaned = cleaned.replace(",", "")
+                elif "," in cleaned:
+                    # Only comma: probably decimal separator unless it's used as thousand separator
+                    # In Brazil, 29,90 is common.
+                    cleaned = cleaned.replace(",", ".")
+                
+                return int(float(cleaned) * 100)
+            except (ValueError, TypeError):
+                return None
+
+        for row_idx, raw_row in enumerate(reader, start=2):
+            try:
+                # Clean row: strip whitespace from keys and values, handle casing
+                row = {str(k).strip().lower(): str(v).strip() for k, v in raw_row.items() if k is not None}
+                
                 # Handle potential empty rows
                 if not any(row.values()):
                     continue
                     
-                # Basic validation: Name and Price are strictly required
+                # Basic validation: Name is strictly required
                 name = row.get("nome")
                 if not name:
                     raise ValueError("Nome do produto é obrigatório")
                 
-                price_str = row.get("preco_venda", "0").replace(",", ".")
-                try:
-                    # Convert to cents as the system expects integer-like values in the price field
-                    price = int(float(price_str) * 100)
-                except ValueError:
-                    raise ValueError(f"Preço de venda inválido: {price_str}")
+                # Price is strictly required
+                raw_price = row.get("preco_venda")
+                price = parse_money(raw_price)
+                if price is None:
+                    raise ValueError("Preço de venda é obrigatório e deve ser um valor válido")
+                
+                # Cost is optional
+                raw_cost = row.get("custo")
+                cost = parse_money(raw_cost) if raw_cost else None
 
                 data = ProductCreate(
                     name=name,
                     sku=row.get("sku") or None,
                     description=row.get("descricao") or None,
                     category=row.get("categoria") or None,
-                    price=price,
-                    cost=int(float(row.get("custo").replace(",", ".")) * 100) if row.get("custo") else None,
+                    price=float(price),
+                    cost=float(cost) if cost is not None else None,
                     quantity=int(row.get("quantidade") or 0),
                     min_stock=max(1, int(row.get("estoque_minimo") or 1)),
                     barcode=row.get("codigo_barras") or None,
