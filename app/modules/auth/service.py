@@ -12,6 +12,11 @@ from app.modules.plans.repository import PlanRepository
 from app.modules.tenants.service import TenantService
 from app.modules.users.models import TenantUser, User
 from app.modules.users.service import UserService
+from app.modules.auth.models import PasswordResetOTP
+from app.services.email.service import EmailService
+import secrets
+import string
+from datetime import datetime, timedelta
 
 
 class AuthService:
@@ -19,6 +24,7 @@ class AuthService:
         self.user_service = UserService()
         self.tenant_service = TenantService()
         self.plan_repository = PlanRepository()
+        self.email_service = EmailService()
 
     def signup(self, db: Session, user_data, tenant_data):
 
@@ -47,6 +53,15 @@ class AuthService:
             # 4️⃣ Commit único
             db.commit()
 
+            # 5️⃣ Enviar email de boas-vindas (Assíncrono seria ideal, mas por ora direto)
+            try:
+                self.email_service.send_welcome_email(
+                    to_email=user.email,
+                    user_name=user.name
+                )
+            except Exception as e:
+                print(f"Error sending welcome email: {e}")
+
         except Exception:
             db.rollback()
             raise
@@ -71,6 +86,68 @@ class AuthService:
                 "tenant_id": str(result.id),
             },
         }
+
+    def forgot_password(self, db: Session, email: str, base_url: str):
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="E-mail não cadastrado.")
+
+        # Gerar OTP de 6 dígitos
+        otp_code = "".join(secrets.choice(string.digits) for _ in range(6))
+        
+        # Limpar OTPs antigos do usuário
+        db.query(PasswordResetOTP).filter(PasswordResetOTP.user_id == user.id).delete()
+        
+        # Salvar novo OTP (expira em 15 minutos)
+        new_otp = PasswordResetOTP(
+            user_id=user.id,
+            otp_code=otp_code,
+            expires_at=datetime.utcnow() + timedelta(minutes=15)
+        )
+        db.add(new_otp)
+        db.commit()
+
+        # Enviar e-mail com o código
+        self.email_service.send_password_reset_email(
+            to_email=user.email,
+            user_name=user.name,
+            otp_code=otp_code
+        )
+        return True
+
+    def verify_otp(self, db: Session, email: str, otp_code: str):
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(status_code=400, detail="E-mail ou código inválido")
+
+        otp_record = db.query(PasswordResetOTP).filter(
+            PasswordResetOTP.user_id == user.id,
+            PasswordResetOTP.otp_code == otp_code
+        ).first()
+
+        if not otp_record or otp_record.is_expired:
+            raise HTTPException(status_code=400, detail="Código inválido ou expirado")
+
+        return True
+
+    def reset_password(self, db: Session, email: str, otp_code: str, new_password: str):
+        from app.modules.auth.token import hash_password
+        
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+        # Verificar OTP novamente antes de resetar
+        self.verify_otp(db, email, otp_code)
+
+        # Atualizar senha
+        user.password = hash_password(new_password)
+        
+        # Consumir o OTP
+        db.query(PasswordResetOTP).filter(PasswordResetOTP.user_id == user.id).delete()
+        
+        db.commit()
+        return True
 
 
 def authenticate_user(

@@ -17,7 +17,7 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 PLANS = [
     {
         "code": "MONTHLY",
-        "stripe_product_name": "Petshop Manager - Plano Mensal",
+        "stripe_product_name": "Pet Controle - Plano Mensal",
         "unit_amount": 9990,  # R$ 99,90 em centavos
         "currency": "brl",
         "interval": "month",

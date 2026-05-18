@@ -14,6 +14,7 @@ import app.modules.client_packages.models
 import app.modules.appointments.models
 import app.modules.subscriptions.models
 import app.modules.plans.models
+import app.modules.auth.models
 
 def create_app() -> FastAPI:
     from app.config.settings import settings

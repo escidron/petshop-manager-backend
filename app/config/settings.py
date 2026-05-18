@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     PAGARME_PUBLIC_KEY: str = ""
     PAGARME_WEBHOOK_SECRET: str = ""
 
+    # Email (Resend)
+    RESEND_KEY: str = ""
+    DEFAULT_FROM_EMAIL: str = "Pet Controle <onboarding@resend.dev>"
+
     # CORS — comma-separated list of allowed origins
     # Ex: "https://meuapp.vercel.app,https://www.meuapp.com"
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"

@@ -4,7 +4,15 @@ from sqlalchemy.orm import Session
 from app.config.settings import settings
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant
-from app.modules.auth.schemas import AuthResponse, LoginInput, MeResponse, SignupRequest
+from app.modules.auth.schemas import (
+    AuthResponse, 
+    LoginInput, 
+    MeResponse, 
+    SignupRequest,
+    ForgotPasswordRequest,
+    VerifyOTPRequest,
+    ResetPasswordRequest
+)
 from app.modules.auth.service import AuthService, authenticate_user
 from app.modules.auth.token import create_access_token, decode_token
 
@@ -184,3 +192,38 @@ def logout_get(response: Response):
 @router.get("/me", response_model=MeResponse)
 def me(current_data: dict = Depends(get_current_tenant)):
     return current_data
+
+@router.post("/forgot-password")
+@limiter.limit("3/minute")
+def forgot_password(
+    request: Request,
+    payload: ForgotPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    auth_service = AuthService()
+    # Pega o base_url do header Referer ou do Origin para o link do frontend
+    origin = request.headers.get("origin") or "http://localhost:5173"
+    auth_service.forgot_password(db, payload.email, origin)
+    return {"message": "Se o e-mail existir, um link de recuperação foi enviado."}
+
+@router.post("/verify-otp")
+@limiter.limit("5/minute")
+def verify_otp(
+    request: Request,
+    payload: VerifyOTPRequest,
+    db: Session = Depends(get_db)
+):
+    auth_service = AuthService()
+    auth_service.verify_otp(db, payload.email, payload.otp_code)
+    return {"message": "Código válido."}
+
+@router.post("/reset-password")
+@limiter.limit("3/minute")
+def reset_password(
+    request: Request,
+    payload: ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    auth_service = AuthService()
+    auth_service.reset_password(db, payload.email, payload.otp_code, payload.new_password)
+    return {"message": "Senha alterada com sucesso."}

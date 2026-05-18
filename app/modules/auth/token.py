@@ -28,11 +28,13 @@ def _create_token(data: Dict[str, Any], expires_delta: timedelta) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
-def create_access_token(data: Dict[str, Any]) -> str:
-    return _create_token(
-        data,
-        timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+def create_access_token(data: Dict[str, Any], expires_delta: int = None) -> str:
+    delta = (
+        timedelta(minutes=expires_delta)
+        if expires_delta
+        else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
+    return _create_token(data, delta)
 
 
 def create_refresh_token(data: Dict[str, Any]) -> str:
