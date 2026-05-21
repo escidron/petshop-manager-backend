@@ -1,6 +1,7 @@
 from datetime import datetime
-from sqlalchemy import DateTime, String, Boolean, ForeignKey, func
+from sqlalchemy import DateTime, String, Boolean, ForeignKey, func, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import Optional
 
 from app.config.database import Base
 
@@ -36,6 +37,8 @@ class Tenant(Base):
     pagarme_customer_id: Mapped[str | None] = mapped_column(
         String(100), nullable=True, unique=True
     )
+
+    working_hours: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

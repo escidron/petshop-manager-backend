@@ -23,6 +23,7 @@ class TenantUpdate(BaseModel):
     document: Optional[str] = None
     type_id: Optional[int] = None
     is_active: Optional[bool] = None
+    working_hours: Optional[dict] = None
 
 class TenantTypeResponse(BaseModel):
     id: int
@@ -43,6 +44,7 @@ class TenantResponse(BaseModel):
     created_at: datetime
     type: TenantTypeResponse
     subscription: Optional[SubscriptionResponse] = None
+    working_hours: Optional[dict] = None
 
     class Config:
         from_attributes = True
