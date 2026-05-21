@@ -15,6 +15,7 @@ class SaleItemBase(BaseModel):
 class SaleItemCreate(SaleItemBase):
     pet_id: int | None = None
     employee_id: int | None = None
+    client_package_id_to_pay: int | None = None
 
 class SaleItemResponse(SaleItemBase):
     id: int
@@ -32,9 +33,23 @@ class ClientBrief(BaseModel):
     class Config:
         from_attributes = True
 
+class ServiceBrief(BaseModel):
+    id: int
+    price_cents: int
+
+    class Config:
+        from_attributes = True
+
+class AppointmentItemBrief(BaseModel):
+    services: list[ServiceBrief] = []
+
+    class Config:
+        from_attributes = True
+
 class AppointmentBrief(BaseModel):
     id: int
     client: ClientBrief
+    items: list[AppointmentItemBrief] = []
 
     class Config:
         from_attributes = True
@@ -45,7 +60,7 @@ class SaleBase(BaseModel):
     pet_id: int | None = None
     appointment_id: int | None = None
     total_amount: float = Field(ge=0)
-    payment_method: Literal["pix", "credit_card", "debit_card", "money", "other"]
+    payment_method: Literal["pix", "credit_card", "debit_card", "money", "other", "package"]
     status: Literal["completed", "canceled"] = "completed"
 
 class SaleCreate(SaleBase):

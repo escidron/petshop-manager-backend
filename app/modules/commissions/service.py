@@ -45,13 +45,14 @@ class CommissionService:
         self,
         db: Session,
         tenant_id: int,
-        sale_id: int,
-        sale_item_id: int,
         employee_id: int,
         service_id: int | None,
         item_type: str,
         subtotal: Decimal,
         ref_date: date,
+        sale_id: int | None = None,
+        sale_item_id: int | None = None,
+        appointment_item_id: int | None = None,
     ) -> CommissionEntry | None:
         rule = self.rule_repo.resolve(
             db, tenant_id, employee_id, service_id, item_type, ref_date
@@ -68,6 +69,7 @@ class CommissionService:
             tenant_id=tenant_id,
             sale_id=sale_id,
             sale_item_id=sale_item_id,
+            appointment_item_id=appointment_item_id,
             employee_id=employee_id,
             rule_id=rule.id,
             commission_type=rule.commission_type,
@@ -83,13 +85,14 @@ class CommissionService:
         self,
         db: Session,
         tenant_id: int,
-        sale_id: int,
-        sale_item_id: int,
         employee_id: int,
         service_id: int | None,
         item_type: str,
         subtotal: Decimal,
         ref_date: date,
+        sale_id: int | None = None,
+        sale_item_id: int | None = None,
+        appointment_item_id: int | None = None,
     ) -> CommissionEntry | None:
         if self.entry_repo.exists_for_sale_item(db, sale_item_id):
             raise HTTPException(
@@ -97,8 +100,8 @@ class CommissionService:
                 detail="Comissão já foi calculada para este item.",
             )
         entry = self.generate_entry(
-            db, tenant_id, sale_id, sale_item_id, employee_id,
-            service_id, item_type, subtotal, ref_date,
+            db, tenant_id, employee_id, service_id, item_type, subtotal, ref_date,
+            sale_id=sale_id, sale_item_id=sale_item_id
         )
         db.commit()
         return entry

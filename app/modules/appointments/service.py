@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,7 @@ from app.modules.pets.models import Pet
 from app.modules.clients.models import Client
 from app.modules.tenant_services.models import Service
 from app.modules.client_packages.repository import ClientPackageRepository
+from app.modules.commissions.service import CommissionService
 from app.modules.tenants.models import Tenant
 
 
@@ -17,6 +19,7 @@ class AppointmentService:
     def __init__(self):
         self.repo = AppointmentRepository()
         self.credit_repo = ClientPackageRepository()
+        self.commission_service = CommissionService()
     
     TRANSITIONS = {
         AppointmentStatus.PENDING: {
@@ -278,6 +281,15 @@ class AppointmentService:
         # Ao completar, desconta créditos de pacotes e registra coverages (FIFO)
         if action == AppointmentAction.COMPLETE:
             appointment_full = self.repo.get_with_relations(db, appointment.id)
+
+            # Captura employee_id por serviço antes de qualquer modificação
+            item_emp_maps = {
+                item.id: {ais.service_id: ais.employee_id for ais in item.item_services}
+                for item in appointment_full.items
+            }
+
+            # Consome créditos e registra coverages; rastreia quais pares foram cobertos
+            covered_pairs: set[tuple[int, int]] = set()
             for item in appointment_full.items:
                 for service in item.services:
                     credit = self.credit_repo.find_active_credit(
@@ -291,9 +303,82 @@ class AppointmentService:
                             service_id=service.id,
                             client_package_credit_id=credit.id,
                         )
+                        covered_pairs.add((item.id, service.id))
+
+            db.flush()
+
+            # Coleta serviços cobertos por pacote que têm funcionário vinculado
+            covered_with_employee = [
+                (item, service)
+                for item in appointment_full.items
+                for service in item.services
+                if (item.id, service.id) in covered_pairs
+                and item_emp_maps[item.id].get(service.id)
+            ]
+
+            # Cria venda R$ 0 para que o relatório de comissões tenha referência de venda
+            if covered_with_employee:
+                from app.modules.sales.models import Sale, SaleItem  # lazy: evita importação circular
+                package_sale = Sale(
+                    tenant_id=tenant_id,
+                    client_id=appointment_full.client_id,
+                    appointment_id=appointment_full.id,
+                    total_amount=Decimal("0"),
+                    payment_method="package",
+                    status="completed",
+                )
+                db.add(package_sale)
+                db.flush()
+
+                for item, service in covered_with_employee:
+                    employee_id = item_emp_maps[item.id][service.id]
+                    real_price = Decimal(service.price_cents) / Decimal("100")
+                    sale_item = SaleItem(
+                        sale_id=package_sale.id,
+                        item_type="service",
+                        item_id=service.id,
+                        name=service.name,
+                        quantity=1,
+                        unit_price=real_price,
+                        subtotal=Decimal("0"),
+                        employee_id=employee_id,
+                    )
+                    db.add(sale_item)
+                    db.flush()
+
+                    try:
+                        self.commission_service.generate_entry(
+                            db=db,
+                            tenant_id=tenant_id,
+                            sale_id=package_sale.id,
+                            sale_item_id=sale_item.id,
+                            employee_id=employee_id,
+                            service_id=service.id,
+                            item_type="service",
+                            subtotal=real_price,
+                            ref_date=appointment_full.scheduled_at.date(),
+                            appointment_item_id=item.id,
+                        )
+                    except Exception:
+                        pass
+
             db.commit()
+
+            # Aviso não-bloqueante se algum serviço estiver sem funcionário
+            missing_services: list[str] = []
+            for item in appointment_full.items:
+                emp_map = item_emp_maps[item.id]
+                for svc in item.services:
+                    if not emp_map.get(svc.id):
+                        missing_services.append(svc.name)
+
             # Recarrega com as coverages para o response final
             result = self.repo.get_with_relations(db, appointment.id)
+            if missing_services:
+                unique_missing = list(dict.fromkeys(missing_services))
+                result.warnings = [
+                    f"Atenção: serviços sem funcionário vinculado: {', '.join(unique_missing)}"
+                ]
 
         return result
 

@@ -49,8 +49,9 @@ class CommissionRuleResponse(CommissionRuleBase):
 class CommissionEntryResponse(BaseModel):
     id: int
     tenant_id: int
-    sale_id: int
-    sale_item_id: int
+    sale_id: Optional[int] = None
+    sale_item_id: Optional[int] = None
+    appointment_item_id: Optional[int] = None
     employee_id: int
     rule_id: Optional[int]
     commission_type: str

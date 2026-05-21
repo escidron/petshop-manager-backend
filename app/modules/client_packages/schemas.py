@@ -18,6 +18,16 @@ class ClientPackageSellRequest(BaseModel):
     pet_id: int
     package_id: int
 
+class ClientPackageClientInfo(BaseModel):
+    id: int
+    name: str
+    model_config = ConfigDict(from_attributes=True)
+
+class ClientPackagePetInfo(BaseModel):
+    id: int
+    name: str
+    model_config = ConfigDict(from_attributes=True)
+
 
 class ClientPackageResponse(BaseModel):
     id: int
@@ -29,6 +39,8 @@ class ClientPackageResponse(BaseModel):
     is_active: bool
     created_at: datetime
     expires_at: datetime | None
+    client: ClientPackageClientInfo
+    pet: ClientPackagePetInfo
     credits: list[ClientPackageCreditResponse]
 
     model_config = ConfigDict(from_attributes=True)

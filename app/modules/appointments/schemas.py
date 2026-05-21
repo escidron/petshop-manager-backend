@@ -87,6 +87,7 @@ class AppointmentResponse(BaseModel):
     items: List[AppointmentItemResponse]
     is_paid: bool = False
     is_fully_package_covered: bool = False
+    warnings: List[str] = Field(default_factory=list)
 
     created_at: datetime
 

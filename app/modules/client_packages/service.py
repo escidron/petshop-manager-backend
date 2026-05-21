@@ -17,6 +17,7 @@ class ClientPackageService:
         tenant_id: int,
         client_id: int,
         data: ClientPackageSellRequest,
+        is_paid: bool = False,
     ) -> ClientPackageResponse:
         # Valida pet
         pet = (
@@ -77,12 +78,18 @@ class ClientPackageService:
             package_name=package.name,
             credits_data=credits_data,
             expires_at=expires_at,
+            is_paid=is_paid,
         )
 
     def list_by_pet(
         self, db: Session, tenant_id: int, pet_id: int
     ) -> list[ClientPackageResponse]:
         return self.repo.list_by_pet(db, tenant_id, pet_id)
+
+    def list_unpaid_packages(
+        self, db: Session, tenant_id: int
+    ) -> list[ClientPackageResponse]:
+        return self.repo.list_unpaid(db, tenant_id)
 
     def list_by_client(
         self, db: Session, tenant_id: int, client_id: int

@@ -35,6 +35,16 @@ def sell_package(
     return svc.sell(db, tenant_id, pet.client_id, data)
 
 
+@router.get("/unpaid", response_model=list[ClientPackageResponse])
+def list_unpaid(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    svc = ClientPackageService()
+    return svc.list_unpaid_packages(db, tenant_id)
+
+
 @router.get("/pet/{pet_id}", response_model=list[ClientPackageResponse])
 def list_by_pet(
     pet_id: int,

@@ -16,6 +16,8 @@ def _eager_options():
             .selectinload(AppointmentItem.services),             # many-to-many → selectinload
         selectinload(Appointment.items)
             .selectinload(AppointmentItem.coverages),            # one-to-many → selectinload
+        selectinload(Appointment.items)
+            .selectinload(AppointmentItem.item_services),        # employee_id por serviço
     ]
 
 
@@ -219,8 +221,10 @@ class AppointmentRepository:
 
         is_paid is a Python property (not a DB column), so we use a NOT EXISTS
         subquery against the sales table to detect unpaid appointments.
+        Appointments fully covered by packages are also excluded (no payment needed).
         """
         from app.modules.sales.models import Sale
+        from .models import AppointmentItem, AppointmentItemService, AppointmentPackageCoverage
 
         # Subquery: any completed sale linked to this appointment?
         paid_subquery = (
@@ -232,13 +236,31 @@ class AppointmentRepository:
             .exists()
         )
 
+        # Subquery: does this appointment have at least one service NOT covered by a package?
+        # If all services have coverage records, no payment is needed.
+        has_uncovered_service = (
+            db.query(AppointmentItemService.service_id)
+            .join(AppointmentItem, AppointmentItem.id == AppointmentItemService.appointment_item_id)
+            .outerjoin(
+                AppointmentPackageCoverage,
+                (AppointmentPackageCoverage.appointment_item_id == AppointmentItemService.appointment_item_id)
+                & (AppointmentPackageCoverage.service_id == AppointmentItemService.service_id),
+            )
+            .filter(
+                AppointmentItem.appointment_id == Appointment.id,
+                AppointmentPackageCoverage.id == None,  # no coverage for this service
+            )
+            .exists()
+        )
+
         return (
             db.query(Appointment)
             .options(*_eager_options())
             .filter(
                 Appointment.tenant_id == tenant_id,
                 Appointment.status == "completed",
-                ~paid_subquery,  # NOT EXISTS: no completed sale attached
+                ~paid_subquery,       # no completed sale attached
+                has_uncovered_service,  # at least one service still needs payment
             )
             .order_by(Appointment.scheduled_at.desc())
             .all()

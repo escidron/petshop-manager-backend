@@ -79,15 +79,20 @@ class CommissionEntry(Base):
         index=True,
     )
 
-    sale_id: Mapped[int] = mapped_column(
+    sale_id: Mapped[int | None] = mapped_column(
         ForeignKey("sales.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
 
-    sale_item_id: Mapped[int] = mapped_column(
+    sale_item_id: Mapped[int | None] = mapped_column(
         ForeignKey("sale_items.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+
+    appointment_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("appointment_items.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     employee_id: Mapped[int] = mapped_column(

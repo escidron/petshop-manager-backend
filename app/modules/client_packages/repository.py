@@ -14,6 +14,7 @@ class ClientPackageRepository:
         package_name: str,
         credits_data: list[dict],
         expires_at: datetime | None = None,
+        is_paid: bool = False,
     ) -> ClientPackage:
         client_package = ClientPackage(
             tenant_id=tenant_id,
@@ -22,6 +23,7 @@ class ClientPackageRepository:
             package_id=package_id,
             package_name=package_name,
             expires_at=expires_at,
+            is_paid=is_paid,
         )
         db.add(client_package)
         db.flush()
@@ -105,6 +107,25 @@ class ClientPackageRepository:
         db.commit()
         db.refresh(client_package)
         return client_package
+
+    def list_unpaid(
+        self, db: Session, tenant_id: int
+    ) -> list[ClientPackage]:
+        return (
+            db.query(ClientPackage)
+            .options(
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
+                selectinload(ClientPackage.client),
+                selectinload(ClientPackage.pet),
+            )
+            .filter(
+                ClientPackage.tenant_id == tenant_id,
+                ClientPackage.is_paid == False,
+                ClientPackage.is_active == True,
+            )
+            .order_by(ClientPackage.created_at.desc())
+            .all()
+        )
 
     def find_active_credit(
         self, db: Session, tenant_id: int, pet_id: int, service_id: int

@@ -64,10 +64,20 @@ class SalesService:
         # 2. If everything is fine, create the sale in db
         sale = self.repository.create(db, tenant_id, data)
 
-        # 3. Auto-create ClientPackage for package items sold with a specific pet
-        if data.client_id:
-            for item in data.items:
-                if item.item_type == "package" and item.pet_id:
+        # 3. Auto-create or mark-as-paid ClientPackage
+        for item in data.items:
+            if item.item_type == "package":
+                if hasattr(item, "client_package_id_to_pay") and item.client_package_id_to_pay:
+                    # Pagando um pacote pendente
+                    try:
+                        pkg = self.client_package_service.repo.get_by_id_scoped(db, tenant_id, item.client_package_id_to_pay)
+                        if pkg and not pkg.is_paid:
+                            pkg.is_paid = True
+                            db.add(pkg)
+                    except Exception:
+                        pass
+                elif item.pet_id and data.client_id:
+                    # Vendendo um novo pacote direto pelo PDV (nasce pago)
                     try:
                         self.client_package_service.sell(
                             db=db,
@@ -77,9 +87,9 @@ class SalesService:
                                 pet_id=item.pet_id,
                                 package_id=item.item_id,
                             ),
+                            is_paid=True, # Vendido no PDV já é pago
                         )
                     except HTTPException:
-                        # Não bloqueia a venda se falhar ao criar o pacote do cliente
                         pass
 
         # 4. Generate commission entries for items with employee_id
