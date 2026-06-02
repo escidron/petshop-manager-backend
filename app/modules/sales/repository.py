@@ -50,12 +50,15 @@ class SalesRepository:
         limit: int = 100,
         start_date: date | None = None,
         end_date: date | None = None,
+        client_id: int | None = None,
     ) -> list[Sale]:
         q = db.query(Sale).filter(Sale.tenant_id == tenant_id)
         if start_date:
             q = q.filter(Sale.created_at >= datetime.combine(start_date, time.min))
         if end_date:
             q = q.filter(Sale.created_at <= datetime.combine(end_date, time.max))
+        if client_id:
+            q = q.filter(Sale.client_id == client_id)
         return q.order_by(desc(Sale.created_at)).offset(skip).limit(limit).all()
 
     def update_status(self, db: Session, tenant_id: int, sale_id: int, status: str) -> Sale | None:

@@ -27,10 +27,11 @@ def list_sales(
     limit: int = 500,
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    client_id: Optional[int] = Query(None),
 ):
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
-    return service.list_sales(db, tenant_id, skip, limit, start_date=start_date, end_date=end_date)
+    return service.list_sales(db, tenant_id, skip, limit, start_date=start_date, end_date=end_date, client_id=client_id)
 
 
 @router.get("/{sale_id}", response_model=SaleResponse)
