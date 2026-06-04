@@ -1,4 +1,9 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel
+
+
+class DeleteAccountRequest(BaseModel):
+    password: str
 from sqlalchemy.orm import Session
 
 from app.config.settings import settings
@@ -105,6 +110,21 @@ def update_tenant(
 ):
     service = TenantService()
     return service.update_tenant(db, tenant_id, data)
+
+
+@router.delete("/me", status_code=204)
+def delete_own_account(
+    body: DeleteAccountRequest,
+    db: Session = Depends(get_db),
+    context: dict = Depends(require_owner),
+):
+    """Permanently deletes the tenant account and all its data."""
+    from app.modules.auth.token import verify_password
+    user = context["user"]
+    if not verify_password(body.password, user.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Senha incorreta")
+    service = TenantService()
+    service.delete_own_tenant(db, context["tenant"], user)
 
 
 @router.delete("/{tenant_id}", status_code=204)
