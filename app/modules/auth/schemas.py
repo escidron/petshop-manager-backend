@@ -1,4 +1,5 @@
 from pydantic import BaseModel, EmailStr
+from typing import List
 
 from app.modules.tenants.schemas import TenantCreate, TenantResponse
 from app.modules.users.schemas import UserCreate, UserResponse
@@ -15,6 +16,15 @@ class SignupRequest(BaseModel):
     tenant: TenantCreate
 
 
+class SelectTenantInput(BaseModel):
+    selection_token: str
+    tenant_id: int
+
+
+class SwitchTenantInput(BaseModel):
+    tenant_id: int
+
+
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
@@ -28,7 +38,7 @@ class ResetPasswordRequest(BaseModel):
     email: EmailStr
     otp_code: str
     new_password: str
-    
+
 
 # -------- Outputs --------
 
@@ -42,6 +52,17 @@ class AuthResponse(BaseModel):
     access_token: str
     refresh_token: str
     user: UserAuthData
+
+
+class TenantOption(BaseModel):
+    id: int
+    name: str
+
+
+class TenantSelectionRequired(BaseModel):
+    needs_tenant_selection: bool = True
+    selection_token: str
+    tenants: List[TenantOption]
 
 
 # -------- Internal --------

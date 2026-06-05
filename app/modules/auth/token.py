@@ -37,6 +37,14 @@ def create_access_token(data: Dict[str, Any], expires_delta: int = None) -> str:
     return _create_token(data, delta)
 
 
+def create_selection_token(user_id: int) -> str:
+    """Short-lived token (5 min) used during multi-tenant selection flow."""
+    return _create_token(
+        {"user_id": str(user_id), "type": "tenant_selection"},
+        timedelta(minutes=5),
+    )
+
+
 def create_refresh_token(data: Dict[str, Any]) -> str:
     return _create_token(
         data,

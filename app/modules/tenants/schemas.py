@@ -8,7 +8,8 @@ class TenantBase(BaseModel):
     name: str
     type_id: int = 1
     is_active: bool = True
-    phone:str
+    phone: str
+    email: Optional[str] = None
     plan_code: str
     onboarding_step: str = "services"
     document: Optional[str] = None
@@ -19,6 +20,7 @@ class TenantCreate(TenantBase):
 
 class TenantUpdate(BaseModel):
     name: Optional[str] = None
+    email: Optional[str] = None
     phone: Optional[str] = None
     document: Optional[str] = None
     type_id: Optional[int] = None
@@ -37,6 +39,7 @@ class TenantTypeResponse(BaseModel):
 class TenantResponse(BaseModel):
     id: int
     name: str
+    email: Optional[str] = None
     phone: str
     document: Optional[str] = None
     is_active: bool

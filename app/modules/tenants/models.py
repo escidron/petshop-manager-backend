@@ -22,6 +22,7 @@ class Tenant(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     document: Mapped[str | None] = mapped_column(String(20), nullable=True)
 

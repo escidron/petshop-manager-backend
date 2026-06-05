@@ -5,16 +5,18 @@ from app.config.settings import settings
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant
 from app.modules.auth.schemas import (
-    AuthResponse, 
-    LoginInput, 
-    MeResponse, 
+    AuthResponse,
+    LoginInput,
+    MeResponse,
+    SelectTenantInput,
+    SwitchTenantInput,
     SignupRequest,
     ForgotPasswordRequest,
     VerifyOTPRequest,
-    ResetPasswordRequest
+    ResetPasswordRequest,
 )
 from app.modules.auth.service import AuthService, authenticate_user
-from app.modules.auth.token import create_access_token, decode_token
+from app.modules.auth.token import create_access_token, create_refresh_token, decode_token
 
 from app.config.limiter import limiter
 
@@ -81,6 +83,10 @@ def login(
             detail="Credenciais inválidas",
         )
 
+    # Usuário tem múltiplos tenants: retorna lista para o frontend escolher
+    if result.get("needs_tenant_selection"):
+        return result
+
     # Access token cookie
     response.set_cookie(
         key=settings.COOKIE_ACCESS_NAME,
@@ -102,11 +108,8 @@ def login(
         path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )
-    print('userxx',result)
-    # Retorno mínimo (frontend não precisa do token)
-    return {
-        "user": result["user"],
-    }
+
+    return {"user": result["user"]}
 
 @router.post("/refresh")
 @limiter.limit("10/minute")
@@ -149,6 +152,140 @@ def refresh_token(
     )
 
     return {"ok": True}
+
+@router.post("/select-tenant")
+@limiter.limit("10/minute")
+def select_tenant(
+    request: Request,
+    data: SelectTenantInput,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    from app.modules.users.models import TenantUser, User
+
+    payload = decode_token(data.selection_token)
+    if not payload or payload.get("expired") or payload.get("type") != "tenant_selection":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de seleção inválido ou expirado",
+        )
+
+    user_id = int(payload["user_id"])
+
+    tenant_user = (
+        db.query(TenantUser)
+        .filter(
+            TenantUser.user_id == user_id,
+            TenantUser.tenant_id == data.tenant_id,
+            TenantUser.active == True,
+        )
+        .first()
+    )
+    if not tenant_user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado a este tenant",
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+
+    token_data = {
+        "user_id": str(user_id),
+        "tenant_id": str(data.tenant_id),
+        "role": tenant_user.role,
+    }
+
+    response.set_cookie(
+        key=settings.COOKIE_ACCESS_NAME,
+        value=create_access_token(token_data),
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    response.set_cookie(
+        key=settings.COOKIE_REFRESH_NAME,
+        value=create_refresh_token(token_data),
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+    )
+
+    return {
+        "user": {
+            "id": str(user_id),
+            "role": tenant_user.role,
+            "tenant_id": str(data.tenant_id),
+            "name": user.name,
+        }
+    }
+
+
+@router.post("/switch-tenant")
+@limiter.limit("20/minute")
+def switch_tenant(
+    request: Request,
+    data: SwitchTenantInput,
+    response: Response,
+    db: Session = Depends(get_db),
+    context: dict = Depends(get_current_tenant),
+):
+    from app.modules.users.models import TenantUser
+
+    user = context["user"]
+
+    tenant_user = (
+        db.query(TenantUser)
+        .filter(
+            TenantUser.user_id == user.id,
+            TenantUser.tenant_id == data.tenant_id,
+            TenantUser.active == True,
+        )
+        .first()
+    )
+    if not tenant_user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado a este tenant",
+        )
+
+    token_data = {
+        "user_id": str(user.id),
+        "tenant_id": str(data.tenant_id),
+        "role": tenant_user.role,
+    }
+
+    response.set_cookie(
+        key=settings.COOKIE_ACCESS_NAME,
+        value=create_access_token(token_data),
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    response.set_cookie(
+        key=settings.COOKIE_REFRESH_NAME,
+        value=create_refresh_token(token_data),
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+    )
+
+    return {
+        "user": {
+            "id": str(user.id),
+            "role": tenant_user.role,
+            "tenant_id": str(data.tenant_id),
+            "name": user.name,
+        }
+    }
+
 
 @router.post("/logout")
 def logout(response: Response):

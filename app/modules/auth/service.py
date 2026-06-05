@@ -7,6 +7,7 @@ from app.modules.auth.token import (
     verify_password,
     create_access_token,
     create_refresh_token,
+    create_selection_token,
 )
 from app.modules.plans.repository import PlanRepository
 from app.modules.tenants.service import TenantService
@@ -156,7 +157,7 @@ def authenticate_user(
     password: str,
 ) -> Optional[dict]:
     """
-    Valida credenciais e retorna tokens se estiver ok.
+    Valida credenciais e retorna tokens ou sinaliza seleção de tenant.
     """
     user: User | None = (
         db.query(User)
@@ -166,16 +167,33 @@ def authenticate_user(
     if not user:
         return None
 
-    # handle user having multiple tenants
-    tenant: TenantUser | None = (
-        db.query(TenantUser)
-        .filter(TenantUser.user_id == user.id)
-        .first()
-    )
-
     if not verify_password(password, user.password):
         return None
 
+    tenant_users = (
+        db.query(TenantUser)
+        .filter(TenantUser.user_id == user.id, TenantUser.active == True)
+        .all()
+    )
+
+    if not tenant_users:
+        return None
+
+    if len(tenant_users) > 1:
+        from app.modules.tenants.models import Tenant
+        tenants = []
+        for tu in tenant_users:
+            t = db.query(Tenant).filter(Tenant.id == tu.tenant_id, Tenant.is_active == True).first()
+            if t:
+                tenants.append({"id": t.id, "name": t.name})
+
+        return {
+            "needs_tenant_selection": True,
+            "selection_token": create_selection_token(user.id),
+            "tenants": tenants,
+        }
+
+    tenant = tenant_users[0]
     payload = {
         "user_id": str(user.id),
         "tenant_id": str(tenant.tenant_id),

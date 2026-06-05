@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config.settings import settings
 from app.config.database import get_db
-from app.modules.auth.dependencies import require_owner
+from app.modules.auth.dependencies import get_current_tenant, require_owner
 
 from .schemas import (
     TenantCreate,
@@ -55,6 +55,47 @@ def remove_tenant_user(
         user_id,
         context["user"].id,
     )
+
+
+@router.post("/me/new", response_model=TenantResponse)
+def create_my_tenant(
+    data: TenantCreate,
+    response: Response,
+    db: Session = Depends(get_db),
+    context: dict = Depends(get_current_tenant),
+):
+    from app.modules.auth.token import create_access_token, create_refresh_token
+
+    service = TenantService()
+    user = context["user"]
+    result = service.create_tenant(db, data, user.id)
+
+    token_data = {
+        "user_id": str(user.id),
+        "tenant_id": str(result.id),
+        "role": "owner",
+    }
+
+    response.set_cookie(
+        key=settings.COOKIE_ACCESS_NAME,
+        value=create_access_token(token_data),
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    response.set_cookie(
+        key=settings.COOKIE_REFRESH_NAME,
+        value=create_refresh_token(token_data),
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+    )
+
+    return result
 
 
 @router.post("/", response_model=TenantResponse)
