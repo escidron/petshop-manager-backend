@@ -22,3 +22,15 @@ class Supplier(Base):
     cnpj: Mapped[str | None] = mapped_column(
         String(20), nullable=True
     )
+
+    phone_1: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+
+    phone_2: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+
+    email: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )

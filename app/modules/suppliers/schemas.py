@@ -5,6 +5,9 @@ from typing import Optional
 class SupplierBase(BaseModel):
     name: str
     cnpj: Optional[str] = None
+    phone_1: Optional[str] = None
+    phone_2: Optional[str] = None
+    email: Optional[str] = None
 
 
 class SupplierCreate(SupplierBase):
@@ -14,6 +17,9 @@ class SupplierCreate(SupplierBase):
 class SupplierUpdate(BaseModel):
     name: Optional[str] = None
     cnpj: Optional[str] = None
+    phone_1: Optional[str] = None
+    phone_2: Optional[str] = None
+    email: Optional[str] = None
 
 
 class SupplierResponse(SupplierBase):

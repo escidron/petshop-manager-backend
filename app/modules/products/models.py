@@ -83,3 +83,7 @@ class Product(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True
     )
+
+    unit: Mapped[str | None] = mapped_column(
+        String(10), default="UN", nullable=True
+    )

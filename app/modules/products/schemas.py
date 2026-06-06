@@ -22,6 +22,7 @@ class ProductBase(BaseModel):
     supplier_id: Optional[int] = None
     
     is_active: bool = True
+    unit: Optional[str] = "UN"
 
 
 class ProductCreate(ProductBase):
@@ -48,6 +49,7 @@ class ProductUpdate(BaseModel):
     supplier_id: Optional[int] = None
     
     is_active: Optional[bool] = None
+    unit: Optional[str] = None
 
 
 class ProductResponse(ProductBase):
