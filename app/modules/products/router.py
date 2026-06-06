@@ -81,15 +81,12 @@ def list_low_stock_products(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/import/template")
 def get_import_template():
-    # BOM for UTF-8 (essential for Excel to recognize UTF-8 correctly)
-    bom = "\ufeff"
-    header = "nome *,preco_venda *,sku,descricao,categoria,custo,quantidade,estoque_minimo,codigo_barras,ncm,cest,cfop,csosn,cst_pis,cst_cofins\n"
-    example = "Produto Exemplo,29.90,SKU-001,Descrição do produto,Categoria Exemplo,15.00,10,2,7891234567890,3801.10.00,01.001.00,5102,102,01,01"
-    content = bom + header + example
+    service = ProductService()
+    content = service.generate_import_template_excel()
     return StreamingResponse(
-        io.BytesIO(content.encode("utf-8")),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=template_produtos.csv"}
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=template_produtos.xlsx"}
     )
 
 @router.post("/import")
@@ -101,8 +98,4 @@ async def import_products(
     service = ProductService()
     tenant_id = request.state.tenant_user.tenant_id
     content = await file.read()
-    try:
-        return await service.import_products_from_csv(db, tenant_id, content.decode("utf-8-sig"))
-    except UnicodeDecodeError:
-        # Try latin-1 if utf-8 fails (common with Excel CSV exports in Brazil)
-        return await service.import_products_from_csv(db, tenant_id, content.decode("latin-1"))
+    return await service.import_products_from_excel(db, tenant_id, content)

@@ -52,78 +52,88 @@ class ProductService:
         )
         db.commit()
         db.refresh(product)
-        return product
-    async def import_products_from_csv(self, db: Session, tenant_id: int, csv_content: str):
-        if not csv_content.strip():
-            return {"imported": 0, "errors": ["Arquivo CSV está vazio"]}
+        return product    async def import_products_from_excel(self, db: Session, tenant_id: int, file_content: bytes):
+        import openpyxl
+        
+        if not file_content:
+            return {"imported": 0, "errors": ["Arquivo de planilha vazio"]}
 
-        f = io.StringIO(csv_content)
-        
         try:
-            # Try to detect the delimiter (comma, semicolon, tab)
-            sample = csv_content[:4096]
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
-            f.seek(0)
-            reader = csv.DictReader(f, dialect=dialect)
-        except Exception:
-            # Fallback to default if sniffer fails
-            f.seek(0)
-            reader = csv.DictReader(f)
-        
-        # Header validation
-        fieldnames = [str(f).strip().lower().replace("*", "").strip() for f in (reader.fieldnames or [])]
+            wb = openpyxl.load_workbook(io.BytesIO(file_content), read_only=True, data_only=True)
+            ws = wb.active
+        except Exception as e:
+            return {"imported": 0, "errors": [f"Erro ao ler arquivo Excel: {str(e)}"]}
+
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return {"imported": 0, "errors": ["A planilha está vazia"]}
+
+        # Headers are in the first row
+        raw_headers = rows[0]
+        # Clean headers
+        headers = []
+        for h in raw_headers:
+            if h is None:
+                headers.append("")
+            else:
+                headers.append(str(h).strip().lower().replace("*", "").strip())
+
         required_cols = ["nome", "preco_venda"]
-        missing_cols = [col for col in required_cols if col not in fieldnames]
-        
+        missing_cols = [col for col in required_cols if col not in headers]
         if missing_cols:
             return {
-                "imported": 0, 
-                "errors": [f"Colunas obrigatórias ausentes no CSV: {', '.join(missing_cols)}"]
+                "imported": 0,
+                "errors": [f"Colunas obrigatórias ausentes na planilha: {', '.join(missing_cols)}"]
             }
 
         imported_count = 0
         errors = []
-        
+
         # Helper to parse prices/costs robustly
-        def parse_money(val_str):
-            if not val_str or str(val_str).strip() == "": 
+        def parse_money(val):
+            if val is None or str(val).strip() == "":
                 return None
+            
+            # If Excel has already parsed it as float or int, multiply by 100
+            if isinstance(val, (int, float)):
+                return int(round(val * 100))
+                
             try:
                 # Remove R$, whitespace, and dots used as thousand separators
-                # Brazilian format: 1.234,56 -> we want 1234.56
-                # US format: 1,234.56 -> we want 1234.56
-                cleaned = str(val_str).replace("R$", "").strip()
+                cleaned = str(val).replace("R$", "").strip()
                 
-                # Check which one is the decimal separator
                 if "," in cleaned and "." in cleaned:
-                    # Mixed format: if comma comes after dot, it's Brazilian 1.234,56
                     if cleaned.rfind(",") > cleaned.rfind("."):
                         cleaned = cleaned.replace(".", "").replace(",", ".")
                     else:
-                        # US format 1,234.56
                         cleaned = cleaned.replace(",", "")
                 elif "," in cleaned:
-                    # Only comma: probably decimal separator unless it's used as thousand separator
-                    # In Brazil, 29,90 is common.
                     cleaned = cleaned.replace(",", ".")
                 
-                return int(float(cleaned) * 100)
+                return int(round(float(cleaned) * 100))
             except (ValueError, TypeError):
                 return None
 
-        for row_idx, raw_row in enumerate(reader, start=2):
+        # Process each row, skipping header (row_idx start=2 for standard 1-based index representation)
+        for row_idx, row_values in enumerate(rows[1:], start=2):
             try:
-                # Clean row: strip whitespace from keys and values, handle casing
-                row = {str(k).strip().lower().replace("*", "").strip(): str(v).strip() for k, v in raw_row.items() if k is not None}
+                # Build dict mapping cleaned header to cell value
+                row = {}
+                has_any_value = False
+                for h, val in zip(headers, row_values):
+                    if h: # Ignore empty/unnamed columns
+                        row[h] = val
+                        if val is not None and str(val).strip() != "":
+                            has_any_value = True
                 
-                # Handle potential empty rows
-                if not any(row.values()):
+                if not has_any_value:
                     continue
-                    
+
                 # Basic validation: Name is strictly required
                 name = row.get("nome")
-                if not name:
+                if name is None or str(name).strip() == "":
                     raise ValueError("Nome do produto é obrigatório")
+                name = str(name).strip()
                 
                 # Price is strictly required
                 raw_price = row.get("preco_venda")
@@ -133,28 +143,180 @@ class ProductService:
                 
                 # Cost is optional
                 raw_cost = row.get("custo")
-                cost = parse_money(raw_cost) if raw_cost else None
+                cost = parse_money(raw_cost) if raw_cost is not None else None
+
+                # Clean optional barcode, ncm, etc to string
+                def clean_str(val):
+                    if val is None or str(val).strip() == "":
+                        return None
+                    # If Excel parses standard numeric SKU/Barcode/NCM as float/int, avoid trailing .0
+                    if isinstance(val, float) and val.is_integer():
+                        return str(int(val))
+                    return str(val).strip()
+
+                # Parse unit of measure mapping descriptive names back to code
+                def parse_unit(val):
+                    if val is None or str(val).strip() == "":
+                        return "UN"
+                    cleaned = str(val).strip().lower()
+                    unit_map = {
+                        "unidade (un)": "UN",
+                        "grama (g)": "g",
+                        "quilograma (kg)": "kg",
+                        "mililitro (ml)": "ml",
+                        "litro (l)": "L",
+                        "pacote (paq)": "PAQ",
+                        "caixa (cx)": "CX",
+                        # Direct abbreviations fallback
+                        "un": "UN",
+                        "g": "g",
+                        "kg": "kg",
+                        "ml": "ml",
+                        "l": "L",
+                        "paq": "PAQ",
+                        "cx": "CX"
+                    }
+                    return unit_map.get(cleaned, "UN")
 
                 data = ProductCreate(
                     name=name,
-                    sku=row.get("sku") or None,
-                    description=row.get("descricao") or None,
-                    category=row.get("categoria") or None,
+                    sku=clean_str(row.get("sku")),
+                    description=clean_str(row.get("descricao")),
+                    category=clean_str(row.get("categoria")),
                     price=float(price),
                     cost=float(cost) if cost is not None else None,
                     quantity=int(row.get("quantidade") or 0),
                     min_stock=int(row.get("estoque_minimo") or 0),
-                    barcode=row.get("codigo_barras") or None,
-                    ncm=row.get("ncm") or None,
-                    cest=row.get("cest") or None,
-                    cfop=row.get("cfop") or None,
-                    csosn=row.get("csosn") or None,
-                    cst_pis=row.get("cst_pis") or None,
-                    cst_cofins=row.get("cst_cofins") or None,
+                    barcode=clean_str(row.get("codigo_barras")),
+                    ncm=clean_str(row.get("ncm")),
+                    cest=clean_str(row.get("cest")),
+                    cfop=clean_str(row.get("cfop")),
+                    csosn=clean_str(row.get("csosn")),
+                    cst_pis=clean_str(row.get("cst_pis")),
+                    cst_cofins=clean_str(row.get("cst_cofins")),
+                    unit=parse_unit(row.get("unidade")),
                 )
                 self.repository.create(db, tenant_id, data)
                 imported_count += 1
             except Exception as e:
                 errors.append(f"Linha {row_idx}: {str(e)}")
-        
+
         return {"imported": imported_count, "errors": errors}
+
+    def generate_import_template_excel(self) -> bytes:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from io import BytesIO
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Produtos"
+        
+        # Add headers
+        headers = [
+            "nome *", "preco_venda *", "unidade", "sku", "descricao", "categoria",
+            "custo", "quantidade", "estoque_minimo", "codigo_barras",
+            "ncm", "cest", "cfop", "csosn", "cst_pis", "cst_cofins"
+        ]
+        ws.append(headers)
+        
+        # Style headers (Segoe UI, Blue color theme)
+        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left_align = Alignment(horizontal="left", vertical="center")
+        
+        thin_border = Border(
+            left=Side(style="thin", color="D3D3D3"),
+            right=Side(style="thin", color="D3D3D3"),
+            top=Side(style="thin", color="D3D3D3"),
+            bottom=Side(style="thin", color="D3D3D3")
+        )
+        
+        # Format header row
+        ws.row_dimensions[1].height = 28
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+            cell.border = thin_border
+            
+        # Add example row
+        example = [
+            "Ração Premium Gato Adulto 1kg",
+            89.90,
+            "Unidade (UN)",
+            "RAC-PREM-GAT-1",
+            "Ração premium para gatos adultos sabor salmão",
+            "Ração",
+            45.00,
+            20,
+            5,
+            "7891234567890",
+            "3801.10.00",
+            "01.001.00",
+            "5102",
+            "102",
+            "01",
+            "01"
+        ]
+        ws.append(example)
+        
+        # Format example row (row 2)
+        ws.row_dimensions[2].height = 20
+        for col_idx in range(1, len(example) + 1):
+            cell = ws.cell(row=2, column=col_idx)
+            cell.font = Font(name="Segoe UI", size=10)
+            cell.border = thin_border
+            
+            # Alignments & formatting based on content
+            if col_idx in [1, 4, 5]: # Text
+                cell.alignment = left_align
+            else: # Numbers / Codes / Selects
+                cell.alignment = center_align
+                
+            # Number formats
+            if col_idx in [2, 7]: # currency
+                cell.number_format = "#,##0.00"
+            elif col_idx in [8, 9]: # integer
+                cell.number_format = "#,##0"
+                
+        # Data Validations (Dropdowns)
+        # 1. Units (Column C - col_idx 3)
+        dv_unit = DataValidation(type="list", formula1='"Unidade (UN),Grama (g),Quilograma (kg),Mililitro (ml),Litro (L),Pacote (PAQ),Caixa (CX)"', allow_blank=True)
+        dv_unit.error = 'Escolha uma unidade da lista'
+        dv_unit.errorTitle = 'Unidade Inválida'
+        dv_unit.prompt = 'Selecione a unidade de medida do produto'
+        dv_unit.promptTitle = 'Unidade de Medida'
+        ws.add_data_validation(dv_unit)
+        dv_unit.add("C2:C1000")
+        
+        # 2. Categories (Column F - col_idx 6)
+        categories_list = "Ração,Acessórios,Higiene,Brinquedos,Medicamentos,Petiscos,Camas e Casinhas,Roupas,Aquarismo,Aves,Outros"
+        dv_category = DataValidation(type="list", formula1=f'"{categories_list}"', allow_blank=True)
+        dv_category.error = 'Escolha uma categoria da lista'
+        dv_category.errorTitle = 'Categoria Inválida'
+        dv_category.prompt = 'Selecione a categoria do produto'
+        dv_category.promptTitle = 'Categoria'
+        ws.add_data_validation(dv_category)
+        dv_category.add("F2:F1000")
+                
+        # Auto-fit column widths
+        for col in ws.columns:
+            max_len = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                val_str = str(cell.value or "")
+                if len(val_str) > max_len:
+                    max_len = len(val_str)
+            ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+            
+        # Enable grid lines explicitly
+        ws.views.sheetView[0].showGridLines = True
+            
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()
+
