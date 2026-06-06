@@ -10,6 +10,7 @@ class PetBase(BaseModel):
     # básicos
     breed: Optional[str] = None
     gender: Optional[str] = "unknown"
+    is_neutered: Optional[bool] = None
 
     # porte e pelagem
     size: Optional[str] = None              # PP | P | M | G | GG
@@ -37,6 +38,7 @@ class PetUpdate(BaseModel):
     species: Optional[str] = None
     breed: Optional[str] = None
     gender: Optional[str] = None
+    is_neutered: Optional[bool] = None
 
     size: Optional[str] = None
     coat_type: Optional[str] = None

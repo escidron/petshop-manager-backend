@@ -47,6 +47,12 @@ class Pet(Base):
         index=True,
     )
 
+    is_neutered: Mapped[bool | None] = mapped_column(
+        Boolean,
+        nullable=True,
+        default=None,
+    )
+
     # 📏 Porte
     size: Mapped[str | None] = mapped_column(
         String(5)
