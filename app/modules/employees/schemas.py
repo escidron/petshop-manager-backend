@@ -3,7 +3,7 @@ from typing import Optional, Literal
 from pydantic import BaseModel, EmailStr
 
 
-EmployeeRole = Literal["groomer", "bather", "salesperson", "other"]
+EmployeeRole = Literal["groomer", "bather", "salesperson", "receptionist", "driver", "other"]
 
 
 class EmployeeBase(BaseModel):

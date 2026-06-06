@@ -11,6 +11,8 @@ class EmployeeRole(str, Enum):
     GROOMER = "groomer"
     BATHER = "bather"
     SALESPERSON = "salesperson"
+    RECEPTIONIST = "receptionist"
+    DRIVER = "driver"
     OTHER = "other"
 
 
