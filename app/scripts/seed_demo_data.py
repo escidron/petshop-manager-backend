@@ -159,8 +159,10 @@ def seed_demo(tenant_id: int):
         ]
 
         clients = []
-        for c in clients_data:
-            client = Client(tenant_id=tenant_id, is_active=True, **c)
+        for idx, c in enumerate(clients_data):
+            days_ago = 5 + (idx * 3.5)
+            created_at = now - timedelta(days=days_ago)
+            client = Client(tenant_id=tenant_id, is_active=True, created_at=created_at, **c)
             db.add(client)
             clients.append(client)
         db.flush()

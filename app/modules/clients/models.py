@@ -1,5 +1,5 @@
-from datetime import date
-from sqlalchemy import Date, String, Boolean, ForeignKey
+from datetime import date, datetime
+from sqlalchemy import Date, String, Boolean, ForeignKey, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config.database import Base
@@ -59,3 +59,17 @@ class Client(Base):
     instagram: Mapped[str | None] = mapped_column(String(255))
     facebook: Mapped[str | None] = mapped_column(String(255))
     x: Mapped[str | None] = mapped_column(String(255))
+
+    # -------- Auditoria --------
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
