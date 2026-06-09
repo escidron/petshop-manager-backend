@@ -16,10 +16,32 @@ class BillingAddressSchema(BaseModel):
 class CheckoutRequest(BaseModel):
     plan_code: str
     payment_method: str = "credit_card"  # "credit_card" | "pix"
-    card_token: Optional[str] = None     # obrigatório se payment_method == "credit_card"
+    card_token: Optional[str] = None     # obrigatório se payment_method == "credit_card" e card_id não fornecido
+    card_id: Optional[str] = None        # opcional se card_token fornecido
     document: Optional[str] = None       # CPF ou CNPJ do titular
     billing_address: Optional[BillingAddressSchema] = None
     start_at: Optional[str] = None       # ISO 8601 — para migrar de PIX para cartão sem sobreposição
+    idempotency_key: Optional[str] = None
+
+
+class SubscriptionChargeResponse(BaseModel):
+    id: str
+    amount: int
+    status: str
+    payment_method: str
+    pix_qr_code: Optional[str] = None
+    pix_qr_code_url: Optional[str] = None
+    expires_at: Optional[str] = None
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class UpdateChargeCardRequest(BaseModel):
+    card_token: str
+    billing_address: Optional[BillingAddressSchema] = None
+    document: Optional[str] = None
 
 
 class CheckoutResponse(BaseModel):
@@ -28,6 +50,7 @@ class CheckoutResponse(BaseModel):
     pix_qr_code: Optional[str] = None
     pix_qr_code_url: Optional[str] = None
     expires_at: Optional[str] = None
+
 
 
 class SetupIntentResponse(BaseModel):

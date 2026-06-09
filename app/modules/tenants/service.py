@@ -29,60 +29,82 @@ class TenantService:
         data: TenantCreate,
         user_id: int,
     ):
-        # 1️⃣ Validar Tenant Type
-        tenant_type = self.type_repository.get_by_id(db, data.type_id)
-        if not tenant_type:
-            raise HTTPException(
-                status_code=400,
-                detail="Tipo de empresa inválido",
-            )
+        print(f"[DEBUG CREATE_TENANT] Starting create_tenant for user_id={user_id}. Data: {data.model_dump()}")
+        try:
+            # 1️⃣ Validar Tenant Type
+            tenant_type = self.type_repository.get_by_id(db, data.type_id)
+            if not tenant_type:
+                print(f"[DEBUG CREATE_TENANT] Invalid tenant type: {data.type_id}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Tipo de empresa inválido",
+                )
 
-        # 2️⃣ Criar Tenant
-        tenant = self.repository.create(db, data)
+            # 2️⃣ Criar Tenant
+            tenant = self.repository.create(db, data)
+            print(f"[DEBUG CREATE_TENANT] Tenant created in memory. ID={tenant.id}")
 
-        # 3️⃣ Criar vínculo owner
-        self.tenant_users_repository.create(
-            db=db,
-            tenant_id=tenant.id,
-            user_id=user_id,
-            role="owner",
-        )
+            # 3️⃣ Atualizar o tenant_id da sessão para o novo tenant (necessário para passar no RLS)
+            from sqlalchemy import text
+            print(f"[DEBUG CREATE_TENANT] Setting SET LOCAL app.current_tenant_id = {tenant.id}")
+            db.execute(text("SET LOCAL app.current_tenant_id = :tid"), {"tid": tenant.id})
 
-        # 4️⃣ Buscar Plan
-        plan = self.plan_repository.get_by_code(db, data.plan_code)
-        if not plan:
-            raise HTTPException(
-                status_code=400,
-                detail="Plano inválido",
-            )
-
-        now = datetime.now(timezone.utc)
-
-        # 5️⃣ Criar Subscription
-        if plan.trial_days > 0:
-            trial_end = now + timedelta(days=plan.trial_days)
-
-            self.subscription_repository.create(
+            # 4️⃣ Criar vínculo owner
+            print(f"[DEBUG CREATE_TENANT] Creating tenant_user owner link for user_id={user_id}")
+            self.tenant_users_repository.create(
                 db=db,
                 tenant_id=tenant.id,
-                plan_id=plan.id,
-                status="trialing",
-                trial_ends_at=trial_end,
-                current_period_end=trial_end,
-            )
-        else:
-            # Plano pago sem trial: cria como "incomplete" até o pagamento ser confirmado via webhook
-            period_end = now + timedelta(days=30)
-
-            self.subscription_repository.create(
-                db=db,
-                tenant_id=tenant.id,
-                plan_id=plan.id,
-                status="incomplete",
-                current_period_end=period_end,
+                user_id=user_id,
+                role="owner",
             )
 
-        return tenant
+            # 5️⃣ Buscar Plan
+            print(f"[DEBUG CREATE_TENANT] Fetching plan for code: {data.plan_code}")
+            plan = self.plan_repository.get_by_code(db, data.plan_code)
+            if not plan:
+                print(f"[DEBUG CREATE_TENANT] Plan not found for code: {data.plan_code}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Plano inválido",
+                )
+            print(f"[DEBUG CREATE_TENANT] Plan found: {plan.name} (ID={plan.id})")
+
+            now = datetime.now(timezone.utc)
+
+            # 6️⃣ Criar Subscription
+            if plan.trial_days > 0:
+                trial_end = now + timedelta(days=plan.trial_days)
+                print(f"[DEBUG CREATE_TENANT] Creating trialing subscription ending at {trial_end}")
+                sub = self.subscription_repository.create(
+                    db=db,
+                    tenant_id=tenant.id,
+                    plan_id=plan.id,
+                    status="trialing",
+                    trial_ends_at=trial_end,
+                    current_period_end=trial_end,
+                )
+            else:
+                period_end = now + timedelta(days=30)
+                print(f"[DEBUG CREATE_TENANT] Creating incomplete subscription ending at {period_end}")
+                sub = self.subscription_repository.create(
+                    db=db,
+                    tenant_id=tenant.id,
+                    plan_id=plan.id,
+                    status="incomplete",
+                    current_period_end=period_end,
+                )
+
+            print("[DEBUG CREATE_TENANT] Committing transaction...")
+            db.commit()
+            tenant.subscription = sub
+            print("[DEBUG CREATE_TENANT] Success! Tenant and subscription committed.")
+            return tenant
+        except Exception as e:
+            print(f"[DEBUG CREATE_TENANT] ERROR occurred: {e}")
+            import traceback
+            traceback.print_exc()
+            db.rollback()
+            raise
     
     def get_tenant(self, db: Session, tenant_id: int):
         tenant = self.repository.get_by_id(db, tenant_id)
@@ -223,6 +245,9 @@ class TenantService:
             user_id=user.id,
             role=data.role,
         )
+
+        db.commit()
+        db.refresh(user)
 
         return {
             "id": user.id,

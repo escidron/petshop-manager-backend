@@ -105,12 +105,20 @@ def create_tenant(
     response: Response,
     db: Session = Depends(get_db),
 ):
+    from app.modules.auth.token import create_access_token, create_refresh_token
+
     service = TenantService()
     result = service.create_tenant(db, data, user_id)
 
+    token_data = {
+        "user_id": str(user_id),
+        "tenant_id": str(result.id),
+        "role": "owner",
+    }
+
     response.set_cookie(
         key=settings.COOKIE_ACCESS_NAME,
-        value=result["access_token"],
+        value=create_access_token(token_data),
         httponly=True,
         secure=False,  # True em prod
         samesite="lax",
@@ -119,13 +127,13 @@ def create_tenant(
 
     response.set_cookie(
         key=settings.COOKIE_REFRESH_NAME,
-        value=result["refresh_token"],
+        value=create_refresh_token(token_data),
         httponly=True,
         secure=False,  # True em prod
         samesite="lax",
         path="/",
     )
-    return result["tenant"]
+    return result
 
 
 @router.get("/", response_model=list[TenantResponse])

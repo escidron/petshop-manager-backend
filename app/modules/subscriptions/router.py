@@ -11,6 +11,8 @@ from app.modules.subscriptions.schemas import (
     CheckoutResponse,
     PaymentMethodResponse,
     SubscriptionResponse,
+    SubscriptionChargeResponse,
+    UpdateChargeCardRequest,
 )
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
@@ -30,13 +32,17 @@ def checkout(
         db,
         tenant,
         user.email,
+        user.name,
         body.plan_code,
         card_token=body.card_token,
+        card_id=body.card_id,
         payment_method=body.payment_method,
         document=body.document,
         billing_address=body.billing_address.model_dump() if body.billing_address else None,
         start_at=body.start_at,
+        idempotency_key=body.idempotency_key,
     )
+
 
 
 @router.get("/mine", response_model=SubscriptionResponse)
@@ -86,6 +92,7 @@ def add_payment_method(
         db,
         tenant,
         user.email,
+        user.name,
         body.card_token,
         billing_address=body.billing_address.model_dump() if body.billing_address else None,
         document=body.document,
@@ -114,5 +121,72 @@ def set_default(
 def remove_payment_method(
     pm_id: str,
     ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
 ):
-    service.detach_payment_method(ctx["tenant"], pm_id)
+    service.detach_payment_method(db, ctx["tenant"], pm_id)
+
+
+@router.get("/charges", response_model=list[SubscriptionChargeResponse])
+def get_charges(
+    ctx: dict = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+):
+    """Retorna o histórico de cobranças do tenant."""
+    tenant = ctx["tenant"]
+    return service.list_charges(db, tenant)
+
+
+@router.patch("/charges/{charge_id}/card", response_model=dict)
+def update_charge_card(
+    charge_id: str,
+    body: UpdateChargeCardRequest,
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Atualiza o cartão de crédito associado a uma cobrança específica e tenta cobrar novamente."""
+    tenant = ctx["tenant"]
+    user = ctx["user"]
+    return service.update_charge_card(
+        db=db,
+        tenant=tenant,
+        user_email=user.email,
+        user_name=user.name,
+        charge_id=charge_id,
+        card_token=body.card_token,
+        billing_address=body.billing_address.model_dump() if body.billing_address else None,
+        document=body.document,
+    )
+
+
+@router.post("/charges/{charge_id}/retry", response_model=dict)
+def retry_charge(
+    charge_id: str,
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Retenta manualmente a cobrança falha no Pagar.me."""
+    tenant = ctx["tenant"]
+    return service.retry_charge(db, tenant, charge_id)
+
+
+@router.post("/charges/{charge_id}/capture", response_model=dict)
+def capture_charge(
+    charge_id: str,
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Captura uma cobrança que foi previamente pré-autorizada."""
+    tenant = ctx["tenant"]
+    return service.capture_charge(db, tenant, charge_id)
+
+
+@router.post("/charges/{charge_id}/cancel", response_model=dict)
+def cancel_charge(
+    charge_id: str,
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Cancela/estorna uma cobrança no Pagar.me."""
+    tenant = ctx["tenant"]
+    return service.cancel_charge(db, tenant, charge_id)
+

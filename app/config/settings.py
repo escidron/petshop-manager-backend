@@ -29,8 +29,19 @@ class Settings(BaseSettings):
     # Set to "production" to disable SQL echo
     ENVIRONMENT: str = "development"
 
+    # WhatsApp Config
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_sandbox_mode: bool = True
+    whatsapp_sandbox_number: str = ""
+    whatsapp_template_appointment: str = ""
+    whatsapp_webhook_verify_token: str = ""
+    app_access_token: str = ""
+
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 settings = Settings()
+

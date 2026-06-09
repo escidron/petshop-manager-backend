@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.config.database import get_db
-from app.modules.auth.dependencies import get_current_tenant
+from app.modules.auth.dependencies import get_current_tenant, require_active_subscription
 from .schemas import SaleCreate, SaleResponse
 from .service import SalesService
 from app.modules.commissions.schemas import AssignEmployeeRequest
@@ -12,7 +12,7 @@ from app.modules.commissions.schemas import AssignEmployeeRequest
 router = APIRouter(prefix="/sales", tags=["PDV / Vendas"], dependencies=[Depends(get_current_tenant)])
 
 
-@router.post("/", response_model=SaleResponse)
+@router.post("/", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])
 def create_sale(data: SaleCreate, request: Request, db: Session = Depends(get_db)):
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
@@ -41,14 +41,14 @@ def get_sale(sale_id: int, request: Request, db: Session = Depends(get_db)):
     return service.get_sale(db, tenant_id, sale_id)
 
 
-@router.post("/{sale_id}/cancel", response_model=SaleResponse)
+@router.post("/{sale_id}/cancel", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])
 def cancel_sale(sale_id: int, request: Request, db: Session = Depends(get_db)):
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
     return service.cancel_sale(db, tenant_id, sale_id)
 
 
-@router.patch("/{sale_id}/items/{item_id}/employee", response_model=SaleResponse)
+@router.patch("/{sale_id}/items/{item_id}/employee", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])
 def assign_employee_to_item(
     sale_id: int,
     item_id: int,

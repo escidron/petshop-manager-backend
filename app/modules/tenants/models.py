@@ -36,7 +36,7 @@ class Tenant(Base):
         nullable=False,
     )
     pagarme_customer_id: Mapped[str | None] = mapped_column(
-        String(100), nullable=True, unique=True
+        String(100), nullable=True
     )
 
     working_hours: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

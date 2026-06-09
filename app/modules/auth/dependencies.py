@@ -111,33 +111,48 @@ def require_active_subscription(
 ):
     """
     Permite apenas operações de escrita quando a assinatura está ativa.
-    - status == 'active' → OK
-    - status == 'trialing' AND trial_ends_at > now → OK
+    - status == 'active' → OK (para PIX, tolerância de até 3 dias após o vencimento)
+    - status == 'past_due' AND vencimento + 3 dias > agora → OK (período de tolerância/grace period)
+    - status == 'trialing' AND trial_ends_at > agora → OK
     - qualquer outro caso → 403 com código 'subscription_required' ou 'trial_expired'
     """
+    from datetime import timedelta
     sub = context["tenant"].subscription
 
     if not sub:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="subscription_required",
+            detail="Assinatura necessária. Acesse Configurações > Planos e Cobrança para assinar um plano.",
         )
 
     now = datetime.now(timezone.utc)
 
     if sub.status == "active":
-        # PIX não tem subscription recorrente: verifica se o período ainda é válido
+        # PIX: tolerância de 3 dias de grace period
         if sub.payment_method == "pix":
             period_end = sub.current_period_end
             if period_end is not None:
                 if period_end.tzinfo is None:
                     period_end = period_end.replace(tzinfo=timezone.utc)
-                if now > period_end:
+                if now > period_end + timedelta(days=3):
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
-                        detail="subscription_required",
+                        detail="Assinatura expirada. Acesse Configurações > Planos e Cobrança para renovar.",
                     )
         return context
+
+    if sub.status == "past_due":
+        period_end = sub.current_period_end
+        if period_end is not None:
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
+            # Permite operações dentro do grace period de 3 dias
+            if now <= period_end + timedelta(days=3):
+                return context
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assinatura pendente ou atrasada. Acesse Configurações > Planos e Cobrança para regularizar seu pagamento.",
+        )
 
     if sub.status == "trialing":
         trial_end = sub.trial_ends_at
@@ -149,10 +164,11 @@ def require_active_subscription(
                 return context
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="trial_expired",
+            detail="Seu período de teste grátis expirou. Acesse Configurações > Planos e Cobrança para assinar o Plano Profissional e continuar usando o sistema.",
         )
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="subscription_required",
+        detail="Assinatura necessária. Acesse Configurações > Planos e Cobrança para ativar sua conta.",
     )
+

@@ -63,8 +63,7 @@ class TenantUserRepository:
             role=role,
         )
         db.add(tenant_user)
-        db.commit()
-        db.refresh(tenant_user)
+        db.flush()
         return tenant_user
 
     def list_by_tenant(self, db: Session, tenant_id: int):
