@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
@@ -51,3 +51,28 @@ def delete_service(
 ):
     tenant_id = request.state.tenant_user.tenant_id
     ServiceService().delete(db, tenant_id, service_id)
+
+
+@router.get("/import/template")
+def get_import_template():
+    import io
+    from fastapi.responses import StreamingResponse
+    content = ServiceService().generate_import_template_excel()
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=template_servicos.xlsx"},
+    )
+
+
+@router.post("/import", dependencies=[Depends(require_active_subscription)])
+async def import_services(
+    file: UploadFile = File(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    content = await file.read()
+    return await ServiceService().import_services_from_excel(db, tenant_id, content)
+
+
