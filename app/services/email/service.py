@@ -39,3 +39,20 @@ class EmailService:
             html=html_content,
             text=text_content
         )
+
+    def send_email_verification(self, to_email: str, user_name: str, otp_code: str):
+        subject = "Confirme seu e-mail - Pet Controle"
+        html_content = self._render_template(
+            "email_verification.html",
+            user_name=user_name,
+            otp_code=otp_code
+        )
+        text_content = f"Olá {user_name}, seu código de verificação é: {otp_code}. Ele expira em 15 minutos."
+
+        return self.provider.send_email(
+            to=to_email,
+            subject=subject,
+            html=html_content,
+            text=text_content
+        )
+

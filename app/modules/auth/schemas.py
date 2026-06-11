@@ -40,6 +40,10 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
+class VerifyEmailRequest(BaseModel):
+    otp_code: str
+
+
 # -------- Outputs --------
 
 class UserAuthData(BaseModel):

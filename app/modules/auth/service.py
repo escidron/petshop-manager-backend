@@ -63,6 +63,26 @@ class AuthService:
             except Exception as e:
                 print(f"Error sending welcome email: {e}")
 
+            # 6️⃣ Gerar e enviar OTP de verificação de e-mail
+            try:
+                otp_code = "".join(secrets.choice(string.digits) for _ in range(6))
+                from app.modules.auth.models import EmailVerificationOTP
+                new_otp = EmailVerificationOTP(
+                    user_id=user.id,
+                    otp_code=otp_code,
+                    expires_at=datetime.utcnow() + timedelta(minutes=15)
+                )
+                db.add(new_otp)
+                db.commit()
+
+                self.email_service.send_email_verification(
+                    to_email=user.email,
+                    user_name=user.name,
+                    otp_code=otp_code
+                )
+            except Exception as e:
+                print(f"Error sending verification email: {e}")
+
         except Exception:
             db.rollback()
             raise
@@ -149,6 +169,64 @@ class AuthService:
         
         db.commit()
         return True
+
+    def verify_email(self, db: Session, user_id: int, otp_code: str):
+        from app.modules.auth.models import EmailVerificationOTP
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+        otp_record = db.query(EmailVerificationOTP).filter(
+            EmailVerificationOTP.user_id == user_id,
+            EmailVerificationOTP.otp_code == otp_code
+        ).first()
+
+        if not otp_record or otp_record.is_expired:
+            raise HTTPException(status_code=400, detail="Código inválido ou expirado")
+
+        # Marcar como verificado
+        user.email_verified = True
+        
+        # Deletar todos os OTPs de verificação desse usuário
+        db.query(EmailVerificationOTP).filter(EmailVerificationOTP.user_id == user_id).delete()
+        
+        db.commit()
+        return True
+
+    def resend_verification_email(self, db: Session, user_id: int):
+        from app.modules.auth.models import EmailVerificationOTP
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+        if user.email_verified:
+            raise HTTPException(status_code=400, detail="E-mail já verificado")
+
+        # Gerar OTP
+        otp_code = "".join(secrets.choice(string.digits) for _ in range(6))
+        
+        # Deletar OTPs anteriores
+        db.query(EmailVerificationOTP).filter(EmailVerificationOTP.user_id == user_id).delete()
+        
+        # Salvar novo OTP (expira em 15 minutos)
+        new_otp = EmailVerificationOTP(
+            user_id=user_id,
+            otp_code=otp_code,
+            expires_at=datetime.utcnow() + timedelta(minutes=15)
+        )
+        db.add(new_otp)
+        db.commit()
+
+        # Enviar e-mail
+        self.email_service.send_email_verification(
+            to_email=user.email,
+            user_name=user.name,
+            otp_code=otp_code
+        )
+        return True
+
 
 
 def authenticate_user(

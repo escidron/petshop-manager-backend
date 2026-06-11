@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.config.settings import settings
 from app.config.database import get_db
-from app.modules.auth.dependencies import get_current_tenant
+from app.modules.auth.dependencies import get_current_tenant, get_current_user
 from app.modules.auth.schemas import (
     AuthResponse,
     LoginInput,
@@ -14,6 +14,7 @@ from app.modules.auth.schemas import (
     ForgotPasswordRequest,
     VerifyOTPRequest,
     ResetPasswordRequest,
+    VerifyEmailRequest,
 )
 from app.modules.auth.service import AuthService, authenticate_user
 from app.modules.auth.token import create_access_token, create_refresh_token, decode_token
@@ -364,3 +365,29 @@ def reset_password(
     auth_service = AuthService()
     auth_service.reset_password(db, payload.email, payload.otp_code, payload.new_password)
     return {"message": "Senha alterada com sucesso."}
+
+
+@router.post("/verify-email")
+@limiter.limit("5/minute")
+def verify_email(
+    request: Request,
+    payload: VerifyEmailRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    auth_service = AuthService()
+    auth_service.verify_email(db, current_user.id, payload.otp_code)
+    return {"message": "E-mail verificado com sucesso."}
+
+
+@router.post("/resend-verification")
+@limiter.limit("3/minute")
+def resend_verification(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    auth_service = AuthService()
+    auth_service.resend_verification_email(db, current_user.id)
+    return {"message": "E-mail de verificação enviado."}
+

@@ -2,7 +2,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.modules.auth.token import hash_password, verify_password
-from app.modules.users.schemas import UserCreate
+from app.modules.users.schemas import UserCreate, UserUpdate
 from .repository import UserRepository
 
 
@@ -27,4 +27,37 @@ class UserService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Senha atual incorreta")
         user.password = hash_password(new_password)
         db.commit()
+
+    def update_user(self, db: Session, user_id: int, data: UserUpdate):
+        from app.modules.users.models import User
+        from app.modules.auth.service import AuthService
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado")
+
+        email_changed = False
+        if data.name is not None:
+            user.name = data.name
+        if data.phone is not None:
+            user.phone = data.phone
+        if data.email is not None and data.email != user.email:
+            existing = db.query(User).filter(User.email == data.email).first()
+            if existing:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="E-mail já cadastrado por outro usuário")
+            user.email = data.email
+            user.email_verified = False
+            email_changed = True
+
+        db.commit()
+
+        if email_changed:
+            try:
+                auth_service = AuthService()
+                auth_service.resend_verification_email(db, user.id)
+            except Exception as e:
+                print(f"Error sending verification code after email change: {e}")
+
+        return user
+
 

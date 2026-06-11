@@ -6,6 +6,7 @@ class UserBase(BaseModel):
     name: str
     is_active: bool = True
     role: str = "owner"
+    email_verified: bool = False
 
 # ----------------- Criação -----------------
 class UserCreate(UserBase):
@@ -22,3 +23,10 @@ class UserResponse(UserBase):
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str
+
+
+class UserUpdate(BaseModel):
+    name: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+
