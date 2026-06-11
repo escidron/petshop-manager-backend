@@ -128,17 +128,17 @@ def require_active_subscription(
     now = datetime.now(timezone.utc)
 
     if sub.status == "active":
-        # PIX: tolerância de 3 dias de grace period
-        if sub.payment_method == "pix":
-            period_end = sub.current_period_end
-            if period_end is not None:
-                if period_end.tzinfo is None:
-                    period_end = period_end.replace(tzinfo=timezone.utc)
-                if now > period_end + timedelta(days=3):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Assinatura expirada. Acesse Configurações > Planos e Cobrança para renovar.",
-                    )
+        period_end = sub.current_period_end
+        if period_end is not None:
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
+            # PIX: tolerância de 3 dias de grace period; outros (cartão) vencem na data
+            grace_days = 3 if sub.payment_method == "pix" else 0
+            if now > period_end + timedelta(days=grace_days):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Assinatura expirada. Acesse Configurações > Planos e Cobrança para renovar.",
+                )
         return context
 
     if sub.status == "past_due":

@@ -559,6 +559,10 @@ def handle_webhook_event(payload: bytes, sig_header: str) -> None:
             _on_subscription_canceled(db, event["data"])
         elif event_type == "subscription.created":
             _on_subscription_created(db, event["data"])
+        elif event_type == "subscription.unpaid":
+            _on_subscription_unpaid(db, event["data"])
+        elif event_type == "subscription.updated":
+            _on_subscription_updated(db, event["data"])
 
         # Charge webhooks (new/robust)
         elif event_type == "charge.created":
@@ -648,6 +652,38 @@ def _on_subscription_created(db: Session, data: dict) -> None:
         return
 
     _repo.update(db, sub, {"status": _map_status(data.get("status", "pending"))})
+
+
+def _on_subscription_unpaid(db: Session, data: dict) -> None:
+    sub_id = data.get("id")
+    if not sub_id:
+        return
+
+    sub = _repo.get_by_pagarme_subscription_id(db, sub_id)
+    if sub:
+        _repo.update(db, sub, {"status": "past_due"})
+
+
+def _on_subscription_updated(db: Session, data: dict) -> None:
+    sub_id = data.get("id")
+    if not sub_id:
+        return
+
+    sub = _repo.get_by_pagarme_subscription_id(db, sub_id)
+    if sub:
+        update_data = {}
+        if "status" in data:
+            update_data["status"] = _map_status(data["status"])
+        
+        if "current_period_end" in data and data["current_period_end"]:
+            try:
+                dt = datetime.fromisoformat(data["current_period_end"].replace("Z", "+00:00"))
+                update_data["current_period_end"] = dt
+            except Exception:
+                pass
+        
+        if update_data:
+            _repo.update(db, sub, update_data)
 
 
 def _on_charge_created(db: Session, data: dict) -> None:
