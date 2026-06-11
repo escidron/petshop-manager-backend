@@ -24,14 +24,14 @@
         </div>
         <div class="content">
             <h2>Olá, {{ user_name }}</h2>
-            <p>Obrigado por se cadastrar no <strong>Pet Controle</strong>! Para podermos validar a sua conta e garantir a segurança do seu acesso, por favor utilize o código de verificação abaixo:</p>
+            <p>Obrigado por se cadastrar no <strong>{{ app_name }}</strong>! Para podermos validar a sua conta e garantir a segurança do seu acesso, por favor utilize o código de verificação abaixo:</p>
             <div class="button-container">
                 <span style="font-size: 32px; font-weight: bold; color: #10b981; letter-spacing: 5px; background: #e6f7f0; padding: 10px 20px; border-radius: 8px; border: 1px dashed #10b981;">{{ otp_code }}</span>
             </div>
             <p class="warning">Este código expira em 15 minutos. Se você não realizou este cadastro, por favor desconsidere este e-mail.</p>
         </div>
         <div class="footer">
-            <p>&copy; 2026 Pet Controle. Todos os direitos reservados.</p>
+            <p>&copy; 2026 {{ app_name }}. Todos os direitos reservados.</p>
         </div>
     </div>
 </body>
