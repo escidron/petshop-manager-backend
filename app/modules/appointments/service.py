@@ -384,3 +384,13 @@ class AppointmentService:
 
     def list_open_invoices(self, db: Session, tenant_id: int):
         return self.repo.list_open_invoices(db, tenant_id)
+
+    def list_highlighted_days(
+        self,
+        db: Session,
+        tenant_id: int,
+        start_date=None,
+        end_date=None,
+    ) -> list[date]:
+        return self.repo.list_highlighted_days(db, tenant_id, start_date=start_date, end_date=end_date)
+

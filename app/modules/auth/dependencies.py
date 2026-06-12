@@ -80,6 +80,12 @@ def get_current_tenant(
     
     subscription_repo = SubscriptionRepository()
     subscription = subscription_repo.get_active_by_tenant(db, tenant_id)
+    if subscription and subscription.status in ("active", "pending") and subscription.current_period_end:
+        period_end = subscription.current_period_end
+        if period_end.tzinfo is None:
+            period_end = period_end.replace(tzinfo=timezone.utc)
+        if period_end < datetime.now(timezone.utc):
+            subscription = subscription_repo.update(db, subscription, {"status": "past_due"})
     tenant.subscription = subscription
 
     request.state.tenant_user = tenant_user

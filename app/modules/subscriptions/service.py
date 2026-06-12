@@ -209,9 +209,76 @@ def create_checkout(
             raise HTTPException(status_code=502, detail=f"Erro ao criar assinatura no Pagar.me: {resp.text}")
 
     pagarme_sub = resp.json()
+    period_end = datetime.now(timezone.utc) + timedelta(days=30)
+
+    existing = _repo.get_active_by_tenant(db, tenant.id)
+    if existing and start_at:
+        # Migração PIX→Cartão: período atual já está pago via PIX.
+        # Mantém status e current_period_end — só troca o ID e o método.
+        sub_obj = _repo.update(db, existing, {
+            "pagarme_subscription_id": pagarme_sub["id"],
+            "payment_method": "card",
+        })
+    elif existing:
+        sub_obj = _repo.update(db, existing, {
+            "plan_id": plan.id,
+            "status": _map_status(pagarme_sub.get("status", "pending")),
+            "pagarme_subscription_id": pagarme_sub["id"],
+            "current_period_end": period_end,
+            "trial_ends_at": None,
+            "canceled_at": None,
+            "payment_method": "card",
+        })
+    else:
+        sub = _repo.create(
+            db=db,
+            tenant_id=tenant.id,
+            plan_id=plan.id,
+            status=_map_status(pagarme_sub.get("status", "pending")),
+            current_period_end=period_end,
+            pagarme_subscription_id=pagarme_sub["id"],
+        )
+        sub_obj = _repo.update(db, sub, {"payment_method": "card"})
+
+    # Salva a cobrança inicial do cartão localmente
+    sub_obj = sub_obj if 'sub_obj' in locals() else (sub if 'sub' in locals() else existing)
+    if sub_obj:
+        charges = pagarme_sub.get("charges", [])
+        for c in charges:
+            charge_id = c.get("id")
+            if charge_id:
+                amount = c.get("amount", 0)
+                status = c.get("status", "pending")
+                payment_method = c.get("payment_method", "card")
+                if payment_method == "credit_card":
+                    payment_method = "card"
+                
+                last_trans = c.get("last_transaction", {})
+                card_data = last_trans.get("card", {})
+                card_brand = card_data.get("brand")
+                card_last_four = card_data.get("last_four_digits")
+
+                existing_charge = _charge_repo.get_by_pagarme_charge_id(db, charge_id)
+                if not existing_charge:
+                    _charge_repo.create(
+                        db=db,
+                        tenant_id=tenant.id,
+                        subscription_id=sub_obj.id,
+                        pagarme_charge_id=charge_id,
+                        amount=amount,
+                        status=status,
+                        payment_method=payment_method,
+                        card_brand=card_brand,
+                        card_last_four=card_last_four,
+                    )
+
+    db.commit()
 
     # Se a assinatura foi criada com status de falha ou inadimplência imediata,
     # significa que o pagamento inicial falhou.
+    # Como já salvamos tudo localmente acima, agora podemos levantar a exceção
+    # para que o front-end mostre o erro de pagamento, sabendo que a fatura
+    # de falha já está registrada no histórico.
     pagarme_status = pagarme_sub.get("status")
     if pagarme_status in ("failed", "unpaid", "canceled"):
         error_msg = "Pagamento recusado. Por favor, verifique os dados do cartão e tente novamente."
@@ -232,39 +299,6 @@ def create_checkout(
         error_msg = error_msg.replace("Pagar.me", "servidor de pagamento").replace("Pagarme", "servidor de pagamento").replace("pagar.me", "servidor de pagamento")
         raise HTTPException(status_code=400, detail=error_msg)
 
-    period_end = datetime.now(timezone.utc) + timedelta(days=30)
-
-    existing = _repo.get_active_by_tenant(db, tenant.id)
-    if existing and start_at:
-        # Migração PIX→Cartão: período atual já está pago via PIX.
-        # Mantém status e current_period_end — só troca o ID e o método.
-        _repo.update(db, existing, {
-            "pagarme_subscription_id": pagarme_sub["id"],
-            "payment_method": "card",
-        })
-    elif existing:
-        _repo.update(db, existing, {
-            "plan_id": plan.id,
-            "status": _map_status(pagarme_sub.get("status", "pending")),
-            "pagarme_subscription_id": pagarme_sub["id"],
-            "current_period_end": period_end,
-            "trial_ends_at": None,
-            "canceled_at": None,
-            "payment_method": "card",
-        })
-    else:
-        sub = _repo.create(
-            db=db,
-            tenant_id=tenant.id,
-            plan_id=plan.id,
-            status=_map_status(pagarme_sub.get("status", "pending")),
-            current_period_end=period_end,
-            pagarme_subscription_id=pagarme_sub["id"],
-        )
-        _repo.update(db, sub, {"payment_method": "card"})
-
-    db.commit()
-
     return {
         "pagarme_subscription_id": pagarme_sub["id"],
         "status": pagarme_sub.get("status"),
@@ -281,6 +315,10 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
         },
         "amount": plan.price_cents,
         "currency": plan.currency or "BRL",
+        "metadata": {
+            "tenant_id": str(tenant.id),
+            "tenant_name": tenant.name,
+        },
     }
 
     headers = {"Idempotency-Key": idempotency_key or str(uuid.uuid4())}
@@ -362,7 +400,13 @@ def _register_card_for_tenant(db: Session, tenant_id: int, card_id: str) -> None
         TenantCard.pagarme_card_id == card_id,
     ).first()
     if not existing:
-        tc = TenantCard(tenant_id=tenant_id, pagarme_card_id=card_id, is_default=False)
+        has_default = db.query(TenantCard).filter(
+            TenantCard.tenant_id == tenant_id,
+            TenantCard.is_default == True,
+        ).first()
+        is_default = False if has_default else True
+
+        tc = TenantCard(tenant_id=tenant_id, pagarme_card_id=card_id, is_default=is_default)
         db.add(tc)
         db.flush()
 
@@ -701,12 +745,17 @@ def _on_charge_created(db: Session, data: dict) -> None:
     if payment_method == "credit_card":
         payment_method = "card"
 
-    pagarme_sub_id = data.get("subscription", {}).get("id")
+    metadata_tenant_id = data.get("metadata", {}).get("tenant_id")
     sub = None
-    if pagarme_sub_id:
-        sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+    if metadata_tenant_id:
+        sub = db.query(Subscription).filter(Subscription.tenant_id == int(metadata_tenant_id)).order_by(Subscription.started_at.desc()).first()
+
     if not sub:
-        sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
+        pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
+        if pagarme_sub_id:
+            sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+        if not sub:
+            sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
 
     if sub:
         pix_data = data.get("last_transaction", {})
@@ -719,6 +768,10 @@ def _on_charge_created(db: Session, data: dict) -> None:
             except Exception:
                 pass
 
+        card_data = pix_data.get("card", {})
+        card_brand = card_data.get("brand")
+        card_last_four = card_data.get("last_four_digits")
+
         _charge_repo.create(
             db=db,
             tenant_id=sub.tenant_id,
@@ -730,6 +783,8 @@ def _on_charge_created(db: Session, data: dict) -> None:
             pix_qr_code=qr_code,
             pix_qr_code_url=qr_code_url,
             expires_at=expires_at,
+            card_brand=card_brand,
+            card_last_four=card_last_four,
         )
         db.commit()
 
@@ -746,14 +801,24 @@ def _on_charge_paid(db: Session, data: dict) -> None:
     if payment_method == "credit_card":
         payment_method = "card"
 
-    pagarme_sub_id = data.get("subscription", {}).get("id")
+    metadata_tenant_id = data.get("metadata", {}).get("tenant_id")
     sub = None
-    if pagarme_sub_id:
-        sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+    if metadata_tenant_id:
+        sub = db.query(Subscription).filter(Subscription.tenant_id == int(metadata_tenant_id)).order_by(Subscription.started_at.desc()).first()
+
     if not sub:
-        sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
+        pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
+        if pagarme_sub_id:
+            sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+        if not sub:
+            sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
 
     if sub:
+        last_trans = data.get("last_transaction", {})
+        card_data = last_trans.get("card", {})
+        card_brand = card_data.get("brand")
+        card_last_four = card_data.get("last_four_digits")
+
         if not charge:
             _charge_repo.create(
                 db=db,
@@ -763,9 +828,15 @@ def _on_charge_paid(db: Session, data: dict) -> None:
                 amount=amount,
                 status=status,
                 payment_method=payment_method,
+                card_brand=card_brand,
+                card_last_four=card_last_four,
             )
         else:
-            _charge_repo.update(db, charge, {"status": status})
+            _charge_repo.update(db, charge, {
+                "status": status,
+                "card_brand": card_brand or charge.card_brand,
+                "card_last_four": card_last_four or charge.card_last_four,
+            })
 
         _repo.update(db, sub, {
             "status": "active",
@@ -782,14 +853,24 @@ def _on_charge_failed(db: Session, data: dict) -> None:
     charge = _charge_repo.get_by_pagarme_charge_id(db, charge_id)
     status = data.get("status", "failed")
 
-    pagarme_sub_id = data.get("subscription", {}).get("id")
+    metadata_tenant_id = data.get("metadata", {}).get("tenant_id")
     sub = None
-    if pagarme_sub_id:
-        sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+    if metadata_tenant_id:
+        sub = db.query(Subscription).filter(Subscription.tenant_id == int(metadata_tenant_id)).order_by(Subscription.started_at.desc()).first()
+
     if not sub:
-        sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
+        pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
+        if pagarme_sub_id:
+            sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+        if not sub:
+            sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
 
     if sub:
+        last_trans = data.get("last_transaction", {})
+        card_data = last_trans.get("card", {})
+        card_brand = card_data.get("brand")
+        card_last_four = card_data.get("last_four_digits")
+
         if not charge:
             _charge_repo.create(
                 db=db,
@@ -799,9 +880,15 @@ def _on_charge_failed(db: Session, data: dict) -> None:
                 amount=data.get("amount", 0),
                 status=status,
                 payment_method=sub.payment_method,
+                card_brand=card_brand,
+                card_last_four=card_last_four,
             )
         else:
-            _charge_repo.update(db, charge, {"status": status})
+            _charge_repo.update(db, charge, {
+                "status": status,
+                "card_brand": card_brand or charge.card_brand,
+                "card_last_four": card_last_four or charge.card_last_four,
+            })
 
         _repo.update(db, sub, {"status": "past_due"})
         db.commit()
@@ -863,7 +950,124 @@ def _on_charge_voided(db: Session, data: dict) -> None:
         db.commit()
 
 
+def sync_charges_from_pagarme(db: Session, tenant: Tenant) -> None:
+    if not tenant.pagarme_customer_id:
+        print(f"[SYNC] Tenant {tenant.id} não possui pagarme_customer_id.")
+        return
+
+    print(f"[SYNC] Sincronizando cobranças para Tenant {tenant.id} (Pagar.me Customer: {tenant.pagarme_customer_id})")
+    
+    # Listar as assinaturas locais do tenant para debug
+    local_subs = db.query(Subscription).filter(Subscription.tenant_id == tenant.id).all()
+    print(f"[SYNC] Assinaturas locais do Tenant {tenant.id}: {[s.pagarme_subscription_id for s in local_subs]}")
+
+    try:
+        with _pagarme_client() as client:
+            resp = client.get(f"/charges?customer_id={tenant.pagarme_customer_id}")
+            print(f"[SYNC] Resposta do Pagar.me status: {resp.status_code}")
+            if resp.status_code == 200:
+                charges_data = resp.json().get("data", [])
+                print(f"[SYNC] Total de cobranças retornadas pelo Pagar.me: {len(charges_data)}")
+                for c in charges_data:
+                    charge_id = c.get("id")
+                    if not charge_id:
+                        continue
+
+                    existing = _charge_repo.get_by_pagarme_charge_id(db, charge_id)
+
+                    # Tentar identificar o tenant através do metadata da charge
+                    metadata_tenant_id = c.get("metadata", {}).get("tenant_id")
+                    
+                    charge_sub = None
+                    if metadata_tenant_id:
+                        if str(metadata_tenant_id) != str(tenant.id):
+                            # Pertence a outro tenant, remove se já existia localmente
+                            if existing:
+                                print(f"[SYNC] Removendo charge desassociada {charge_id} do tenant {tenant.id}")
+                                db.delete(existing)
+                            continue
+                        
+                        # Se o tenant_id bate com o atual, localiza a subscription correspondente
+                        pagarme_sub_id = c.get("subscription", {}).get("id") or c.get("subscription_id")
+                        if pagarme_sub_id:
+                            charge_sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+                        if not charge_sub:
+                            # Fallback para PIX ou se a sub não foi achada pelo ID mas sabemos que o tenant é este
+                            charge_sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
+                        if not charge_sub:
+                            charge_sub = db.query(Subscription).filter(Subscription.tenant_id == tenant.id).order_by(Subscription.started_at.desc()).first()
+                    else:
+                        # Fallback antigo caso não haja metadata
+                        pagarme_sub_id = c.get("subscription", {}).get("id") or c.get("subscription_id")
+                        if pagarme_sub_id:
+                            charge_sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+                        if not charge_sub:
+                            charge_sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
+
+                    print(f"[SYNC] Charge {charge_id} -> Sub encontrada localmente: {charge_sub.id if charge_sub else 'NENHUMA'} (Tenant da Sub: {charge_sub.tenant_id if charge_sub else 'N/A'})")
+
+                    # Se a assinatura não existe no banco ou pertence a outro tenant, ignora e limpa se já existia localmente
+                    if not charge_sub or charge_sub.tenant_id != tenant.id:
+                        if existing:
+                            print(f"[SYNC] Removendo charge desassociada {charge_id}")
+                            db.delete(existing)
+                        continue
+                    
+                    amount = c.get("amount", 0)
+                    status = c.get("status", "pending")
+                    payment_method = c.get("payment_method", "card")
+                    if payment_method == "credit_card":
+                        payment_method = "card"
+                    
+                    last_trans = c.get("last_transaction", {})
+                    pix_qr_code = last_trans.get("qr_code")
+                    pix_qr_code_url = last_trans.get("qr_code_url")
+                    expires_at = None
+                    if last_trans.get("expires_at"):
+                        try:
+                            expires_at = datetime.fromisoformat(last_trans["expires_at"].replace("Z", "+00:00"))
+                        except Exception:
+                            pass
+                            
+                    card_data = last_trans.get("card", {})
+                    card_brand = card_data.get("brand")
+                    card_last_four = card_data.get("last_four_digits")
+
+                    if not existing:
+                        print(f"[SYNC] Criando nova cobrança local {charge_id} para Tenant {tenant.id}")
+                        _charge_repo.create(
+                            db=db,
+                            tenant_id=tenant.id,
+                            subscription_id=charge_sub.id,
+                            pagarme_charge_id=charge_id,
+                            amount=amount,
+                            status=status,
+                            payment_method=payment_method,
+                            pix_qr_code=pix_qr_code,
+                            pix_qr_code_url=pix_qr_code_url,
+                            expires_at=expires_at,
+                            card_brand=card_brand,
+                            card_last_four=card_last_four,
+                        )
+                    else:
+                        # Se já existe, atualiza os dados e garante que o tenant_id está correto
+                        print(f"[SYNC] Atualizando cobrança local {charge_id}")
+                        _charge_repo.update(db, existing, {
+                            "tenant_id": tenant.id,
+                            "subscription_id": charge_sub.id,
+                            "status": status,
+                            "card_brand": card_brand or existing.card_brand,
+                            "card_last_four": card_last_four or existing.card_last_four,
+                        })
+                db.commit()
+    except Exception as e:
+        print(f"Error syncing charges from Pagar.me: {e}")
+
+
 def list_charges(db: Session, tenant: Tenant) -> list[dict]:
+    # Sincroniza faturas diretamente da API do Pagar.me para garantir integridade local
+    sync_charges_from_pagarme(db, tenant)
+
     charges = _charge_repo.list_by_tenant(db, tenant.id)
     return [
         {
@@ -871,6 +1075,8 @@ def list_charges(db: Session, tenant: Tenant) -> list[dict]:
             "amount": c.amount,
             "status": c.status,
             "payment_method": c.payment_method,
+            "card_brand": c.card_brand,
+            "card_last_four": c.card_last_four,
             "pix_qr_code": c.pix_qr_code,
             "pix_qr_code_url": c.pix_qr_code_url,
             "expires_at": c.expires_at.isoformat() if c.expires_at else None,

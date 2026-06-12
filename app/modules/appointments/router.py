@@ -44,6 +44,22 @@ def list_open_invoices(
     return AppointmentService().list_open_invoices(db, tenant_id)
 
 
+@router.get(
+    "/highlighted-days",
+    response_model=list[date],
+)
+def list_highlighted_days(
+    request: Request,
+    db: Session = Depends(get_db),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return AppointmentService().list_highlighted_days(
+        db, tenant_id, start_date=start_date, end_date=end_date
+    )
+
+
 @router.get("/{appointment_id}", response_model=AppointmentResponse)
 def get_appointment(
     appointment_id: int,
@@ -97,6 +113,7 @@ def list_appointments_by_tenant(
     return AppointmentService().list_by_tenant(
         db, tenant_id, start_date=start_date, end_date=end_date
     )
+
 
 
 

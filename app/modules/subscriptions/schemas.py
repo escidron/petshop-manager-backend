@@ -29,6 +29,8 @@ class SubscriptionChargeResponse(BaseModel):
     amount: int
     status: str
     payment_method: str
+    card_brand: Optional[str] = None
+    card_last_four: Optional[str] = None
     pix_qr_code: Optional[str] = None
     pix_qr_code_url: Optional[str] = None
     expires_at: Optional[str] = None

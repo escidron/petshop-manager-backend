@@ -70,6 +70,8 @@ class SubscriptionChargeRepository:
         pix_qr_code: str | None = None,
         pix_qr_code_url: str | None = None,
         expires_at: datetime | None = None,
+        card_brand: str | None = None,
+        card_last_four: str | None = None,
     ) -> SubscriptionCharge:
         charge = SubscriptionCharge(
             tenant_id=tenant_id,
@@ -81,6 +83,8 @@ class SubscriptionChargeRepository:
             pix_qr_code=pix_qr_code,
             pix_qr_code_url=pix_qr_code_url,
             expires_at=expires_at,
+            card_brand=card_brand,
+            card_last_four=card_last_four,
         )
         db.add(charge)
         db.flush()

@@ -126,6 +126,9 @@ class SubscriptionCharge(Base):
 
     payment_method: Mapped[str] = mapped_column(String(20), nullable=False)
 
+    card_brand: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    card_last_four: Mapped[str | None] = mapped_column(String(4), nullable=True)
+
     pix_qr_code: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     pix_qr_code_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(

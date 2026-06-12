@@ -265,3 +265,23 @@ class AppointmentRepository:
             .order_by(Appointment.scheduled_at.desc())
             .all()
         )
+
+    def list_highlighted_days(
+        self,
+        db: Session,
+        tenant_id: int,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[date]:
+        from sqlalchemy import Date, cast
+        q = (
+            db.query(cast(Appointment.scheduled_at, Date))
+            .filter(Appointment.tenant_id == tenant_id)
+        )
+        if start_date:
+            q = q.filter(Appointment.scheduled_at >= datetime.combine(start_date, time.min))
+        if end_date:
+            q = q.filter(Appointment.scheduled_at <= datetime.combine(end_date, time.max))
+        
+        results = q.distinct().order_by(cast(Appointment.scheduled_at, Date)).all()
+        return [r[0] for r in results if r[0] is not None]
