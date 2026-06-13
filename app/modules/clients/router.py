@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Request
+import io
+from fastapi import APIRouter, Depends, Request, File, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
@@ -11,6 +13,7 @@ from .schemas import (
 from .service import ClientService
 
 router = APIRouter(prefix="/clients", tags=["Clients"], dependencies=[Depends(get_current_tenant)])
+
 
 
 @router.post("/", response_model=ClientResponse, dependencies=[Depends(require_active_subscription)])
@@ -66,3 +69,27 @@ def delete_client(
     service = ClientService()
     tenant_id = request.state.tenant_user.tenant_id
     service.delete_client(db, tenant_id, client_id)
+
+
+@router.get("/import/template")
+def get_import_template():
+    service = ClientService()
+    content = service.generate_import_template_excel()
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=template_clientes_pets.xlsx"},
+    )
+
+
+@router.post("/import", dependencies=[Depends(require_active_subscription)])
+async def import_clients(
+    file: UploadFile = File(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    service = ClientService()
+    tenant_id = request.state.tenant_user.tenant_id
+    content = await file.read()
+    return await service.import_clients_from_excel(db, tenant_id, content)
+
