@@ -1,10 +1,12 @@
 from typing import Generator
+import re
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import (
     DeclarativeBase,
     sessionmaker,
     Session,
+    Mapper,
 )
 
 from app.config.settings import settings
@@ -15,6 +17,34 @@ from app.config.settings import settings
 # =========================
 class Base(DeclarativeBase):
     pass
+
+
+def clean_html(text: str) -> str:
+    if not text or not isinstance(text, str):
+        return text
+    # Remove script and style blocks completely
+    text = re.sub(r'<script.*?>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<style.*?>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Remove other HTML tags
+    text = re.sub(r'<[^>]*>', '', text)
+    return text.strip()
+
+
+@event.listens_for(Mapper, "before_insert")
+def sanitize_before_insert(mapper, connection, target):
+    for attr in mapper.column_attrs:
+        value = getattr(target, attr.key)
+        if isinstance(value, str):
+            setattr(target, attr.key, clean_html(value))
+
+
+@event.listens_for(Mapper, "before_update")
+def sanitize_before_update(mapper, connection, target):
+    for attr in mapper.column_attrs:
+        value = getattr(target, attr.key)
+        if isinstance(value, str):
+            setattr(target, attr.key, clean_html(value))
+
 
 
 # =========================
