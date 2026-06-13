@@ -37,6 +37,7 @@ class Employee(Base):
 
     phone: Mapped[str | None] = mapped_column(String(20))
     email: Mapped[str | None] = mapped_column(String(255))
+    schedule_token: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

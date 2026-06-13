@@ -29,7 +29,45 @@ class EmployeeUpdate(BaseModel):
 class EmployeeResponse(EmployeeBase):
     id: int
     tenant_id: int
+    schedule_token: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class PublicAppointmentService(BaseModel):
+    id: int
+    name: str
+    duration_minutes: Optional[int] = None
+
+
+class PublicAppointmentPet(BaseModel):
+    id: int
+    name: str
+    species: str
+    breed: Optional[str] = None
+
+
+class PublicAppointmentItem(BaseModel):
+    id: int
+    pet: PublicAppointmentPet
+    services: list[PublicAppointmentService]
+
+
+class PublicAppointment(BaseModel):
+    id: int
+    scheduled_at: datetime
+    status: str
+    notes: Optional[str] = None
+    client_name: str
+    client_phone: Optional[str] = None
+    items: list[PublicAppointmentItem]
+
+
+class PublicFreelancerScheduleResponse(BaseModel):
+    employee_name: str
+    employee_role: str
+    petshop_name: str
+    appointments: list[PublicAppointment]
+
