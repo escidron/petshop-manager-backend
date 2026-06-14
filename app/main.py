@@ -5,6 +5,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.api.v1.api_router import api_router
 from app.config.limiter import limiter
+from app.config.logging_config import setup_logging
+from app.config.observability_middleware import ObservabilityMiddleware
 import app.modules.users.models
 import app.modules.tenants.models
 import app.modules.suppliers.models
@@ -16,6 +18,9 @@ import app.modules.subscriptions.models
 import app.modules.plans.models
 import app.modules.auth.models
 import app.modules.waiting_list.models
+
+# Initialize Logging Configuration
+setup_logging()
 
 def create_app() -> FastAPI:
     from app.config.settings import settings
@@ -34,6 +39,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(SlowAPIMiddleware)
+    app.add_middleware(ObservabilityMiddleware)
 
     app.include_router(api_router, prefix="/api/v1")
 
