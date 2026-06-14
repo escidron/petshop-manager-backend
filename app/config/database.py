@@ -2,6 +2,7 @@ from typing import Generator
 import re
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import (
     DeclarativeBase,
     sessionmaker,
@@ -50,14 +51,26 @@ def sanitize_before_update(mapper, connection, target):
 # =========================
 # Engine
 # =========================
+is_prod = settings.ENVIRONMENT == "production"
+
+engine_args = {
+    "echo": settings.ENVIRONMENT == "development",
+}
+
+if is_prod:
+    engine_args["poolclass"] = NullPool
+else:
+    engine_args.update({
+        "pool_pre_ping": True,
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_timeout": 30,
+        "pool_recycle": 600,
+    })
+
 engine = create_engine(
     settings.DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
-    pool_recycle=600,   # recicla conexões a cada 10 min (importante para Supabase)
-    echo=settings.ENVIRONMENT == "development",
+    **engine_args
 )
 
 
