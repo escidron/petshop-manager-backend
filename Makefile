@@ -1,6 +1,7 @@
-.PHONY: run install shell test lint format migrate revision upgrade downgrade reset-db seed-demo
+.PHONY: run install shell test lint format migrate revision upgrade downgrade reset-db seed-demo docker-build docker-run docker-dev
 
 APP=app.main:app
+IMAGE_NAME=petshop-backend
 
 install:
 	poetry install
@@ -37,3 +38,12 @@ reset-db:
 
 seed-demo:
 	poetry run python -m app.scripts.seed_demo_data $(tenant)
+
+docker-build:
+	docker build -t $(IMAGE_NAME) .
+
+docker-run:
+	docker run --env-file .env -p 8000:8080 $(IMAGE_NAME)
+
+docker-dev:
+	docker run --env-file .env -p 8000:8080 -v "$(CURDIR):/app" $(IMAGE_NAME) poetry run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
