@@ -112,6 +112,18 @@ def require_owner(
     return context
 
 
+def require_admin(
+    user: User = Depends(get_current_user),
+):
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado: apenas administradores do sistema podem realizar esta ação",
+        )
+    return user
+
+
+
 def require_active_subscription(
     context: dict = Depends(get_current_tenant),
 ):
