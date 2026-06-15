@@ -137,7 +137,10 @@ def create_tenant(
 
 
 @router.get("/", response_model=list[TenantResponse])
-def list_tenants(db: Session = Depends(get_db)):
+def list_tenants(
+    db: Session = Depends(get_db),
+    admin_user = Depends(require_admin),
+):
     service = TenantService()
     return service.list_tenants(db)
 
@@ -146,7 +149,13 @@ def list_tenants(db: Session = Depends(get_db)):
 def get_tenant(
     tenant_id: int,
     db: Session = Depends(get_db),
+    context: dict = Depends(get_current_tenant),
 ):
+    if context["user"].role != "admin" and context["tenant"].id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado: você não tem permissão para visualizar esta empresa",
+        )
     service = TenantService()
     return service.get_tenant(db, tenant_id)
 
@@ -156,7 +165,13 @@ def update_tenant(
     tenant_id: int,
     data: TenantUpdate,
     db: Session = Depends(get_db),
+    context: dict = Depends(require_owner),
 ):
+    if context["user"].role != "admin" and context["tenant"].id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado: você não tem permissão para alterar esta empresa",
+        )
     service = TenantService()
     return service.update_tenant(db, tenant_id, data)
 
@@ -180,6 +195,7 @@ def delete_own_account(
 def delete_tenant(
     tenant_id: int,
     db: Session = Depends(get_db),
+    admin_user = Depends(require_admin),
 ):
     service = TenantService()
     service.delete_tenant(db, tenant_id)
@@ -190,7 +206,13 @@ def update_subscription(
     tenant_id: int,
     data: SubscriptionUpdate,
     db: Session = Depends(get_db),
+    context: dict = Depends(require_owner),
 ):
+    if context["user"].role != "admin" and context["tenant"].id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado: você não tem permissão para alterar esta assinatura",
+        )
     service = TenantService()
     return service.update_subscription(db, tenant_id, data)
 

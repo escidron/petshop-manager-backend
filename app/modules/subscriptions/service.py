@@ -589,45 +589,57 @@ def handle_webhook_event(payload: bytes, sig_header: str) -> None:
     import json
     from app.config.database import SessionLocal
 
-    event = json.loads(payload)
+    try:
+        event = json.loads(payload)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Payload inválido: JSON incorreto")
+
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Payload inválido: deve ser um objeto JSON")
+
+    event_type = event.get("type", "")
+    event_data = event.get("data")
+
+    # Se data for nulo ou não for dicionário, e o tipo de evento exigir processamento, falha
+    if event_type and not isinstance(event_data, dict):
+        raise HTTPException(status_code=400, detail="Payload inválido: 'data' deve ser um objeto")
+
     db = SessionLocal()
     try:
-        event_type = event.get("type", "")
-
         # Subscription webhooks (original)
         if event_type == "subscription.payment_succeeded":
-            _on_payment_succeeded(db, event["data"])
+            _on_payment_succeeded(db, event_data)
         elif event_type == "subscription.payment_failed":
-            _on_payment_failed(db, event["data"])
+            _on_payment_failed(db, event_data)
         elif event_type in ("subscription.canceled", "subscription.deactivated"):
-            _on_subscription_canceled(db, event["data"])
+            _on_subscription_canceled(db, event_data)
         elif event_type == "subscription.created":
-            _on_subscription_created(db, event["data"])
+            _on_subscription_created(db, event_data)
         elif event_type == "subscription.unpaid":
-            _on_subscription_unpaid(db, event["data"])
+            _on_subscription_unpaid(db, event_data)
         elif event_type == "subscription.updated":
-            _on_subscription_updated(db, event["data"])
+            _on_subscription_updated(db, event_data)
 
         # Charge webhooks (new/robust)
         elif event_type == "charge.created":
-            _on_charge_created(db, event["data"])
+            _on_charge_created(db, event_data)
         elif event_type == "charge.paid":
-            _on_charge_paid(db, event["data"])
+            _on_charge_paid(db, event_data)
         elif event_type in ("charge.payment_failed", "charge.not_authorized"):
-            _on_charge_failed(db, event["data"])
+            _on_charge_failed(db, event_data)
         elif event_type == "charge.authorized":
-            _on_charge_authorized(db, event["data"])
+            _on_charge_authorized(db, event_data)
         elif event_type == "charge.refunded":
-            _on_charge_refunded(db, event["data"])
+            _on_charge_refunded(db, event_data)
         elif event_type == "charge.voided":
-            _on_charge_voided(db, event["data"])
+            _on_charge_voided(db, event_data)
         elif event_type in (
             "charge.with_error",
             "charge.waiting_cancellation",
             "charge.error_on_voiding",
             "charge.error_on_refunding",
         ):
-            _on_charge_status_update(db, event["data"], event_type.split(".")[1])
+            _on_charge_status_update(db, event_data, event_type.split(".")[1])
 
     finally:
         db.close()

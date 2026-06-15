@@ -138,9 +138,32 @@ class TenantService:
 
         return self.repository.update(db, tenant, data)
 
+    def _perform_tenant_deletion(self, db: Session, tenant):
+        from app.modules.subscriptions.models import Subscription, SubscriptionCharge
+        from app.modules.users.models import TenantUser, User
+
+        # Deletar as cobranças e assinaturas primeiro para evitar erro de FK
+        db.query(SubscriptionCharge).filter(SubscriptionCharge.tenant_id == tenant.id).delete()
+        db.query(Subscription).filter(Subscription.tenant_id == tenant.id).delete()
+        db.flush()
+
+        # Identificar todos os IDs de usuários vinculados a este tenant ANTES de deletar
+        user_ids = [tu.user_id for tu in db.query(TenantUser).filter(TenantUser.tenant_id == tenant.id).all()]
+
+        # Deletar o tenant (isso vai deletar os TenantUser via CASCADE e outros com CASCADE configurado)
+        db.delete(tenant)
+        db.flush()
+
+        # Para cada usuário que estava no tenant, verificar se ficou órfão e deletar se necessário
+        for uid in user_ids:
+            other_tenants = db.query(TenantUser).filter(TenantUser.user_id == uid).count()
+            if other_tenants == 0:
+                db.query(User).filter(User.id == uid).delete()
+
     def delete_tenant(self, db: Session, tenant_id: int):
         tenant = self.get_tenant(db, tenant_id)
-        self.repository.delete(db, tenant)
+        self._perform_tenant_deletion(db, tenant)
+        db.commit()
 
     def delete_own_tenant(self, db: Session, tenant, user) -> None:
         """Permanently deletes the tenant and all its data.
@@ -148,8 +171,6 @@ class TenantService:
         Also cancels the Pagar.me subscription if active.
         """
         from app.modules.subscriptions import service as sub_service
-        from app.modules.subscriptions.models import Subscription
-        from app.modules.users.models import TenantUser
 
         # Cancel Pagar.me subscription if it exists and isn't already canceled
         sub = self.subscription_repository.get_active_by_tenant(db, tenant.id)
@@ -160,24 +181,7 @@ class TenantService:
                 # Even if Pagar.me call fails, proceed with deletion
                 pass
 
-        # Deletar as assinaturas vinculadas primeiro para evitar erro de FK
-        db.query(Subscription).filter(Subscription.tenant_id == tenant.id).delete()
-        db.flush()
-
-        # Identificar todos os IDs de usuários vinculados a este tenant ANTES de deletar
-        user_ids = [tu.user_id for tu in db.query(TenantUser).filter(TenantUser.tenant_id == tenant.id).all()]
-
-        # Deletar o tenant (isso vai deletar os TenantUser via CASCADE)
-        db.delete(tenant)
-        db.flush()
-
-        # Para cada usuário que estava no tenant, verificar se ficou órfão e deletar se necessário
-        from app.modules.users.models import User
-        for uid in user_ids:
-            other_tenants = db.query(TenantUser).filter(TenantUser.user_id == uid).count()
-            if other_tenants == 0:
-                db.query(User).filter(User.id == uid).delete()
-        
+        self._perform_tenant_deletion(db, tenant)
         db.commit()
 
     def list_tenant_users(self, db: Session, tenant_id: int):

@@ -9,9 +9,4 @@ class UserRepository:
         return user
     
     def get_user(self, db: Session, user_id: int):
-        user = db.query(User).filter(User.id == user_id).first()
-
-        if not user:
-            return {"message": "Usuário não encontrado"}
-
-        return user
+        return db.query(User).filter(User.id == user_id).first()

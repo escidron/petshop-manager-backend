@@ -13,10 +13,21 @@ class UserService:
     def create(self, db: Session, data: UserCreate):
         user_data = data.model_dump()  # Pydantic v2
         user_data["password"] = hash_password(user_data["password"])
+        
+        # Evitar escalada de privilégios (Mass Assignment): não permite criar com role 'admin'
+        if user_data.get("role") == "admin":
+            user_data["role"] = "owner"
+            
         return self.repository.create(db, user_data)
 
     def get_user(self, db: Session, user_id: int):
-        return self.repository.get_user(db, user_id)
+        user = self.repository.get_user(db, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuário não encontrado",
+            )
+        return user
 
     def change_password(self, db: Session, user_id: int, current_password: str, new_password: str):
         from app.modules.users.models import User

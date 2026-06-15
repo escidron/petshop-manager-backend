@@ -1,28 +1,28 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from datetime import datetime
 from app.modules.subscriptions.schemas import SubscriptionResponse
 
 
 class TenantBase(BaseModel):
-    name: str
+    name: str = Field(..., max_length=150)
     type_id: int = 1
     is_active: bool = True
-    phone: str
-    email: Optional[str] = None
-    plan_code: str
-    onboarding_step: str = "services"
-    document: Optional[str] = None
+    phone: str = Field(..., max_length=20)
+    email: Optional[str] = Field(None, max_length=255)
+    plan_code: str = Field(..., max_length=50)
+    onboarding_step: str = Field("services", max_length=50)
+    document: Optional[str] = Field(None, max_length=20)
 
 class TenantCreate(TenantBase):
     pass
 
 
 class TenantUpdate(BaseModel):
-    name: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    document: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=150)
+    email: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=20)
+    document: Optional[str] = Field(None, max_length=20)
     type_id: Optional[int] = None
     is_active: Optional[bool] = None
     working_hours: Optional[dict] = None
@@ -54,10 +54,10 @@ class TenantResponse(BaseModel):
 
 
 class TenantUserCreate(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
-    role: str = "employee"
+    name: str = Field(..., max_length=100)
+    email: EmailStr = Field(..., max_length=255)
+    password: str = Field(..., max_length=100)
+    role: str = Field("employee", max_length=20)
 
 
 class TenantUserResponse(BaseModel):

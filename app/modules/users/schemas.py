@@ -1,16 +1,16 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 # ----------------- Base -----------------
 class UserBase(BaseModel):
-    email: EmailStr
-    name: str
+    email: EmailStr = Field(..., max_length=255)
+    name: str = Field(..., max_length=100)
     is_active: bool = True
-    role: str = "owner"
+    role: str = Field("owner", max_length=20)
     email_verified: bool = False
 
 # ----------------- Criação -----------------
 class UserCreate(UserBase):
-    password: str  # necessário só na criação
+    password: str = Field(..., max_length=100)  # necessário só na criação
 
 # ----------------- Resposta -----------------
 class UserResponse(UserBase):
@@ -21,12 +21,12 @@ class UserResponse(UserBase):
 
 # ----------------- Alterar Senha -----------------
 class PasswordChange(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(..., max_length=100)
+    new_password: str = Field(..., max_length=100)
 
 
 class UserUpdate(BaseModel):
-    name: str | None = None
-    email: EmailStr | None = None
-    phone: str | None = None
+    name: str | None = Field(None, max_length=100)
+    email: EmailStr | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=20)
 
