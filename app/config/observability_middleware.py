@@ -37,6 +37,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
             
+            # Add security headers
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["X-XSS-Protection"] = "1; mode=block"
+            
             # Don't log health checks to reduce spam
             if request.url.path != "/health":
                 process_time = (time.perf_counter() - start_time) * 1000
@@ -56,12 +61,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 f"{traceback.format_exc()}"
             )
             
-            return JSONResponse(
+            error_response = JSONResponse(
                 status_code=500,
                 content={
                     "detail": "Erro interno do servidor. O incidente foi registrado para análise."
                 }
             )
+            error_response.headers["X-Content-Type-Options"] = "nosniff"
+            error_response.headers["X-Frame-Options"] = "DENY"
+            error_response.headers["X-XSS-Protection"] = "1; mode=block"
+            return error_response
         finally:
             # Clean up context vars
             tenant_id_var.reset(tenant_token)

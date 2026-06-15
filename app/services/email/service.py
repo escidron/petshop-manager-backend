@@ -1,5 +1,5 @@
 import os
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app.services.email.resend_provider import ResendProvider
 from app.config.settings import settings
 
@@ -7,7 +7,10 @@ class EmailService:
     def __init__(self):
         self.provider = ResendProvider()
         template_dir = os.path.join(os.path.dirname(__file__), "templates")
-        self.jinja_env = Environment(loader=FileSystemLoader(template_dir))
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(template_dir),
+            autoescape=select_autoescape(["html", "xml"])
+        )
 
     def _render_template(self, template_name: str, **kwargs):
         template = self.jinja_env.get_template(template_name)
