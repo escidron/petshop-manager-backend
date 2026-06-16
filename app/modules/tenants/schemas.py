@@ -26,6 +26,7 @@ class TenantUpdate(BaseModel):
     type_id: Optional[int] = None
     is_active: Optional[bool] = None
     working_hours: Optional[dict] = None
+    max_simultaneous_appointments: Optional[int] = None
 
 class TenantTypeResponse(BaseModel):
     id: int
@@ -48,6 +49,7 @@ class TenantResponse(BaseModel):
     type: TenantTypeResponse
     subscription: Optional[SubscriptionResponse] = None
     working_hours: Optional[dict] = None
+    max_simultaneous_appointments: Optional[int] = None
 
     class Config:
         from_attributes = True

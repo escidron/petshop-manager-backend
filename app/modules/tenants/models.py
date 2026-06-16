@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import DateTime, String, Boolean, ForeignKey, func, JSON
+from sqlalchemy import DateTime, String, Boolean, ForeignKey, func, JSON, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional
 
@@ -40,6 +40,7 @@ class Tenant(Base):
     )
 
     working_hours: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    max_simultaneous_appointments: Mapped[int | None] = mapped_column(Integer, default=None, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

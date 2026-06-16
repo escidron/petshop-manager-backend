@@ -71,3 +71,19 @@ class PublicFreelancerScheduleResponse(BaseModel):
     petshop_name: str
     appointments: list[PublicAppointment]
 
+
+class PublicBookingRequest(BaseModel):
+    client_name: str
+    client_phone: str
+    pet_name: str
+    service_ids: list[int]
+    scheduled_at: datetime
+    notes: Optional[str] = None
+
+
+class PublicBookingResponse(BaseModel):
+    success: bool
+    appointment_id: int
+    message: str
+
+

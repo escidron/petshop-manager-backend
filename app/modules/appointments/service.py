@@ -95,6 +95,15 @@ class AppointmentService:
 
         db.commit()
 
+        # Envia notificação por WhatsApp
+        try:
+            import logging
+            from app.modules.whatsapp.service import WhatsAppService
+            local_logger = logging.getLogger(__name__)
+            WhatsAppService().send_appointment_confirmation(db, tenant_id, appointment.id)
+        except Exception as e:
+            local_logger.error(f"Erro ao enviar notificação de agendamento por WhatsApp: {str(e)}")
+
         return self.repo.get_with_relations(db, appointment.id)
 
     # ---------- GET ----------
@@ -253,6 +262,7 @@ class AppointmentService:
         tenant_id: int,
         appointment_id: int,
         action: AppointmentAction,
+        by_whatsapp: bool = False,
     ):
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
 
@@ -277,6 +287,15 @@ class AppointmentService:
         appointment.status = new_status
 
         result = self.repo.save_action(db, appointment)
+
+        if action == AppointmentAction.CANCEL and not by_whatsapp:
+            try:
+                db.commit()
+                from app.modules.whatsapp.service import WhatsAppService
+                WhatsAppService().send_whatsapp_notification(db, tenant_id, appointment.id, "appointment_canceled")
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Erro ao notificar cancelamento por WhatsApp: {str(e)}")
 
         # Ao completar, desconta créditos de pacotes e registra coverages (FIFO)
         if action == AppointmentAction.COMPLETE:
@@ -363,6 +382,15 @@ class AppointmentService:
                         pass
 
             db.commit()
+
+            # Envia notificação de Pet Pronto por WhatsApp
+            try:
+                import logging
+                from app.modules.whatsapp.service import WhatsAppService
+                WhatsAppService().send_whatsapp_notification(db, tenant_id, appointment.id, "pet_ready")
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Erro ao notificar que o pet está pronto: {str(e)}")
 
             # Aviso não-bloqueante se algum serviço estiver sem funcionário
             missing_services: list[str] = []

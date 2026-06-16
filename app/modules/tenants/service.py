@@ -42,7 +42,16 @@ class TenantService:
 
             # 2️⃣ Criar Tenant
             tenant = self.repository.create(db, data)
-            print(f"[DEBUG CREATE_TENANT] Tenant created in memory. ID={tenant.id}")
+            tenant.working_hours = {
+                "0": {"is_open": False, "open": "08:00", "close": "12:00"},
+                "1": {"is_open": True,  "open": "08:00", "close": "18:00"},
+                "2": {"is_open": True,  "open": "08:00", "close": "18:00"},
+                "3": {"is_open": True,  "open": "08:00", "close": "18:00"},
+                "4": {"is_open": True,  "open": "08:00", "close": "18:00"},
+                "5": {"is_open": True,  "open": "08:00", "close": "18:00"},
+                "6": {"is_open": True,  "open": "08:00", "close": "18:00"}
+            }
+            print(f"[DEBUG CREATE_TENANT] Tenant created in memory with default working hours. ID={tenant.id}")
 
             # 3️⃣ Atualizar o tenant_id da sessão para o novo tenant (necessário para passar no RLS)
             from sqlalchemy import text
