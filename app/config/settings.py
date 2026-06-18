@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # Email (Resend)
     RESEND_KEY: str = ""
     DEFAULT_FROM_EMAIL: str = "onboarding@resend.dev"
+    ADMIN_EMAIL: str = ""
 
     # CORS — comma-separated list of allowed origins
     # Ex: "https://meuapp.vercel.app,https://www.meuapp.com"
