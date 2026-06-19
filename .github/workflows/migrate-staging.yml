@@ -38,5 +38,7 @@ jobs:
       - name: Run Alembic Migrations
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: "temporary_secret_key_for_ci_migrations"
+          CEP_BASE_URL: "https://viacep.com.br/ws"
         run: |
           poetry run alembic upgrade head
