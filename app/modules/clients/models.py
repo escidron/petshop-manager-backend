@@ -19,7 +19,7 @@ class Client(Base):
         index=True,
     )
 
-    # 🔗 Relacionamentos (cascade para deletar pets/appointments junto com o cliente)
+    #  Relacionamentos (cascade para deletar pets/appointments junto com o cliente)
     pets = relationship(
         "Pet",
         back_populates="client",
