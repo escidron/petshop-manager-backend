@@ -17,6 +17,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # 1. Extract tenant_id and user_id from the access token securely
         token = request.cookies.get("access_token")
         
+        print(f"DEBUG MIDDLEWARE - settings.ALLOWED_ORIGINS: {settings.ALLOWED_ORIGINS}")
+        
         tenant_id = "N/A"
         user_id = "N/A"
         
