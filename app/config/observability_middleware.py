@@ -39,7 +39,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         start_time = time.perf_counter()
         
         try:
+            print(f"DEBUG CORS - Request Origin: {request.headers.get('origin')}")
             response = await call_next(request)
+            print(f"DEBUG CORS - Response CORS Header: {response.headers.get('access-control-allow-origin')}")
             
             # Add security headers
             response.headers["X-Content-Type-Options"] = "nosniff"
