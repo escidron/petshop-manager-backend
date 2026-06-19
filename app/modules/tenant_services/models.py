@@ -6,6 +6,7 @@ from sqlalchemy import (
     Integer,
     ForeignKey,
     func,
+    Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,6 +15,9 @@ from app.enums import PetSize, PetSpecies
 
 class Service(Base):
     __tablename__ = "services"
+    __table_args__ = (
+        Index("ix_services_tenant_name", "tenant_id", "name"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

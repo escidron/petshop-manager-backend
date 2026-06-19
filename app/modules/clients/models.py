@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from sqlalchemy import Date, String, Boolean, ForeignKey, DateTime, func
+from sqlalchemy import Date, String, Boolean, ForeignKey, DateTime, func, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config.database import Base
@@ -7,6 +7,9 @@ from app.config.database import Base
 
 class Client(Base):
     __tablename__ = "clients"
+    __table_args__ = (
+        Index("ix_clients_tenant_name", "tenant_id", "name"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

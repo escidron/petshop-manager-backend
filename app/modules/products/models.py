@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, ForeignKey, Numeric, Integer
+from sqlalchemy import String, Boolean, ForeignKey, Numeric, Integer, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config.database import Base
@@ -6,6 +6,9 @@ from app.config.database import Base
 
 class Product(Base):
     __tablename__ = "products"
+    __table_args__ = (
+        Index("ix_products_tenant_name", "tenant_id", "name"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

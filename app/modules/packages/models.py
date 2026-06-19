@@ -1,9 +1,12 @@
-from sqlalchemy import String, Boolean, ForeignKey, Integer
+from sqlalchemy import String, Boolean, ForeignKey, Integer, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.config.database import Base
 
 class Package(Base):
     __tablename__ = "packages"
+    __table_args__ = (
+        Index("ix_packages_tenant_name", "tenant_id", "name"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
@@ -26,14 +29,17 @@ class PackageItem(Base):
     package_id: Mapped[int] = mapped_column(
         ForeignKey("packages.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     service_id: Mapped[int | None] = mapped_column(
         ForeignKey("services.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     product_id: Mapped[int | None] = mapped_column(
         ForeignKey("products.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     quantity: Mapped[int] = mapped_column(Integer, default=1)
 
