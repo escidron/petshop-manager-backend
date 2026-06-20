@@ -32,8 +32,6 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
-    print(f"DEBUG: ALLOWED_ORIGINS loaded: {settings.ALLOWED_ORIGINS}")
-    print(f"DEBUG: parsed origins: {origins}")
 
     app.add_middleware(
         CORSMiddleware,

@@ -17,8 +17,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # 1. Extract tenant_id and user_id from the access token securely
         token = request.cookies.get("access_token")
         
-        print(f"DEBUG MIDDLEWARE - settings.ALLOWED_ORIGINS: {settings.ALLOWED_ORIGINS}")
-        
         tenant_id = "N/A"
         user_id = "N/A"
         
@@ -39,9 +37,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         start_time = time.perf_counter()
         
         try:
-            print(f"DEBUG CORS - Request Origin: {request.headers.get('origin')}")
             response = await call_next(request)
-            print(f"DEBUG CORS - Response CORS Header: {response.headers.get('access-control-allow-origin')}")
             
             # Add security headers
             response.headers["X-Content-Type-Options"] = "nosniff"
