@@ -72,6 +72,20 @@ class SalesService:
             
             elif item.item_type == "package":
                 package = self.package_service.get_package(db, tenant_id, item.item_id)
+                if not package:
+                    raise HTTPException(status_code=400, detail=f"Pacote com ID {item.item_id} não encontrado.")
+                
+                if not data.client_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Para vender o pacote '{item.name}', é necessário selecionar um cliente."
+                    )
+                if not item.pet_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Para vender o pacote '{item.name}', é necessário selecionar um pet."
+                    )
+
                 for p_item in package.items:
                     if p_item.product_id:
                         total_qty = p_item.quantity * item.quantity
@@ -104,19 +118,17 @@ class SalesService:
                         pass
                 elif item.pet_id and data.client_id:
                     # Vendendo um novo pacote direto pelo PDV (nasce pago)
-                    try:
-                        self.client_package_service.sell(
-                            db=db,
-                            tenant_id=tenant_id,
-                            client_id=data.client_id,
-                            data=ClientPackageSellRequest(
-                                pet_id=item.pet_id,
-                                package_id=item.item_id,
-                            ),
-                            is_paid=True, # Vendido no PDV já é pago
-                        )
-                    except HTTPException:
-                        pass
+                    # Não colocamos try/except geral para que erros de validação subam e cancelem a transação
+                    self.client_package_service.sell(
+                        db=db,
+                        tenant_id=tenant_id,
+                        client_id=data.client_id,
+                        data=ClientPackageSellRequest(
+                            pet_id=item.pet_id,
+                            package_id=item.item_id,
+                        ),
+                        is_paid=True, # Vendido no PDV já é pago
+                    )
 
         # 4. Generate commission entries for items with employee_id
         for item in sale.items:

@@ -1,6 +1,6 @@
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
-from .models import ClientPackage, ClientPackageCredit
+from .models import ClientPackage, ClientPackageCredit, ClientPackageUsage
 from datetime import datetime
 
 class ClientPackageRepository:
@@ -47,7 +47,8 @@ class ClientPackageRepository:
         return (
             db.query(ClientPackage)
             .options(
-                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service)
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit)
             )
             .filter(ClientPackage.id == client_package_id)
             .first()
@@ -59,7 +60,8 @@ class ClientPackageRepository:
         return (
             db.query(ClientPackage)
             .options(
-                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service)
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit)
             )
             .filter(
                 ClientPackage.id == client_package_id,
@@ -74,7 +76,8 @@ class ClientPackageRepository:
         return (
             db.query(ClientPackage)
             .options(
-                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service)
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit)
             )
             .filter(
                 ClientPackage.tenant_id == tenant_id,
@@ -91,7 +94,8 @@ class ClientPackageRepository:
         return (
             db.query(ClientPackage)
             .options(
-                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service)
+                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit)
             )
             .filter(
                 ClientPackage.tenant_id == tenant_id,
@@ -115,6 +119,7 @@ class ClientPackageRepository:
             db.query(ClientPackage)
             .options(
                 selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
                 selectinload(ClientPackage.client),
                 selectinload(ClientPackage.pet),
             )
@@ -151,8 +156,19 @@ class ClientPackageRepository:
     ) -> None:
         credit.used_qty += 1
         db.add(credit)
-        # Verifica se todos os créditos do pacote foram usados
+        
+        # Registra o log de consumo (uso do pacote via agendamento)
         client_pkg = credit.client_package
+        usage = ClientPackageUsage(
+            tenant_id=client_pkg.tenant_id,
+            client_package_id=credit.client_package_id,
+            credit_id=credit.id,
+            change_qty=1,
+            notes="Consumido via agendamento",
+        )
+        db.add(usage)
+
+        # Verifica se todos os créditos do pacote foram usados
         db.refresh(client_pkg, ["credits"])
         if all(c.used_qty >= c.total_qty for c in client_pkg.credits):
             client_pkg.is_active = False

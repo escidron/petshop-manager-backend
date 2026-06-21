@@ -29,6 +29,18 @@ class ClientPackagePetInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ClientPackageUsageResponse(BaseModel):
+    id: int
+    client_package_id: int
+    credit_id: int
+    change_qty: int
+    notes: str | None = None
+    created_at: datetime
+    service_name: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ClientPackageResponse(BaseModel):
     id: int
     tenant_id: int
@@ -42,5 +54,6 @@ class ClientPackageResponse(BaseModel):
     client: ClientPackageClientInfo
     pet: ClientPackagePetInfo
     credits: list[ClientPackageCreditResponse]
+    usages: list[ClientPackageUsageResponse] = []
 
     model_config = ConfigDict(from_attributes=True)

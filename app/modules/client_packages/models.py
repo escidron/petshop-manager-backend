@@ -45,6 +45,11 @@ class ClientPackage(Base):
         back_populates="client_package",
         cascade="all, delete-orphan",
     )
+    usages: Mapped[list["ClientPackageUsage"]] = relationship(
+        "ClientPackageUsage",
+        back_populates="client_package",
+        cascade="all, delete-orphan",
+    )
     package = relationship("Package")
     pet = relationship("Pet")
     client = relationship("Client")
@@ -72,8 +77,52 @@ class ClientPackageCredit(Base):
     client_package: Mapped["ClientPackage"] = relationship(
         "ClientPackage", back_populates="credits"
     )
+    usages: Mapped[list["ClientPackageUsage"]] = relationship(
+        "ClientPackageUsage",
+        back_populates="credit",
+        cascade="all, delete-orphan",
+    )
     service = relationship("Service")
 
     @property
     def remaining_qty(self) -> int:
         return self.total_qty - self.used_qty
+
+
+class ClientPackageUsage(Base):
+    """Histórico/Extrato de uso de créditos de um pacote."""
+
+    __tablename__ = "client_package_usages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    client_package_id: Mapped[int] = mapped_column(
+        ForeignKey("client_packages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    credit_id: Mapped[int] = mapped_column(
+        ForeignKey("client_package_credits.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    change_qty: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 or -1
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    client_package: Mapped["ClientPackage"] = relationship(
+        "ClientPackage", back_populates="usages"
+    )
+    credit: Mapped["ClientPackageCredit"] = relationship(
+        "ClientPackageCredit", back_populates="usages"
+    )
+
+    @property
+    def service_name(self) -> str:
+        return self.credit.service_name if self.credit else ""
