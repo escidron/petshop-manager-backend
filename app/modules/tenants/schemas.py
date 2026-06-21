@@ -27,6 +27,8 @@ class TenantUpdate(BaseModel):
     is_active: Optional[bool] = None
     working_hours: Optional[dict] = None
     max_simultaneous_appointments: Optional[int] = None
+    allow_discount: Optional[bool] = None
+    max_discount_percentage: Optional[float] = None
 
 class TenantTypeResponse(BaseModel):
     id: int
@@ -50,6 +52,8 @@ class TenantResponse(BaseModel):
     subscription: Optional[SubscriptionResponse] = None
     working_hours: Optional[dict] = None
     max_simultaneous_appointments: Optional[int] = None
+    allow_discount: bool
+    max_discount_percentage: float
 
     class Config:
         from_attributes = True

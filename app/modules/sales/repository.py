@@ -13,6 +13,7 @@ class SalesRepository:
             pet_id=data.pet_id,
             appointment_id=data.appointment_id,
             total_amount=data.total_amount,
+            discount_amount=data.discount_amount,
             payment_method=data.payment_method,
             status=data.status
         )

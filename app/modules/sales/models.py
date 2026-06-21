@@ -48,6 +48,10 @@ class Sale(Base):
         Numeric(10, 2), nullable=False
     )
 
+    discount_amount: Mapped[float] = mapped_column(
+        Numeric(10, 2), default=0.0, nullable=False
+    )
+
     payment_method: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # pix, credit, debit, money
