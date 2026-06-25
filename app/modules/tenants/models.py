@@ -45,6 +45,8 @@ class Tenant(Base):
     allow_discount: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     max_discount_percentage: Mapped[float] = mapped_column(Numeric(5, 2), default=100.0, nullable=False)
 
+    feature_flags: Mapped[dict] = mapped_column(JSON, default=dict, server_default='{}', nullable=False)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
