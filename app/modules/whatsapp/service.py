@@ -1,6 +1,7 @@
 import logging
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional, List, Tuple
@@ -131,8 +132,12 @@ class WhatsAppService:
         pet_names = ", ".join(item.pet.name for item in appointment.items if item.pet) or "seu pet"
         
         scheduled_dt: datetime = appointment.scheduled_at
-        formatted_date = scheduled_dt.strftime("%d/%m/%Y")
-        formatted_time = scheduled_dt.strftime("%H:%M")
+        if scheduled_dt.tzinfo is not None:
+            local_dt = scheduled_dt.astimezone(ZoneInfo("America/Sao_Paulo"))
+        else:
+            local_dt = scheduled_dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo"))
+        formatted_date = local_dt.strftime("%d/%m/%Y")
+        formatted_time = local_dt.strftime("%H:%M")
 
         services_list = []
         employee_ids = set()
@@ -344,8 +349,12 @@ class WhatsAppService:
             # Fallback dinâmico carregado do banco de dados
             pet_names = ", ".join(item.pet.name for item in appointment.items if item.pet) or "seu pet"
             scheduled_dt: datetime = appointment.scheduled_at
-            formatted_date = scheduled_dt.strftime("%d/%m/%Y")
-            formatted_time = scheduled_dt.strftime("%H:%M")
+            if scheduled_dt.tzinfo is not None:
+                local_dt = scheduled_dt.astimezone(ZoneInfo("America/Sao_Paulo"))
+            else:
+                local_dt = scheduled_dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo"))
+            formatted_date = local_dt.strftime("%d/%m/%Y")
+            formatted_time = local_dt.strftime("%H:%M")
             
             variables = {
                 "client_name": clients[0].name,

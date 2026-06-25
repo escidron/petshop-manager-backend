@@ -23,6 +23,32 @@ class SalesService:
         self.commission_service = CommissionService()
 
     def create_sale(self, db: Session, tenant_id: int, data: SaleCreate) -> Sale:
+        # Validate discount and total amount mathematically
+        items_subtotal = sum(item.subtotal for item in data.items)
+        expected_total = float(Decimal(str(items_subtotal)) - Decimal(str(data.discount_amount)))
+        if abs(data.total_amount - expected_total) > 0.01:
+             raise HTTPException(
+                 status_code=400,
+                 detail=f"O valor total da venda (R$ {data.total_amount:.2f}) não corresponde ao subtotal dos itens (R$ {items_subtotal:.2f}) menos o desconto (R$ {data.discount_amount:.2f})."
+             )
+
+        if data.discount_amount > 0:
+            from app.modules.tenants.models import Tenant
+            tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+            if not tenant:
+                raise HTTPException(status_code=400, detail="Tenant não encontrado.")
+            
+            if not tenant.allow_discount:
+                raise HTTPException(status_code=400, detail="Descontos estão desativados para esta empresa.")
+            
+            if items_subtotal > 0:
+                discount_percentage = (data.discount_amount / items_subtotal) * 100
+                # Float comparisons with small buffer
+                if discount_percentage > (tenant.max_discount_percentage + 0.01):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite máximo permitido de {tenant.max_discount_percentage:.2f}%."
+                    )
         
         # 1. First, validate stock and lower the stock for products BEFORE creating the sale
         for item in data.items:
@@ -46,6 +72,20 @@ class SalesService:
             
             elif item.item_type == "package":
                 package = self.package_service.get_package(db, tenant_id, item.item_id)
+                if not package:
+                    raise HTTPException(status_code=400, detail=f"Pacote com ID {item.item_id} não encontrado.")
+                
+                if not data.client_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Para vender o pacote '{item.name}', é necessário selecionar um cliente."
+                    )
+                if not item.pet_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Para vender o pacote '{item.name}', é necessário selecionar um pet."
+                    )
+
                 for p_item in package.items:
                     if p_item.product_id:
                         total_qty = p_item.quantity * item.quantity
@@ -78,19 +118,17 @@ class SalesService:
                         pass
                 elif item.pet_id and data.client_id:
                     # Vendendo um novo pacote direto pelo PDV (nasce pago)
-                    try:
-                        self.client_package_service.sell(
-                            db=db,
-                            tenant_id=tenant_id,
-                            client_id=data.client_id,
-                            data=ClientPackageSellRequest(
-                                pet_id=item.pet_id,
-                                package_id=item.item_id,
-                            ),
-                            is_paid=True, # Vendido no PDV já é pago
-                        )
-                    except HTTPException:
-                        pass
+                    # Não colocamos try/except geral para que erros de validação subam e cancelem a transação
+                    self.client_package_service.sell(
+                        db=db,
+                        tenant_id=tenant_id,
+                        client_id=data.client_id,
+                        data=ClientPackageSellRequest(
+                            pet_id=item.pet_id,
+                            package_id=item.item_id,
+                        ),
+                        is_paid=True, # Vendido no PDV já é pago
+                    )
 
         # 4. Generate commission entries for items with employee_id
         for item in sale.items:

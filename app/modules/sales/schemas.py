@@ -60,6 +60,7 @@ class SaleBase(BaseModel):
     pet_id: int | None = None
     appointment_id: int | None = None
     total_amount: float = Field(ge=0)
+    discount_amount: float = Field(default=0.0, ge=0)
     payment_method: Literal["pix", "credit_card", "debit_card", "money", "other", "package"]
     status: Literal["completed", "canceled"] = "completed"
 

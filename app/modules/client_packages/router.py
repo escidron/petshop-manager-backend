@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant, require_active_subscription
-from .schemas import ClientPackageResponse, ClientPackageSellRequest
+from .schemas import ClientPackageResponse, ClientPackageSellRequest, ClientPackageCreditResponse, ClientPackageUsageResponse
 from .service import ClientPackageService
 
 router = APIRouter(
@@ -69,3 +69,50 @@ def deactivate(
     tenant_id = request.state.tenant_user.tenant_id
     svc = ClientPackageService()
     svc.deactivate(db, tenant_id, client_package_id)
+
+
+@router.post("/credits/{credit_id}/consume", response_model=ClientPackageCreditResponse)
+def consume_credit(
+    credit_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    svc = ClientPackageService()
+    return svc.consume_credit(db, tenant_id, credit_id)
+
+
+@router.post("/credits/{credit_id}/revert", response_model=ClientPackageCreditResponse)
+def revert_credit(
+    credit_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    svc = ClientPackageService()
+    return svc.revert_credit(db, tenant_id, credit_id)
+
+
+@router.get("/{client_package_id}/usages", response_model=list[ClientPackageUsageResponse])
+def get_usages(
+    client_package_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    svc = ClientPackageService()
+    usages = svc.get_usages(db, tenant_id, client_package_id)
+    
+    response_usages = []
+    for usage in usages:
+        service_name = usage.credit.service_name if usage.credit else "Serviço"
+        response_usages.append({
+            "id": usage.id,
+            "client_package_id": usage.client_package_id,
+            "credit_id": usage.credit_id,
+            "change_qty": usage.change_qty,
+            "notes": usage.notes,
+            "created_at": usage.created_at,
+            "service_name": service_name
+        })
+    return response_usages

@@ -5,6 +5,7 @@ from app.modules.packages.models import Package, PackageItem
 from app.modules.pets.models import Pet
 from .repository import ClientPackageRepository
 from .schemas import ClientPackageSellRequest, ClientPackageResponse
+from .models import ClientPackage, ClientPackageCredit, ClientPackageUsage
 
 
 class ClientPackageService:
@@ -103,3 +104,107 @@ class ClientPackageService:
         if not cp:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pacote não encontrado")
         self.repo.deactivate(db, cp)
+
+    def consume_credit(
+        self, db: Session, tenant_id: int, credit_id: int, notes: str = None
+    ) -> ClientPackageCredit:
+        credit = (
+            db.query(ClientPackageCredit)
+            .join(ClientPackage)
+            .filter(
+                ClientPackageCredit.id == credit_id,
+                ClientPackage.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not credit:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Crédito do pacote não encontrado",
+            )
+
+        if credit.used_qty >= credit.total_qty:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Todos os créditos para este serviço já foram consumidos",
+            )
+
+        credit.used_qty += 1
+        db.add(credit)
+
+        usage = ClientPackageUsage(
+            tenant_id=tenant_id,
+            client_package_id=credit.client_package_id,
+            credit_id=credit.id,
+            change_qty=1,
+            notes=notes or "Consumo manual",
+        )
+        db.add(usage)
+
+        client_pkg = credit.client_package
+        db.refresh(client_pkg, ["credits"])
+        if all(c.used_qty >= c.total_qty for c in client_pkg.credits):
+            client_pkg.is_active = False
+            db.add(client_pkg)
+
+        db.commit()
+        db.refresh(credit)
+        return credit
+
+    def revert_credit(
+        self, db: Session, tenant_id: int, credit_id: int, notes: str = None
+    ) -> ClientPackageCredit:
+        credit = (
+            db.query(ClientPackageCredit)
+            .join(ClientPackage)
+            .filter(
+                ClientPackageCredit.id == credit_id,
+                ClientPackage.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not credit:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Crédito do pacote não encontrado",
+            )
+
+        if credit.used_qty <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Nenhum crédito foi consumido para este serviço ainda",
+            )
+
+        credit.used_qty -= 1
+        db.add(credit)
+
+        usage = ClientPackageUsage(
+            tenant_id=tenant_id,
+            client_package_id=credit.client_package_id,
+            credit_id=credit.id,
+            change_qty=-1,
+            notes=notes or "Estorno manual",
+        )
+        db.add(usage)
+
+        client_pkg = credit.client_package
+        if not client_pkg.is_active:
+            client_pkg.is_active = True
+            db.add(client_pkg)
+
+        db.commit()
+        db.refresh(credit)
+        return credit
+
+    def get_usages(
+        self, db: Session, tenant_id: int, client_package_id: int
+    ) -> list[ClientPackageUsage]:
+        return (
+            db.query(ClientPackageUsage)
+            .filter(
+                ClientPackageUsage.client_package_id == client_package_id,
+                ClientPackageUsage.tenant_id == tenant_id,
+            )
+            .order_by(ClientPackageUsage.created_at.desc())
+            .all()
+        )
