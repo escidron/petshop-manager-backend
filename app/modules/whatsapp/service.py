@@ -176,7 +176,14 @@ class WhatsAppService:
         }
 
         try:
-            content, buttons = self._render_template(db, tenant_id, trigger_type, variables)
+            content, template_buttons = self._render_template(db, tenant_id, trigger_type, variables)
+            buttons = []
+            if template_buttons:
+                for btn in template_buttons:
+                    buttons.append({
+                        "id": f"{btn['id']}:{appointment_id}",
+                        "text": btn["text"]
+                    })
         except Exception as e:
             logger.error(f"Erro ao carregar ou renderizar template: {str(e)}")
             return
@@ -232,19 +239,55 @@ class WhatsAppService:
 
         client_ids = [c.id for c in clients]
 
-        # Busca agendamento pendente mais recente
-        appointment = (
-            db.query(Appointment)
-            .filter(
-                Appointment.client_id.in_(client_ids),
-                Appointment.status == AppointmentStatus.PENDING
-            )
-            .order_by(Appointment.scheduled_at.desc())
-            .first()
-        )
+        # 1. Verifica se o payload do botão possui o ID do agendamento embutido (ex: "confirm:156")
+        target_appointment_id = None
+        if button_payload and ":" in button_payload:
+            parts = button_payload.split(":", 1)
+            try:
+                target_appointment_id = int(parts[1])
+            except ValueError:
+                pass
 
+        appointment = None
+        if target_appointment_id:
+            appt = db.query(Appointment).filter(
+                Appointment.id == target_appointment_id,
+                Appointment.client_id.in_(client_ids)
+            ).first()
+            if appt and appt.status in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
+                appointment = appt
+
+        # 2. Tenta identificar o agendamento a partir da última mensagem de saída enviada para este número
         if not appointment:
-            # Tenta também buscar um confirmado para permitir cancelamento/reagendamento
+            last_outbound = (
+                db.query(WhatsAppMessage)
+                .filter(
+                    WhatsAppMessage.phone_number == normalized_from,
+                    WhatsAppMessage.direction == "outbound",
+                    WhatsAppMessage.appointment_id.isnot(None)
+                )
+                .order_by(WhatsAppMessage.created_at.desc())
+                .first()
+            )
+            if last_outbound:
+                appt = db.query(Appointment).filter(Appointment.id == last_outbound.appointment_id).first()
+                if appt and appt.status in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
+                    appointment = appt
+
+        # 3. Caso contrário (ou se o agendamento já foi cancelado/concluído), busca o pendente mais recente
+        if not appointment:
+            appointment = (
+                db.query(Appointment)
+                .filter(
+                    Appointment.client_id.in_(client_ids),
+                    Appointment.status == AppointmentStatus.PENDING
+                )
+                .order_by(Appointment.scheduled_at.desc())
+                .first()
+            )
+
+        # 4. Se ainda não achar, busca o confirmado mais recente
+        if not appointment:
             appointment = (
                 db.query(Appointment)
                 .filter(
@@ -274,11 +317,15 @@ class WhatsAppService:
         is_cancel = False
         is_reschedule = False
 
-        if button_payload == "confirm":
+        action_payload = button_payload
+        if button_payload and ":" in button_payload:
+            action_payload = button_payload.split(":", 1)[0]
+
+        if action_payload == "confirm":
             is_confirm = True
-        elif button_payload == "cancel":
+        elif action_payload == "cancel":
             is_cancel = True
-        elif button_payload == "reschedule":
+        elif action_payload == "reschedule":
             is_reschedule = True
         else:
             # Parser do texto livre
@@ -365,7 +412,14 @@ class WhatsAppService:
                 "link": tenant_link
             }
             try:
-                reply_text, buttons = self._render_template(db, appointment.tenant_id, "fallback_invalid", variables)
+                reply_text, template_buttons = self._render_template(db, appointment.tenant_id, "fallback_invalid", variables)
+                buttons = []
+                if template_buttons:
+                    for btn in template_buttons:
+                        buttons.append({
+                            "id": f"{btn['id']}:{appointment.id}",
+                            "text": btn["text"]
+                        })
             except Exception:
                 reply_text = (
                     f"Desculpe, não entendi a sua resposta.\n\n"
@@ -375,9 +429,9 @@ class WhatsAppService:
                     f"Caso precise falar conosco, acesse: {tenant_link}"
                 )
                 buttons = [
-                    {"id": "confirm", "text": "Confirmar Agendamento 👍"},
-                    {"id": "reschedule", "text": "Reagendar 📅"},
-                    {"id": "cancel", "text": "Cancelar Agendamento ❌"}
+                    {"id": f"confirm:{appointment.id}", "text": "Confirmar Agendamento 👍"},
+                    {"id": f"reschedule:{appointment.id}", "text": "Reagendar 📅"},
+                    {"id": f"cancel:{appointment.id}", "text": "Cancelar Agendamento ❌"}
                 ]
             
             return self._send_reply(db, normalized_from, reply_text, appointment_id=appointment.id, tenant_id=appointment.tenant_id, buttons=buttons)

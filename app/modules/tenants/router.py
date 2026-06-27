@@ -217,6 +217,19 @@ def update_subscription(
     return service.update_subscription(db, tenant_id, data)
 
 
+@router.patch("/{tenant_id}/admin", response_model=TenantResponse)
+def admin_update_tenant(
+    tenant_id: int,
+    data: TenantUpdate,
+    db: Session = Depends(get_db),
+    admin_user = Depends(require_admin),
+):
+    from sqlalchemy import text
+    db.execute(text("SET LOCAL row_security = OFF;"))
+    service = TenantService()
+    return service.update_tenant(db, tenant_id, data)
+
+
 @router.get("/admin/dashboard")
 def get_admin_dashboard(
     db: Session = Depends(get_db),
@@ -298,6 +311,7 @@ def get_admin_dashboard(
             "payment_status": payment_status,
             "current_period_end": current_period_end,
             "onboarding_step": tenant.onboarding_step,
+            "feature_flags": tenant.feature_flags or {},
         })
 
     return result

@@ -29,6 +29,7 @@ class TenantUpdate(BaseModel):
     max_simultaneous_appointments: Optional[int] = None
     allow_discount: Optional[bool] = None
     max_discount_percentage: Optional[float] = None
+    feature_flags: Optional[dict] = None
 
 class TenantTypeResponse(BaseModel):
     id: int
@@ -54,6 +55,7 @@ class TenantResponse(BaseModel):
     max_simultaneous_appointments: Optional[int] = None
     allow_discount: bool
     max_discount_percentage: float
+    feature_flags: dict = Field(default_factory=dict)
 
     class Config:
         from_attributes = True

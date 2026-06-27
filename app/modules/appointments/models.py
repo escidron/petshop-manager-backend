@@ -5,6 +5,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     String,
+    Text,
     Index,
     func,
     Table,
@@ -113,7 +114,7 @@ class Appointment(Base):
         index=True,
     )
 
-    notes: Mapped[str | None] = mapped_column(String(255))
+    notes: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
