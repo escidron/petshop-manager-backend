@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     # Set to "production" to disable SQL echo
     ENVIRONMENT: str = "development"
 
+    # Google Cloud Storage
+    GCP_PROJECT_ID: str = ""
+    GCP_CLIENT_EMAIL: str = ""
+    GCP_PRIVATE_KEY: str = ""
+    GCS_BUCKET_NAME: str = ""
+
     # WhatsApp Config
     whatsapp_access_token: str = ""
     whatsapp_phone_number_id: str = ""
