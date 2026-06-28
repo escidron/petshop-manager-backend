@@ -1,7 +1,6 @@
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.modules.clients.models import Client
-from app.modules.pets.models import Pet
+from app.modules.pets.models import Pet, PetPhoto
 from app.modules.pets.schemas import PetCreate, PetUpdate
 
 
@@ -29,6 +28,7 @@ class PetRepository:
     ) -> Pet | None:
         return (
             db.query(Pet)
+            .options(joinedload(Pet.photos))
             .filter(
                 Pet.id == pet_id,
                 Pet.tenant_id == tenant_id,
@@ -36,19 +36,14 @@ class PetRepository:
             .first()
         )
 
-    def list_pets(self, db: Session, tenant_id: int) -> list[dict]:
-
-        stmt = (
-            select(
-                *Pet.__table__.c,  # todas as colunas do Pet
-                Client.name.label("owner_name"),
-            )
-            .join(Client, Client.id == Pet.client_id)
-            .where(Pet.tenant_id == tenant_id)
+    def list_pets(self, db: Session, tenant_id: int) -> list[Pet]:
+        return (
+            db.query(Pet)
+            .options(joinedload(Pet.client), joinedload(Pet.photos))
+            .filter(Pet.tenant_id == tenant_id)
             .order_by(Pet.name)
+            .all()
         )
-
-        return db.execute(stmt).mappings().all()
     
     def list_by_client(
         self,
@@ -58,6 +53,7 @@ class PetRepository:
     ) -> list[Pet]:
         return (
             db.query(Pet)
+            .options(joinedload(Pet.photos))
             .filter(
                 Pet.tenant_id == tenant_id,
                 Pet.client_id == client_id,

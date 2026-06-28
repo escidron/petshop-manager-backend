@@ -96,8 +96,37 @@ class Pet(Base):
 
     # 🔗 Relacionamentos
     client = relationship("Client", back_populates="pets")
+    photos = relationship("PetPhoto", back_populates="pet", cascade="all, delete-orphan")
 
     # 🧠 Helpers
     @property
     def owner_name(self) -> str | None:
         return self.client.name if self.client else None
+
+
+class PetPhoto(Base):
+    __tablename__ = "pet_photos"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    pet_id: Mapped[int] = mapped_column(
+        ForeignKey("pets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    photo_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    is_profile: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    category: Mapped[str] = mapped_column(String(50), default="general", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # 🔗 Relacionamentos
+    pet = relationship("Pet", back_populates="photos")
+

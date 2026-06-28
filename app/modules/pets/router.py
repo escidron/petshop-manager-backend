@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
@@ -7,6 +7,7 @@ from .schemas import (
     PetCreate,
     PetUpdate,
     PetResponse,
+    PetPhotoResponse,
 )
 from .service import PetService
 
@@ -77,3 +78,52 @@ def delete_pet(
     service = PetService()
     tenant_id = request.state.tenant_user.tenant_id
     service.delete_pet(db, tenant_id, pet_id)
+
+
+@router.post("/{pet_id}/photos", response_model=PetPhotoResponse, dependencies=[Depends(require_active_subscription)])
+async def add_pet_photo(
+    pet_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    is_profile: bool = Form(False),
+    category: str = Form("general"),
+    db: Session = Depends(get_db),
+):
+    service = PetService()
+    tenant_id = request.state.tenant_user.tenant_id
+    file_content = await file.read()
+    return service.add_pet_photo(
+        db=db,
+        tenant_id=tenant_id,
+        pet_id=pet_id,
+        file_content=file_content,
+        filename=file.filename,
+        content_type=file.content_type,
+        is_profile=is_profile,
+        category=category,
+    )
+
+
+@router.delete("/{pet_id}/photos/{photo_id}", status_code=204, dependencies=[Depends(require_active_subscription)])
+def delete_pet_photo(
+    pet_id: int,
+    photo_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    service = PetService()
+    tenant_id = request.state.tenant_user.tenant_id
+    service.delete_pet_photo(db, tenant_id, pet_id, photo_id)
+
+
+@router.patch("/{pet_id}/photos/{photo_id}/set-profile", response_model=PetPhotoResponse, dependencies=[Depends(require_active_subscription)])
+def set_profile_photo(
+    pet_id: int,
+    photo_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    service = PetService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.set_profile_photo(db, tenant_id, pet_id, photo_id)
+

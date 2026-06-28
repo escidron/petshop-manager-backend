@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 
 class PetBase(BaseModel):
@@ -53,10 +53,24 @@ class PetUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class PetPhotoResponse(BaseModel):
+    id: int
+    pet_id: int
+    photo_url: str
+    is_profile: bool
+    category: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class PetResponse(PetBase):
     id: int
     client_id: int
     owner_name: Optional[str]
+    photos: List[PetPhotoResponse] = []
 
     class Config:
         from_attributes = True
+
