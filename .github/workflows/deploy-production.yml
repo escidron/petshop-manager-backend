@@ -54,8 +54,6 @@ jobs:
             DATABASE_URL=${{ secrets.DATABASE_URL_PRODUCTION }}
             GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
             GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME_PRODUCTION }}
-            GCP_CLIENT_EMAIL=${{ secrets.GCP_CLIENT_EMAIL }}
-            GCP_PRIVATE_KEY=${{ secrets.GCP_PRIVATE_KEY }}
             JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY_PRODUCTION }}
             ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS_PRODUCTION }}
             RESEND_KEY=${{ secrets.RESEND_KEY_PRODUCTION }}
