@@ -1,0 +1,89 @@
+name: Deploy Staging to Cloud Run
+
+on:
+  push:
+    branches:
+      - staging
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: petcontrole-backend-staging
+  REGION: us-east1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Google Auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Authorize Docker
+        run: |
+          gcloud auth configure-docker us-east1-docker.pkg.dev
+
+      - name: Build and Push Container
+        run: |
+          # Garante que o repositório no Artifact Registry existe
+          gcloud artifacts repositories create petshop-manager --repository-format=docker --location=us-east1 || true
+          
+          # Compila e envia usando o Cloud Build (mais rápido e otimizado)
+          gcloud builds submit --tag us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-staging:${{ github.sha }} .
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-staging:${{ github.sha }}
+          flags: |
+            --min-instances=0
+            --max-instances=5
+            --allow-unauthenticated
+          env_vars: |
+            DATABASE_URL=${{ secrets.DATABASE_URL_STAGING }}
+            GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+            GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME_STAGING }}
+            GCP_CLIENT_EMAIL=${{ secrets.GCP_CLIENT_EMAIL }}
+            GCP_PRIVATE_KEY=${{ secrets.GCP_PRIVATE_KEY }}
+            JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY_STAGING }}
+            ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS_STAGING }}
+            RESEND_KEY=${{ secrets.RESEND_KEY_STAGING }}
+            PAGARME_SECRET_KEY=${{ secrets.PAGARME_SECRET_KEY_STAGING }}
+            PAGARME_PUBLIC_KEY=${{ secrets.PAGARME_PUBLIC_KEY_STAGING }}
+            ENVIRONMENT=staging
+            CEP_BASE_URL=https://viacep.com.br/ws
+            ACCESS_TOKEN_EXPIRE_MINUTES=15
+            REFRESH_TOKEN_EXPIRE_DAYS=7
+            APP_NAME="Pet Controle"
+            DEFAULT_FROM_EMAIL="onboarding@resend.dev"
+            ADMIN_EMAIL="eduardosanchezcidron@gmail.com"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 2.0.0
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-root
+
+      - name: Run Alembic Migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+          JWT_SECRET_KEY: "temporary_secret_key_for_ci_migrations"
+          CEP_BASE_URL: "https://viacep.com.br/ws"
+        run: poetry run alembic upgrade head

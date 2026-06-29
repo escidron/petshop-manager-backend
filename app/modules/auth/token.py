@@ -25,7 +25,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def _create_token(data: Dict[str, Any], expires_delta: timedelta) -> str:
     payload = data.copy()
     payload["exp"] = datetime.utcnow() + expires_delta
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_access_token(data: Dict[str, Any], expires_delta: int = None) -> str:
@@ -56,7 +56,7 @@ def decode_token(token: str) -> dict:
     try:
         return jwt.decode(
             token,
-            settings.SECRET_KEY,
+            settings.JWT_SECRET_KEY,
             algorithms=[ALGORITHM],
         )
     except ExpiredSignatureError:
