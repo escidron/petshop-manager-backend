@@ -88,4 +88,6 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL_PRODUCTION }}
           JWT_SECRET_KEY: "temporary_secret_key_for_ci_migrations"
           CEP_BASE_URL: "https://viacep.com.br/ws"
-        run: poetry run alembic upgrade head
+        run: |
+          poetry run alembic upgrade head
+          poetry run python -m app.run_seeds
