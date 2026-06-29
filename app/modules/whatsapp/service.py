@@ -75,7 +75,7 @@ class WhatsAppService:
 
         # Extrai o primeiro link de origem do frontend
         import hashlib
-        sig_input = f"{appointment.id}:{appointment.scheduled_at.isoformat()}:{employee.schedule_token}:{settings.SECRET_KEY}"
+        sig_input = f"{appointment.id}:{appointment.scheduled_at.isoformat()}:{employee.schedule_token}:{settings.JWT_SECRET_KEY}"
         signature = hashlib.sha256(sig_input.encode("utf-8")).hexdigest()
         
         frontend_base = settings.ALLOWED_ORIGINS.split(",")[0].strip()

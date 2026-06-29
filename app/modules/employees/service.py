@@ -157,7 +157,7 @@ class EmployeeService:
                 )
 
             # 2. Verify signature using scheduled_at
-            expected_sig = hashlib.sha256(f"{appointment_id}:{reschedule_appointment.scheduled_at.isoformat()}:{token}:{settings.SECRET_KEY}".encode("utf-8")).hexdigest()
+            expected_sig = hashlib.sha256(f"{appointment_id}:{reschedule_appointment.scheduled_at.isoformat()}:{token}:{settings.JWT_SECRET_KEY}".encode("utf-8")).hexdigest()
             if sig != expected_sig:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Assinatura de reagendamento inválida ou link expirado/já utilizado.")
 
@@ -300,7 +300,7 @@ class EmployeeService:
                 )
 
             # 2. Verify signature using scheduled_at
-            expected_sig = hashlib.sha256(f"{appointment_id}:{appointment.scheduled_at.isoformat()}:{token}:{settings.SECRET_KEY}".encode("utf-8")).hexdigest()
+            expected_sig = hashlib.sha256(f"{appointment_id}:{appointment.scheduled_at.isoformat()}:{token}:{settings.JWT_SECRET_KEY}".encode("utf-8")).hexdigest()
             if sig != expected_sig:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Assinatura de reagendamento inválida ou link expirado/já utilizado.")
 
