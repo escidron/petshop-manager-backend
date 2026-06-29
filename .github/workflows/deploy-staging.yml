@@ -64,9 +64,9 @@ jobs:
             CEP_BASE_URL=https://viacep.com.br/ws
             ACCESS_TOKEN_EXPIRE_MINUTES=15
             REFRESH_TOKEN_EXPIRE_DAYS=7
-            APP_NAME="Pet Controle"
-            DEFAULT_FROM_EMAIL="onboarding@resend.dev"
-            ADMIN_EMAIL="eduardosanchezcidron@gmail.com"
+            APP_NAME=Pet Controle
+            DEFAULT_FROM_EMAIL=onboarding@resend.dev
+            ADMIN_EMAIL=eduardosanchezcidron@gmail.com
 
       - name: Set up Python
         uses: actions/setup-python@v5
