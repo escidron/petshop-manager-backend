@@ -34,8 +34,11 @@ jobs:
           # Garante que o repositório no Artifact Registry existe
           gcloud artifacts repositories create petshop-manager --repository-format=docker --location=us-east1 || true
           
-          # Compila e envia usando o Cloud Build (mais rápido e otimizado)
-          gcloud builds submit --tag us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-staging:${{ github.sha }} .
+          # Compila a imagem localmente no runner do GitHub
+          docker build -t us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-staging:${{ github.sha }} .
+          
+          # Envia a imagem para o Artifact Registry
+          docker push us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-staging:${{ github.sha }}
 
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
