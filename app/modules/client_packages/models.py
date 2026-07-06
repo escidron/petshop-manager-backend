@@ -112,6 +112,10 @@ class ClientPackageUsage(Base):
     )
     change_qty: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 or -1
     notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -122,7 +126,13 @@ class ClientPackageUsage(Base):
     credit: Mapped["ClientPackageCredit"] = relationship(
         "ClientPackageCredit", back_populates="usages"
     )
+    user = relationship("User")
 
     @property
     def service_name(self) -> str:
         return self.credit.service_name if self.credit else ""
+
+    @property
+    def user_name(self) -> str:
+        return self.user.name if self.user else "Sistema"
+

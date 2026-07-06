@@ -106,7 +106,7 @@ class ClientPackageService:
         self.repo.deactivate(db, cp)
 
     def consume_credit(
-        self, db: Session, tenant_id: int, credit_id: int, notes: str = None
+        self, db: Session, tenant_id: int, credit_id: int, user_id: int | None = None, notes: str = None
     ) -> ClientPackageCredit:
         credit = (
             db.query(ClientPackageCredit)
@@ -138,6 +138,7 @@ class ClientPackageService:
             credit_id=credit.id,
             change_qty=1,
             notes=notes or "Consumo manual",
+            user_id=user_id,
         )
         db.add(usage)
 
@@ -152,7 +153,7 @@ class ClientPackageService:
         return credit
 
     def revert_credit(
-        self, db: Session, tenant_id: int, credit_id: int, notes: str = None
+        self, db: Session, tenant_id: int, credit_id: int, user_id: int | None = None, notes: str = None
     ) -> ClientPackageCredit:
         credit = (
             db.query(ClientPackageCredit)
@@ -184,6 +185,7 @@ class ClientPackageService:
             credit_id=credit.id,
             change_qty=-1,
             notes=notes or "Estorno manual",
+            user_id=user_id,
         )
         db.add(usage)
 
@@ -199,8 +201,10 @@ class ClientPackageService:
     def get_usages(
         self, db: Session, tenant_id: int, client_package_id: int
     ) -> list[ClientPackageUsage]:
+        from sqlalchemy.orm import joinedload
         return (
             db.query(ClientPackageUsage)
+            .options(joinedload(ClientPackageUsage.user))
             .filter(
                 ClientPackageUsage.client_package_id == client_package_id,
                 ClientPackageUsage.tenant_id == tenant_id,
