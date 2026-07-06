@@ -208,3 +208,46 @@ class ClientPackageService:
             .order_by(ClientPackageUsage.created_at.desc())
             .all()
         )
+
+    def transfer_package(
+        self,
+        db: Session,
+        tenant_id: int,
+        client_package_id: int,
+        new_pet_id: int,
+    ) -> ClientPackage:
+        client_pkg = (
+            db.query(ClientPackage)
+            .filter(
+                ClientPackage.id == client_package_id,
+                ClientPackage.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not client_pkg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Pacote do cliente não encontrado",
+            )
+
+        new_pet = (
+            db.query(Pet)
+            .filter(
+                Pet.id == new_pet_id,
+                Pet.tenant_id == tenant_id,
+                Pet.client_id == client_pkg.client_id,
+            )
+            .first()
+        )
+        if not new_pet:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Novo pet não encontrado ou pertence a outro cliente/tutor",
+            )
+
+        client_pkg.pet_id = new_pet_id
+        db.add(client_pkg)
+        db.commit()
+        db.refresh(client_pkg)
+        return client_pkg
+

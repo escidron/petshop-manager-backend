@@ -26,6 +26,7 @@ class PetBase(BaseModel):
     notes: Optional[str] = None
 
     is_active: bool = True
+    is_deceased: bool = False
 
 
 
@@ -51,6 +52,7 @@ class PetUpdate(BaseModel):
 
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+    is_deceased: Optional[bool] = None
 
 
 class PetPhotoResponse(BaseModel):

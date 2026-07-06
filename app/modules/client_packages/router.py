@@ -116,3 +116,16 @@ def get_usages(
             "service_name": service_name
         })
     return response_usages
+
+
+@router.patch("/{client_package_id}/transfer/{new_pet_id}", response_model=ClientPackageResponse)
+def transfer_package(
+    client_package_id: int,
+    new_pet_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    svc = ClientPackageService()
+    return svc.transfer_package(db, tenant_id, client_package_id, new_pet_id)
+
