@@ -1,0 +1,35 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    # Runs every 3 days at 08:00 UTC (05:00 BRT)
+    - cron: "0 8 */3 * *"
+  workflow_dispatch: # allows manual trigger from GitHub UI
+
+jobs:
+  ping:
+    name: Ping API Health Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Ping production health endpoint
+        run: |
+          echo "🐾 Pinging Petshop API to keep Supabase alive..."
+          
+          RESPONSE=$(curl --silent --show-error --max-time 30 \
+            --write-out "\n%{http_code}" \
+            "${{ secrets.PRODUCTION_API_URL }}/health")
+          
+          HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+          
+          echo "Response body: $HTTP_BODY"
+          echo "HTTP status:   $HTTP_CODE"
+          
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "❌ Health check failed with status $HTTP_CODE"
+            exit 1
+          fi
+          
+          echo "✅ Supabase is alive and responding!"
