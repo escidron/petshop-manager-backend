@@ -48,7 +48,8 @@ class ClientPackageRepository:
             db.query(ClientPackage)
             .options(
                 selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
-                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit)
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user)
             )
             .filter(ClientPackage.id == client_package_id)
             .first()
@@ -61,7 +62,8 @@ class ClientPackageRepository:
             db.query(ClientPackage)
             .options(
                 selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
-                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit)
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user)
             )
             .filter(
                 ClientPackage.id == client_package_id,
@@ -77,7 +79,8 @@ class ClientPackageRepository:
             db.query(ClientPackage)
             .options(
                 selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
-                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit)
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user)
             )
             .filter(
                 ClientPackage.tenant_id == tenant_id,
@@ -95,7 +98,8 @@ class ClientPackageRepository:
             db.query(ClientPackage)
             .options(
                 selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
-                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit)
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user)
             )
             .filter(
                 ClientPackage.tenant_id == tenant_id,
@@ -120,6 +124,7 @@ class ClientPackageRepository:
             .options(
                 selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
                 selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user),
                 selectinload(ClientPackage.client),
                 selectinload(ClientPackage.pet),
             )

@@ -86,6 +86,12 @@ class Pet(Base):
         nullable=False,
     )
 
+    is_deceased: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
     # ⏱ Auditoria
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -78,8 +78,9 @@ def consume_credit(
     db: Session = Depends(get_db),
 ):
     tenant_id = request.state.tenant_user.tenant_id
+    user_id = request.state.tenant_user.user_id
     svc = ClientPackageService()
-    return svc.consume_credit(db, tenant_id, credit_id)
+    return svc.consume_credit(db, tenant_id, credit_id, user_id=user_id)
 
 
 @router.post("/credits/{credit_id}/revert", response_model=ClientPackageCreditResponse)
@@ -89,8 +90,9 @@ def revert_credit(
     db: Session = Depends(get_db),
 ):
     tenant_id = request.state.tenant_user.tenant_id
+    user_id = request.state.tenant_user.user_id
     svc = ClientPackageService()
-    return svc.revert_credit(db, tenant_id, credit_id)
+    return svc.revert_credit(db, tenant_id, credit_id, user_id=user_id)
 
 
 @router.get("/{client_package_id}/usages", response_model=list[ClientPackageUsageResponse])
@@ -106,6 +108,7 @@ def get_usages(
     response_usages = []
     for usage in usages:
         service_name = usage.credit.service_name if usage.credit else "Serviço"
+        user_name = usage.user.name if usage.user else "Sistema"
         response_usages.append({
             "id": usage.id,
             "client_package_id": usage.client_package_id,
@@ -113,6 +116,20 @@ def get_usages(
             "change_qty": usage.change_qty,
             "notes": usage.notes,
             "created_at": usage.created_at,
-            "service_name": service_name
+            "service_name": service_name,
+            "user_name": user_name
         })
     return response_usages
+
+
+@router.patch("/{client_package_id}/transfer/{new_pet_id}", response_model=ClientPackageResponse)
+def transfer_package(
+    client_package_id: int,
+    new_pet_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    svc = ClientPackageService()
+    return svc.transfer_package(db, tenant_id, client_package_id, new_pet_id)
+
