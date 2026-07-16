@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     # Set to "production" to disable SQL echo
     ENVIRONMENT: str = "development"
+    SENTRY_DSN: str = ""
+
+    # Rate limiting — increase for load testing: LOGIN_RATE_LIMIT=500/minute
+    LOGIN_RATE_LIMIT: str = "5/minute"
 
     # Google Cloud Storage
     GCP_PROJECT_ID: str = ""

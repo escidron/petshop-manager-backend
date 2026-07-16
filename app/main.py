@@ -19,6 +19,7 @@ import app.modules.plans.models
 import app.modules.auth.models
 import app.modules.waiting_list.models
 import app.modules.whatsapp.models
+import sentry_sdk
 
 
 # Initialize Logging Configuration
@@ -44,6 +45,14 @@ def create_app() -> FastAPI:
     app.add_middleware(ObservabilityMiddleware)
 
     app.include_router(api_router, prefix="/api/v1")
+
+    if settings.SENTRY_DSN:
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            environment=settings.ENVIRONMENT,
+            traces_sample_rate=0.0,
+            send_default_pii=True
+        )
 
     @app.get("/health")
     def health_check():
