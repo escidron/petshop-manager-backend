@@ -4,6 +4,7 @@ import traceback
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
+import sentry_sdk
 
 from app.modules.auth.token import decode_token
 from app.config.logging_config import tenant_id_var, user_id_var
@@ -33,6 +34,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Set ContextVars for logging
         tenant_token = tenant_id_var.set(tenant_id)
         user_token = user_id_var.set(user_id)
+        
+        # Inject context into Sentry for this specific request
+        if user_id != "N/A":
+            sentry_sdk.set_user({"id": user_id})
+        else:
+            sentry_sdk.set_user(None) # Clear for anonymous requests
+            
+        if tenant_id != "N/A":
+            sentry_sdk.set_tag("tenant_id", tenant_id)
+
 
         start_time = time.perf_counter()
         
