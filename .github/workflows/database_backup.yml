@@ -1,0 +1,44 @@
+name: Automated Database Backup (Supabase to GCS)
+
+on:
+  schedule:
+    # Roda todos os dias as 3:00 da manha UTC (Meia noite no Brasil)
+    - cron: '0 3 * * *' 
+  workflow_dispatch: # Permite rodar o backup manualmente apertando um botao no GitHub
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Set Backup Filename
+      id: vars
+      run: echo "FILE_NAME=backup_petshop_prod_$(date +'%Y-%m-%d_%H-%M-%S').sql.gz" >> $GITHUB_ENV
+
+    - name: Dump Supabase Database
+      env:
+        # A URL de conexao do banco de producao guardada nos Secrets do GitHub
+        DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+      run: |
+        echo "Iniciando backup do banco de dados..."
+        # O pg_dump ja vem instalado nas maquinas do GitHub Actions (ubuntu-latest)
+        pg_dump $DATABASE_URL -F p --clean | gzip > ${{ env.FILE_NAME }}
+        echo "Backup concluido localmente: ${{ env.FILE_NAME }}"
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        # O arquivo JSON da Service Account guardado nos Secrets
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Upload Backup to Google Cloud Storage
+      env:
+        # O nome do seu bucket exclusivo de backups guardado nos Secrets do GitHub
+        GCS_BACKUP_BUCKET_NAME: ${{ secrets.GCS_BACKUP_BUCKET_NAME }}
+      run: |
+        echo "Fazendo upload para o Google Cloud Storage (Bucket: $GCS_BACKUP_BUCKET_NAME)..."
+        gsutil cp ${{ env.FILE_NAME }} gs://$GCS_BACKUP_BUCKET_NAME/database_backups/${{ env.FILE_NAME }}
+        echo "Upload concluido com sucesso e protegido na nuvem!"
