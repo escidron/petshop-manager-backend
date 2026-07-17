@@ -18,7 +18,7 @@ jobs:
     - name: Dump Supabase Database
       env:
         # A URL de conexao do banco de producao guardada nos Secrets do GitHub
-        DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL_PRODUCTION }}
       run: |
         echo "Iniciando backup do banco de dados..."
         # O pg_dump ja vem instalado nas maquinas do GitHub Actions (ubuntu-latest)
