@@ -52,6 +52,7 @@ jobs:
             --max-instances=5
             --allow-unauthenticated
           env_vars: |
+            SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             DATABASE_URL=${{ secrets.DATABASE_URL_STAGING }}
             GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
             GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME_STAGING }}
