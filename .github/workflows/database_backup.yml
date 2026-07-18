@@ -21,9 +21,9 @@ jobs:
         DATABASE_URL: ${{ secrets.DB_BACKUP_URL }}
       run: |
         set -eo pipefail
-        echo "Iniciando backup do banco de dados..."
-        # O pg_dump ja vem instalado nas maquinas do GitHub Actions (ubuntu-latest)
-        pg_dump "$DATABASE_URL" -F p --clean | gzip > ${{ env.FILE_NAME }}
+        echo "Iniciando backup do banco de dados (usando imagem Docker do Postgres 17 para compatibilidade)..."
+        # Usamos docker para garantir que a versao do pg_dump bata com a do Supabase (PG 17)
+        docker run --rm -i postgres:17 pg_dump "$DATABASE_URL" -F p --clean | gzip > ${{ env.FILE_NAME }}
         echo "Backup concluido localmente: ${{ env.FILE_NAME }}"
 
     - name: Authenticate to Google Cloud
