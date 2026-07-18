@@ -64,15 +64,16 @@ class ClientService:
         # Add headers
         headers = [
             "cliente_nome *", "cliente_telefone *", "cliente_email", "cliente_documento", "cliente_data_nascimento", 
-            "cliente_cep", "cliente_logradouro", "cliente_numero", "cliente_bairro", "cliente_cidade", "cliente_estado",
-            "pet_nome", "pet_especie", "pet_raca", "pet_genero", "pet_porte", "pet_castrado", "pet_data_nascimento", "pet_observacoes"
+            "cliente_cep", "cliente_logradouro", "cliente_numero", "cliente_complemento", "cliente_bairro", "cliente_cidade", "cliente_estado",
+            "pet_nome *", "pet_especie *", "pet_raca", "pet_tipo_pelagem", "pet_cor_pelagem", "pet_genero", "pet_porte", "pet_castrado", "pet_data_nascimento", "pet_idade_aproximada", "pet_unidade_idade", "pet_observacoes"
         ]
         ws.append(headers)
         
-        # Style headers (Client is light blue 1976D2, Pet is teal 00796B)
+        # Style headers (Client is light blue 1976D2, Pet is teal 00796B, Mandatory is Red D32F2F)
         font_style = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
         client_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
         pet_fill = PatternFill(start_color="00796B", end_color="00796B", fill_type="solid")
+        mandatory_fill = PatternFill(start_color="D32F2F", end_color="D32F2F", fill_type="solid")
         
         center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
         left_align = Alignment(horizontal="left", vertical="center")
@@ -91,7 +92,9 @@ class ClientService:
             cell.alignment = center_align
             cell.border = thin_border
             # Apply color based on group
-            if col_idx <= 11:
+            if "*" in headers[col_idx - 1]:
+                cell.fill = mandatory_fill
+            elif col_idx <= 12:
                 cell.fill = client_fill
             else:
                 cell.fill = pet_fill
@@ -100,18 +103,18 @@ class ClientService:
         examples = [
             [
                 "João Silva", "(11) 99999-8888", "joao@email.com", "123.456.789-00", "15/08/1985", 
-                "01311-200", "Avenida Paulista", "1000", "Bela Vista", "São Paulo", "SP",
-                "Rex", "Canino", "Golden Retriever", "Macho", "G", "Não", "01/05/2020", "Alérgico a medicamentos"
+                "01311-200", "Avenida Paulista", "1000", "Apto 12", "Bela Vista", "São Paulo", "SP",
+                "Rex", "Canino", "Golden Retriever", "Longa", "Caramelo", "Macho", "G", "Não", "01/05/2020", "", "", "Alérgico a medicamentos"
             ],
             [
                 "João Silva", "(11) 99999-8888", "joao@email.com", "123.456.789-00", "15/08/1985", 
-                "01311-200", "Avenida Paulista", "1000", "Bela Vista", "São Paulo", "SP",
-                "Mia", "Felino", "Siamês", "Fêmea", "P", "Sim", "10/10/2022", "Muito dócil e assustada"
+                "01311-200", "Avenida Paulista", "1000", "Apto 12", "Bela Vista", "São Paulo", "SP",
+                "Mia", "Felino", "Siamês", "Curta", "Bicolor", "Fêmea", "P", "Sim", "", "2", "Anos", "Muito dócil e assustada"
             ],
             [
                 "Maria Souza", "(11) 88888-7777", "maria@email.com", "987.654.321-11", "20/10/1990", 
-                "04533-010", "Rua Joaquim Floriano", "500", "Itaim Bibi", "São Paulo", "SP",
-                "Fred", "Exótico", "Jabuti", "Macho", "PP", "Não", "01/01/2018", "Vive em terrário"
+                "04533-010", "", "500", "Fundos", "", "", "",
+                "Fred", "Exótico", "Jabuti", "Sem pelo", "Marrom", "Macho", "PP", "Não", "01/01/2018", "", "", "Vive em terrário"
             ]
         ]
         
@@ -127,13 +130,13 @@ class ClientService:
                 cell.border = thin_border
                 
                 # Alignment
-                if col_idx in [1, 3, 7, 9, 10, 12, 14, 19]:
+                if col_idx in [1, 3, 7, 9, 10, 11, 13, 15, 16, 17, 24]:
                     cell.alignment = left_align
                 else:
                     cell.alignment = center_align
                     
-                # Format E (5) and R (18) as custom date mask
-                if col_idx in [5, 18]:
+                # Format E (5) and U (21) as custom date mask
+                if col_idx in [5, 21]:
                     cell.number_format = '00\\/00\\/0000'
                 # Format B (2) as custom Phone mask
                 elif col_idx == 2:
@@ -146,41 +149,68 @@ class ClientService:
                     cell.number_format = '00000\\-000'
                     
         # Add validation rules
-        # 1. Species (Column M - col 13)
+        # 1. Species (Column N - col 14)
         dv_species = DataValidation(type="list", formula1='"Canino,Felino,Exótico"', allow_blank=True)
         dv_species.error = 'Escolha uma espécie da lista (Canino, Felino ou Exótico)'
         dv_species.errorTitle = 'Espécie Inválida'
         dv_species.prompt = 'Selecione a espécie (Canino, Felino ou Exótico)'
         dv_species.promptTitle = 'Espécie'
         ws.add_data_validation(dv_species)
-        dv_species.add("M2:M1000")
+        dv_species.add("N2:N1000")
         
-        # 2. Gender (Column O - col 15)
+        # 2. Coat Type (Column P - col 16)
+        dv_coat_type = DataValidation(type="list", formula1='"Curta,Média,Longa,Dupla camada,Sem pelo"', allow_blank=True)
+        dv_coat_type.error = 'Escolha um tipo de pelagem da lista'
+        dv_coat_type.errorTitle = 'Pelagem Inválida'
+        dv_coat_type.prompt = 'Selecione o tipo de pelagem'
+        dv_coat_type.promptTitle = 'Pelagem'
+        ws.add_data_validation(dv_coat_type)
+        dv_coat_type.add("P2:P1000")
+        
+        # 3. Coat Color (Column Q - col 17)
+        dv_coat_color = DataValidation(type="list", formula1='"Branco,Preto,Cinza,Marrom,Caramelo,Bege,Dourado,Creme,Chocolate,Canela,Fulvo,Rajado,Tigrado,Malhado,Mesclado,Tricolor,Bicolor,Pardo,Amarelo,Vermelho"', allow_blank=True)
+        dv_coat_color.error = 'Escolha uma cor da lista'
+        dv_coat_color.errorTitle = 'Cor Inválida'
+        dv_coat_color.prompt = 'Selecione a cor principal'
+        dv_coat_color.promptTitle = 'Cor'
+        ws.add_data_validation(dv_coat_color)
+        dv_coat_color.add("Q2:Q1000")
+        
+        # 4. Gender (Column R - col 18)
         dv_gender = DataValidation(type="list", formula1='"Macho,Fêmea,Desconhecido"', allow_blank=True)
         dv_gender.error = 'Escolha um gênero da lista'
         dv_gender.errorTitle = 'Gênero Inválido'
         dv_gender.prompt = 'Selecione o gênero'
         dv_gender.promptTitle = 'Gênero'
         ws.add_data_validation(dv_gender)
-        dv_gender.add("O2:O1000")
+        dv_gender.add("R2:R1000")
         
-        # 3. Size (Column P - col 16)
+        # 4. Size (Column S - col 19)
         dv_size = DataValidation(type="list", formula1='"PP,P,M,G,GG"', allow_blank=True)
         dv_size.error = 'Escolha um porte da lista'
         dv_size.errorTitle = 'Porte Inválido'
         dv_size.prompt = 'Selecione o porte'
         dv_size.promptTitle = 'Porte'
         ws.add_data_validation(dv_size)
-        dv_size.add("P2:P1000")
+        dv_size.add("S2:S1000")
         
-        # 4. Neutered (Column Q - col 17)
+        # 5. Neutered (Column T - col 20)
         dv_neutered = DataValidation(type="list", formula1='"Sim,Não"', allow_blank=True)
         dv_neutered.error = 'Escolha Sim ou Não'
         dv_neutered.errorTitle = 'Opção Inválida'
         dv_neutered.prompt = 'O animal é castrado?'
         dv_neutered.promptTitle = 'Castrado'
         ws.add_data_validation(dv_neutered)
-        dv_neutered.add("Q2:Q1000")
+        dv_neutered.add("T2:T1000")
+
+        # 6. Age Unit (Column W - col 23)
+        dv_age_unit = DataValidation(type="list", formula1='"Meses,Anos"', allow_blank=True)
+        dv_age_unit.error = 'Escolha Meses ou Anos'
+        dv_age_unit.errorTitle = 'Unidade Inválida'
+        dv_age_unit.prompt = 'Meses ou Anos?'
+        dv_age_unit.promptTitle = 'Unidade'
+        ws.add_data_validation(dv_age_unit)
+        dv_age_unit.add("W2:W1000")
         
         # Column Widths
         for col in ws.columns:
@@ -312,6 +342,27 @@ class ClientService:
             if "fêmea" in cleaned or "femea" in cleaned:
                 return "female"
             return "unknown"
+            
+        def parse_age_unit(val):
+            if not val:
+                return None
+            cleaned = str(val).strip().lower()
+            if "meses" in cleaned or "mês" in cleaned or "mes" in cleaned:
+                return "months"
+            if "anos" in cleaned or "ano" in cleaned:
+                return "years"
+            return None
+            
+        def parse_coat_type(val):
+            if not val:
+                return None
+            cleaned = str(val).strip().lower()
+            if "curta" in cleaned: return "short"
+            if "média" in cleaned or "media" in cleaned: return "medium"
+            if "longa" in cleaned: return "long"
+            if "dupla" in cleaned: return "double"
+            if "sem pelo" in cleaned: return "hairless"
+            return val
 
         def parse_neutered(val):
             if not val:
@@ -376,9 +427,23 @@ class ClientService:
                     
                 street = clean_str(row.get("cliente_logradouro"))
                 number = clean_str(row.get("cliente_numero"))
+                complement = clean_str(row.get("cliente_complemento"))
                 neighborhood = clean_str(row.get("cliente_bairro"))
                 city = clean_str(row.get("cliente_cidade"))
                 state = clean_str(row.get("cliente_estado"))
+
+                if cep and not (street and neighborhood and city and state):
+                    from app.modules.address.service import AddressService
+                    address_data = await AddressService.fetch_by_cep(cep)
+                    if address_data:
+                        if not street:
+                            street = address_data.get("street")
+                        if not neighborhood:
+                            neighborhood = address_data.get("neighborhood")
+                        if not city:
+                            city = address_data.get("city")
+                        if not state:
+                            state = address_data.get("state")
                 
                 # Check cache first, then DB
                 client = None
@@ -413,6 +478,7 @@ class ClientService:
                         cep=cep,
                         street=street,
                         number=number,
+                        complement=complement,
                         neighborhood=neighborhood,
                         city=city,
                         state=state
@@ -426,40 +492,53 @@ class ClientService:
                 
                 # 2. Pet Validation & Creation
                 pet_name = clean_str(row.get("pet_nome"))
-                if pet_name:
-                    pet_species_raw = clean_str(row.get("pet_especie"))
-                    if not pet_species_raw:
-                        raise ValueError("Espécie do pet é obrigatória quando o nome do pet é informado")
+                if not pet_name:
+                    raise ValueError("Nome do pet é obrigatório")
                     
-                    pet_species = parse_species(pet_species_raw)
-                    pet_breed = clean_str(row.get("pet_raca"))
-                    pet_gender = parse_gender(clean_str(row.get("pet_genero")))
-                    pet_size = clean_str(row.get("pet_porte"))
-                    pet_neutered = parse_neutered(clean_str(row.get("pet_castrado")))
-                    pet_birth = parse_date(row.get("pet_data_nascimento"))
-                    pet_notes = clean_str(row.get("pet_observacoes"))
+                pet_species_raw = clean_str(row.get("pet_especie"))
+                if not pet_species_raw:
+                    raise ValueError("Espécie do pet é obrigatória")
                     
-                    from app.modules.pets.models import Pet
-                    pet_in_db = db.query(Pet).filter(
-                        Pet.tenant_id == tenant_id,
-                        Pet.client_id == client.id,
-                        Pet.name == pet_name,
-                        Pet.species == pet_species
-                    ).first()
-                    
-                    if not pet_in_db:
-                        pet_data = PetCreate(
-                            client_id=client.id,
-                            name=pet_name,
-                            species=pet_species,
-                            breed=pet_breed,
-                            gender=pet_gender,
-                            size=pet_size,
-                            is_neutered=pet_neutered,
-                            birth_date=pet_birth,
-                            notes=pet_notes
-                        )
-                        self.pet_repository.create(db, tenant_id, pet_data)
+                pet_species = parse_species(pet_species_raw)
+                pet_breed = clean_str(row.get("pet_raca"))
+                pet_coat_type = parse_coat_type(row.get("pet_tipo_pelagem"))
+                pet_coat_color = clean_str(row.get("pet_cor_pelagem"))
+                pet_gender = parse_gender(clean_str(row.get("pet_genero")))
+                pet_size = clean_str(row.get("pet_porte"))
+                pet_neutered = parse_neutered(clean_str(row.get("pet_castrado")))
+                pet_birth = parse_date(row.get("pet_data_nascimento"))
+                
+                pet_age_str = clean_num(row.get("pet_idade_aproximada"))
+                pet_age = int(pet_age_str) if pet_age_str else None
+                pet_age_unit = parse_age_unit(row.get("pet_unidade_idade"))
+                
+                pet_notes = clean_str(row.get("pet_observacoes"))
+                
+                from app.modules.pets.models import Pet
+                pet_in_db = db.query(Pet).filter(
+                    Pet.tenant_id == tenant_id,
+                    Pet.client_id == client.id,
+                    Pet.name == pet_name,
+                    Pet.species == pet_species
+                ).first()
+                
+                if not pet_in_db:
+                    pet_data = PetCreate(
+                        client_id=client.id,
+                        name=pet_name,
+                        species=pet_species,
+                        breed=pet_breed,
+                        coat_type=pet_coat_type,
+                        coat_color=pet_coat_color,
+                        gender=pet_gender,
+                        size=pet_size,
+                        is_neutered=pet_neutered,
+                        birth_date=pet_birth,
+                        age=pet_age,
+                        age_unit=pet_age_unit,
+                        notes=pet_notes
+                    )
+                    self.pet_repository.create(db, tenant_id, pet_data)
                         
                 imported_count += 1
             except Exception as e:

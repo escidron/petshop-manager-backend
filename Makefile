@@ -47,3 +47,8 @@ docker-run:
 
 docker-dev:
 	docker run --env-file .env -p 8000:8080 -v "$(CURDIR):/app" $(IMAGE_NAME) poetry run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+
+db-restore-backup:
+	@echo "Restaurando banco de dados a partir do arquivo de backup..."
+	@echo "PS: O arquivo SQL gerado com --clean ja deleta (DROP) as tabelas automaticamente antes de recria-las!"
+	docker run --rm -i postgres:17 psql "$(url)" < "$(file)"
