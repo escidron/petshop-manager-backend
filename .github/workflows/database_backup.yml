@@ -17,12 +17,13 @@ jobs:
 
     - name: Dump Supabase Database
       env:
-        # A URL de conexao do banco de producao guardada nos Secrets do GitHub
-        DATABASE_URL: ${{ secrets.DATABASE_URL_PRODUCTION }}
+        # A URL de conexao do banco de producao (PORTA 5432) guardada nos Secrets
+        DATABASE_URL: ${{ secrets.DB_BACKUP_URL }}
       run: |
+        set -eo pipefail
         echo "Iniciando backup do banco de dados..."
         # O pg_dump ja vem instalado nas maquinas do GitHub Actions (ubuntu-latest)
-        pg_dump $DATABASE_URL -F p --clean | gzip > ${{ env.FILE_NAME }}
+        pg_dump "$DATABASE_URL" -F p --clean | gzip > ${{ env.FILE_NAME }}
         echo "Backup concluido localmente: ${{ env.FILE_NAME }}"
 
     - name: Authenticate to Google Cloud
