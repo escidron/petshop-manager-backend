@@ -25,6 +25,9 @@ class ServiceInAppointmentResponse(BaseModel):
     duration_minutes: int | None = None
     is_package_covered: bool = False
     employee_id: int | None = None
+    species: str | None = None
+    size: str | None = None
+    coat_type: str | None = None
 
     class Config:
         from_attributes = True
@@ -54,6 +57,9 @@ class AppointmentItemResponse(BaseModel):
                 "duration_minutes": getattr(svc, "duration_minutes", None),
                 "is_package_covered": svc.id in covered_ids,
                 "employee_id": emp_map.get(svc.id),
+                "species": getattr(svc, "species", None),
+                "size": getattr(svc, "size", None),
+                "coat_type": getattr(svc, "coat_type", None),
             }
             for svc in data.services
         ]

@@ -35,7 +35,7 @@ class Employee(Base):
         default=EmployeeRole.OTHER,
     )
 
-    phone: Mapped[str | None] = mapped_column(String(20))
+    phone: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     email: Mapped[str | None] = mapped_column(String(255))
     schedule_token: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True)
 

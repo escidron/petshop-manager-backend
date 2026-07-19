@@ -9,7 +9,7 @@ EmployeeRole = Literal["groomer", "bather", "salesperson", "receptionist", "driv
 class EmployeeBase(BaseModel):
     name: str
     role: EmployeeRole = "other"
-    phone: Optional[str] = None
+    phone: str
     email: Optional[EmailStr] = None
     is_active: bool = True
 
