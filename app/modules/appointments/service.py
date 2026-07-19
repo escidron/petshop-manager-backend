@@ -315,7 +315,8 @@ class AppointmentService:
                         db, tenant_id, item.pet_id, service.id
                     )
                     if credit:
-                        self.credit_repo.consume_credit(db, credit)
+                        notes = f"Consumido via agendamento - Pet: {item.pet.name}" if item.pet else "Consumido via agendamento"
+                        self.credit_repo.consume_credit(db, credit, notes=notes)
                         self.repo.create_coverage(
                             db,
                             appointment_item_id=item.id,

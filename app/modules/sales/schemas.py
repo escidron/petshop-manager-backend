@@ -13,7 +13,7 @@ class SaleItemBase(BaseModel):
     subtotal: float = Field(ge=0)
 
 class SaleItemCreate(SaleItemBase):
-    pet_id: int | None = None
+    pet_ids: list[int] | None = None
     employee_id: int | None = None
     client_package_id_to_pay: int | None = None
 

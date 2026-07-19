@@ -4,6 +4,21 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.config.database import Base
 
 
+class ClientPackagePet(Base):
+    """Tabela associativa para relacionar um pacote a múltiplos pets."""
+
+    __tablename__ = "client_package_pets"
+
+    client_package_id: Mapped[int] = mapped_column(
+        ForeignKey("client_packages.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    pet_id: Mapped[int] = mapped_column(
+        ForeignKey("pets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
 class ClientPackage(Base):
     """Instância de um pacote vendido para um pet específico."""
 
@@ -17,11 +32,6 @@ class ClientPackage(Base):
     )
     client_id: Mapped[int] = mapped_column(
         ForeignKey("clients.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    pet_id: Mapped[int] = mapped_column(
-        ForeignKey("pets.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -51,7 +61,7 @@ class ClientPackage(Base):
         cascade="all, delete-orphan",
     )
     package = relationship("Package")
-    pet = relationship("Pet")
+    pets = relationship("Pet", secondary="client_package_pets")
     client = relationship("Client")
 
 

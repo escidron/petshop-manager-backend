@@ -80,10 +80,10 @@ class SalesService:
                         status_code=400,
                         detail=f"Para vender o pacote '{item.name}', é necessário selecionar um cliente."
                     )
-                if not item.pet_id:
+                if not item.pet_ids:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Para vender o pacote '{item.name}', é necessário selecionar um pet."
+                        detail=f"Para vender o pacote '{item.name}', é necessário selecionar pelo menos um pet."
                     )
 
                 for p_item in package.items:
@@ -116,7 +116,7 @@ class SalesService:
                             db.add(pkg)
                     except Exception:
                         pass
-                elif item.pet_id and data.client_id:
+                elif item.pet_ids and data.client_id:
                     # Vendendo um novo pacote direto pelo PDV (nasce pago)
                     # Não colocamos try/except geral para que erros de validação subam e cancelem a transação
                     self.client_package_service.sell(
@@ -124,7 +124,7 @@ class SalesService:
                         tenant_id=tenant_id,
                         client_id=data.client_id,
                         data=ClientPackageSellRequest(
-                            pet_id=item.pet_id,
+                            pet_ids=item.pet_ids,
                             package_id=item.item_id,
                         ),
                         is_paid=True, # Vendido no PDV já é pago

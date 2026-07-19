@@ -15,8 +15,12 @@ class ClientPackageCreditResponse(BaseModel):
 
 
 class ClientPackageSellRequest(BaseModel):
-    pet_id: int
+    pet_ids: list[int]
     package_id: int
+
+class ConsumeCreditRequest(BaseModel):
+    notes: str | None = None
+
 
 class ClientPackageClientInfo(BaseModel):
     id: int
@@ -46,14 +50,13 @@ class ClientPackageResponse(BaseModel):
     id: int
     tenant_id: int
     client_id: int
-    pet_id: int
     package_id: int | None
     package_name: str
     is_active: bool
     created_at: datetime
     expires_at: datetime | None
     client: ClientPackageClientInfo
-    pet: ClientPackagePetInfo
+    pets: list[ClientPackagePetInfo]
     credits: list[ClientPackageCreditResponse]
     usages: list[ClientPackageUsageResponse] = []
 
