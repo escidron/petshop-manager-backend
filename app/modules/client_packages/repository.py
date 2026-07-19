@@ -89,7 +89,6 @@ class ClientPackageRepository:
             .filter(
                 ClientPackage.tenant_id == tenant_id,
                 ClientPackage.pets.any(Pet.id == pet_id),
-                ClientPackage.is_active == True,
             )
             .order_by(ClientPackage.created_at)
             .all()
@@ -108,7 +107,6 @@ class ClientPackageRepository:
             .filter(
                 ClientPackage.tenant_id == tenant_id,
                 ClientPackage.client_id == client_id,
-                ClientPackage.is_active == True,
             )
             .order_by(ClientPackage.created_at.desc())
             .all()

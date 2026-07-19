@@ -24,13 +24,11 @@ class ProductRepository:
             .first()
         )
 
-    def list(self, db: Session, tenant_id: int) -> list[Product]:
-        return (
-            db.query(Product)
-            .filter(Product.tenant_id == tenant_id)
-            .order_by(Product.name)
-            .all()
-        )
+    def list(self, db: Session, tenant_id: int, exclude_internal: bool = False) -> list[Product]:
+        query = db.query(Product).filter(Product.tenant_id == tenant_id)
+        if exclude_internal:
+            query = query.filter(Product.is_internal_use == False)
+        return query.order_by(Product.name).all()
 
     def update(self, db: Session, product: Product, data: ProductUpdate) -> Product:
         update_data = data.model_dump(exclude_unset=True)

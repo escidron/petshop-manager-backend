@@ -66,6 +66,11 @@ class AppointmentItemResponse(BaseModel):
         return {"id": data.id, "pet": data.pet, "services": services_data}
 
 
+class AppointmentRecurrence(BaseModel):
+    frequency: str = Field(description="'weekly', 'biweekly', or 'monthly'")
+    occurrences: int = Field(ge=2, le=52, description="Number of times to repeat")
+
+
 class AppointmentCreate(BaseModel):
     client_id: int
     scheduled_at: datetime
@@ -75,6 +80,7 @@ class AppointmentCreate(BaseModel):
         min_length=1,
         description="Lista de pets com seus respectivos serviços",
     )
+    recurrence: AppointmentRecurrence | None = None
 
 
 class AppointmentUpdate(BaseModel):
@@ -94,6 +100,7 @@ class AppointmentResponse(BaseModel):
     is_paid: bool = False
     is_fully_package_covered: bool = False
     warnings: List[str] = Field(default_factory=list)
+    recurrence_id: str | None = None
 
     created_at: datetime
 
@@ -116,6 +123,7 @@ class AppointmentResponse(BaseModel):
 
 class AppointmentActionRequest(BaseModel):
     action: AppointmentAction
+    cancel_all_future: bool = False
 
 
 # ============================================================

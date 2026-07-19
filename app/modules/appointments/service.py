@@ -55,38 +55,66 @@ class AppointmentService:
         if not client:
             raise HTTPException(404, "Cliente não encontrado")
 
-        # 2️⃣ Criar appointment root
-        appointment = self.repo.create(
-            db=db,
-            tenant_id=tenant_id,
-            client_id=data.client_id,
-            scheduled_at=data.scheduled_at,
-            notes=data.notes,
-        )
+        import uuid
+        from datetime import timedelta
+        
+        recurrence_id = None
+        occurrences_count = 1
+        
+        if data.recurrence:
+            recurrence_id = str(uuid.uuid4())
+            occurrences_count = data.recurrence.occurrences
+            
+        first_appointment = None
 
-        # 3️⃣ Para cada pet no payload
-        for item in data.items:
+        for i in range(occurrences_count):
+            current_scheduled_at = data.scheduled_at
+            if data.recurrence and i > 0:
+                if data.recurrence.frequency == 'weekly':
+                    current_scheduled_at += timedelta(days=7 * i)
+                elif data.recurrence.frequency == 'biweekly':
+                    current_scheduled_at += timedelta(days=14 * i)
+                elif data.recurrence.frequency == 'monthly':
+                    # Simplified monthly recurrence: just add 28 days or use relativedelta if installed. Let's add 28 days for now or 30 days. Let's do 28 for consistency with days of week.
+                    current_scheduled_at += timedelta(days=28 * i)
 
-            # Aqui reaproveitamos sua validação
-            self._validate_pet(
-                db,
-                tenant_id,
-                data.client_id,
-                item.pet_id,
-            )
-
-            services = self._get_services(
-                db,
-                tenant_id,
-                item.service_ids,
-            )
-
-            self.repo.create_item(
+            # 2️⃣ Criar appointment root
+            appointment = self.repo.create(
                 db=db,
-                appointment=appointment,
-                pet_id=item.pet_id,
-                services=services,
+                tenant_id=tenant_id,
+                client_id=data.client_id,
+                scheduled_at=current_scheduled_at,
+                notes=data.notes,
             )
+            appointment.recurrence_id = recurrence_id
+            
+            if i == 0:
+                first_appointment = appointment
+
+            # 3️⃣ Para cada pet no payload
+            for item in data.items:
+
+                # Aqui reaproveitamos sua validação (apenas no primeiro iter)
+                if i == 0:
+                    self._validate_pet(
+                        db,
+                        tenant_id,
+                        data.client_id,
+                        item.pet_id,
+                    )
+
+                services = self._get_services(
+                    db,
+                    tenant_id,
+                    item.service_ids,
+                )
+
+                self.repo.create_item(
+                    db=db,
+                    appointment=appointment,
+                    pet_id=item.pet_id,
+                    services=services,
+                )
 
         # Marca onboarding como concluído no primeiro agendamento criado
         tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
@@ -95,16 +123,17 @@ class AppointmentService:
 
         db.commit()
 
-        # Envia notificação por WhatsApp
+        # Envia notificação por WhatsApp (apenas para o primeiro)
         try:
             import logging
             from app.modules.whatsapp.service import WhatsAppService
             local_logger = logging.getLogger(__name__)
-            WhatsAppService().send_appointment_confirmation(db, tenant_id, appointment.id)
+            WhatsAppService().send_appointment_confirmation(db, tenant_id, first_appointment.id)
         except Exception as e:
             local_logger.error(f"Erro ao enviar notificação de agendamento por WhatsApp: {str(e)}")
 
-        return self.repo.get_with_relations(db, appointment.id)
+        # Recarrega o primeiro agendamento com as relações prontas
+        return self.repo.get_with_relations(db, first_appointment.id)
 
     # ---------- GET ----------
     def get(
@@ -262,6 +291,7 @@ class AppointmentService:
         tenant_id: int,
         appointment_id: int,
         action: AppointmentAction,
+        cancel_all_future: bool = False,
         by_whatsapp: bool = False,
     ):
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
@@ -287,6 +317,18 @@ class AppointmentService:
         appointment.status = new_status
 
         result = self.repo.save_action(db, appointment)
+
+        if action == AppointmentAction.CANCEL and cancel_all_future and appointment.recurrence_id:
+            from app.modules.appointments.models import Appointment
+            future_appointments = db.query(Appointment).filter(
+                Appointment.tenant_id == tenant_id,
+                Appointment.recurrence_id == appointment.recurrence_id,
+                Appointment.scheduled_at > appointment.scheduled_at,
+                Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED])
+            ).all()
+            for future_appt in future_appointments:
+                future_appt.status = AppointmentStatus.CANCELED
+                self.repo.save_action(db, future_appt)
 
         if action == AppointmentAction.CANCEL and not by_whatsapp:
             try:

@@ -87,6 +87,10 @@ class Product(Base):
         Boolean, default=True
     )
 
+    is_internal_use: Mapped[bool] = mapped_column(
+        Boolean, default=False
+    )
+
     unit: Mapped[str | None] = mapped_column(
         String(10), default="UN", nullable=True
     )

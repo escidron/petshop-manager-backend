@@ -27,10 +27,10 @@ def create_product(data: ProductCreate, request: Request, db: Session = Depends(
 
 
 @router.get("/", response_model=list[ProductResponse])
-def list_products(request: Request, db: Session = Depends(get_db)):
+def list_products(exclude_internal: bool = False, request: Request = None, db: Session = Depends(get_db)):
     service = ProductService()
     tenant_id = request.state.tenant_user.tenant_id
-    return service.list_products(db, tenant_id)
+    return service.list_products(db, tenant_id, exclude_internal=exclude_internal)
 
 
 @router.get("/{product_id}", response_model=ProductResponse)

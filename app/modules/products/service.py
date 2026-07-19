@@ -24,8 +24,8 @@ class ProductService:
             )
         return product
 
-    def list_products(self, db: Session, tenant_id: int):
-        return self.repository.list(db, tenant_id)
+    def list_products(self, db: Session, tenant_id: int, exclude_internal: bool = False):
+        return self.repository.list(db, tenant_id, exclude_internal=exclude_internal)
 
     def update_product(self, db: Session, tenant_id: int, product_id: int, data: ProductUpdate):
         product = self.get_product(db, tenant_id, product_id)

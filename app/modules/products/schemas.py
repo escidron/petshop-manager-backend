@@ -22,6 +22,7 @@ class ProductBase(BaseModel):
     supplier_id: Optional[int] = None
     
     is_active: bool = True
+    is_internal_use: bool = False
     unit: Optional[str] = "UN"
 
 
@@ -49,6 +50,7 @@ class ProductUpdate(BaseModel):
     supplier_id: Optional[int] = None
     
     is_active: Optional[bool] = None
+    is_internal_use: Optional[bool] = None
     unit: Optional[str] = None
 
 
