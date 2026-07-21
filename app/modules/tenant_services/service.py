@@ -96,13 +96,14 @@ class ServiceService:
         
         # Add headers
         headers = [
-            "servico *", "especie", "porte", "pelagem", "preco *", "duracao_minutos", "descricao"
+            "servico *", "preco *", "especie", "porte", "pelagem", "duracao_minutos", "descricao"
         ]
         ws.append(headers)
         
         # Style headers (Segoe UI, Blue color theme)
         header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
         header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        required_header_fill = PatternFill(start_color="D32F2F", end_color="D32F2F", fill_type="solid")
         center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
         left_align = Alignment(horizontal="left", vertical="center")
         
@@ -118,7 +119,11 @@ class ServiceService:
         for col_idx in range(1, len(headers) + 1):
             cell = ws.cell(row=1, column=col_idx)
             cell.font = header_font
-            cell.fill = header_fill
+            header_name = headers[col_idx - 1]
+            if "*" in header_name:
+                cell.fill = required_header_fill
+            else:
+                cell.fill = header_fill
             cell.alignment = center_align
             cell.border = thin_border
 
@@ -138,23 +143,29 @@ class ServiceService:
         for service in base_services:
             for species in species_list:
                 for size in sizes_list:
-                    for coat in coat_types:
-                        size_desc = size_descriptions[size]
-                        if coat:
-                            desc = f"{service} para animal {species.lower()} de {size_desc} com pelagem {coat.lower()}"
-                        else:
-                            desc = f"{service} para animal {species.lower()} de {size_desc}"
-                        
-                        row = [
+                    description = f"{service} para {species.lower()} de {size_descriptions[size]}"
+                    if species == "Canino":
+                        for coat in coat_types:
+                            coat_desc = f" com pelagem {coat.lower()}" if coat else ""
+                            ws.append([
+                                service,
+                                "", # preco *
+                                species,
+                                size,
+                                coat if coat else "",
+                                "", # duracao_minutos
+                                f"{description}{coat_desc}"
+                            ])
+                    else:
+                        ws.append([
                             service,
+                            "", # preco *
                             species,
                             size,
-                            coat,  # pelagem
-                            None,  # preco (deixar em branco)
-                            None,  # duracao (deixar em branco)
-                            desc   # descricao
-                        ]
-                        ws.append(row)
+                            "",
+                            "", # duracao_minutos
+                            description
+                        ])
 
         # Format rows (starting at row 2 up to ws.max_row)
         for r_idx in range(2, ws.max_row + 1):
@@ -171,38 +182,38 @@ class ServiceService:
                     cell.alignment = center_align
                     
                 # Number formats
-                if col_idx == 5: # price
+                if col_idx == 2: # price
                     cell.number_format = "#,##0.00"
                 elif col_idx == 6: # duration
                     cell.number_format = "#,##0"
 
         # Data Validations (Dropdowns)
-        # 1. Species (Column B - col_idx 2)
-        dv_species = DataValidation(type="list", formula1='"Canino,Felino"', allow_blank=True)
+        # Species (Column 3)
+        dv_species = DataValidation(type="list", formula1=f'"{",".join(species_list)}"', allow_blank=True)
         dv_species.error = 'Escolha uma espécie da lista (Canino ou Felino)'
         dv_species.errorTitle = 'Espécie Inválida'
         dv_species.prompt = 'Selecione a espécie atendida'
         dv_species.promptTitle = 'Espécie'
         ws.add_data_validation(dv_species)
-        dv_species.add(f"B2:B{ws.max_row + 100}")
+        dv_species.add(f"C2:C{ws.max_row + 100}")
         
-        # 2. Sizes (Column C - col_idx 3)
+        # 2. Sizes (Column 4)
         dv_sizes = DataValidation(type="list", formula1='"PP,P,M,G,GG"', allow_blank=True)
         dv_sizes.error = 'Escolha um porte da lista (PP, P, M, G ou GG)'
         dv_sizes.errorTitle = 'Porte Inválido'
         dv_sizes.prompt = 'Selecione o porte atendido'
         dv_sizes.promptTitle = 'Porte'
         ws.add_data_validation(dv_sizes)
-        dv_sizes.add(f"C2:C{ws.max_row + 100}")
+        dv_sizes.add(f"D2:D{ws.max_row + 100}")
 
-        # 3. Coat Types (Column D - col_idx 4)
+        # 3. Coat Types (Column 5)
         dv_coats = DataValidation(type="list", formula1='"Curta,Média,Longa,Dupla,Sem Pelo"', allow_blank=True)
         dv_coats.error = 'Escolha uma pelagem da lista'
         dv_coats.errorTitle = 'Pelagem Inválida'
         dv_coats.prompt = 'Selecione o tipo de pelagem (opcional)'
         dv_coats.promptTitle = 'Pelagem'
         ws.add_data_validation(dv_coats)
-        dv_coats.add(f"D2:D{ws.max_row + 100}")
+        dv_coats.add(f"E2:E{ws.max_row + 100}")
 
         # Auto-fit column widths
         for col in ws.columns:

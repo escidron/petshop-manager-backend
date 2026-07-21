@@ -135,8 +135,12 @@ def require_active_subscription(
     - qualquer outro caso → 403 com código 'subscription_required' ou 'trial_expired'
     """
     from datetime import timedelta
-    sub = context["tenant"].subscription
+    
+    tenant = context["tenant"]
+    if tenant.feature_flags and tenant.feature_flags.get("free_access"):
+        return context
 
+    sub = tenant.subscription
     if not sub:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -157,7 +157,7 @@ class ProductService:
                 # Parse unit of measure mapping descriptive names back to code
                 def parse_unit(val):
                     if val is None or str(val).strip() == "":
-                        return "UN"
+                        raise ValueError("Unidade de medida é obrigatória")
                     cleaned = str(val).strip().lower()
                     unit_map = {
                         "unidade (un)": "UN",
@@ -176,7 +176,27 @@ class ProductService:
                         "paq": "PAQ",
                         "cx": "CX"
                     }
-                    return unit_map.get(cleaned, "UN")
+                    if cleaned not in unit_map:
+                         raise ValueError(f"Unidade de medida inválida: {val}")
+                    return unit_map[cleaned]
+
+                barcode = clean_str(row.get("codigo_barras"))
+                if not barcode:
+                    raise ValueError("Código de barras é obrigatório")
+                    
+                ncm = clean_str(row.get("ncm"))
+                if not ncm:
+                    raise ValueError("NCM é obrigatório")
+
+                try:
+                    quantity = int(row.get("quantidade") or 0)
+                except (ValueError, TypeError):
+                    quantity = 0
+
+                try:
+                    min_stock = int(row.get("estoque_minimo") or 0)
+                except (ValueError, TypeError):
+                    min_stock = 0
 
                 data = ProductCreate(
                     name=name,
@@ -185,10 +205,10 @@ class ProductService:
                     category=clean_str(row.get("categoria")),
                     price=float(price),
                     cost=float(cost) if cost is not None else None,
-                    quantity=int(row.get("quantidade") or 0),
-                    min_stock=int(row.get("estoque_minimo") or 0),
-                    barcode=clean_str(row.get("codigo_barras")),
-                    ncm=clean_str(row.get("ncm")),
+                    quantity=quantity,
+                    min_stock=min_stock,
+                    barcode=barcode,
+                    ncm=ncm,
                     cest=clean_str(row.get("cest")),
                     cfop=clean_str(row.get("cfop")),
                     csosn=clean_str(row.get("csosn")),
@@ -215,15 +235,16 @@ class ProductService:
         
         # Add headers
         headers = [
-            "nome *", "preco_venda *", "unidade", "sku", "descricao", "categoria",
-            "custo", "quantidade", "estoque_minimo", "codigo_barras",
-            "ncm", "cest", "cfop", "csosn", "cst_pis", "cst_cofins"
+            "nome *", "preco_venda *", "unidade *", "quantidade *", "estoque_minimo *", "codigo_barras *", "ncm *",
+            "sku", "descricao", "categoria", "custo", 
+            "cest", "cfop", "csosn", "cst_pis", "cst_cofins"
         ]
         ws.append(headers)
         
         # Style headers (Segoe UI, Blue color theme)
         header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
         header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        required_header_fill = PatternFill(start_color="D32F2F", end_color="D32F2F", fill_type="solid")
         center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
         left_align = Alignment(horizontal="left", vertical="center")
         
@@ -239,7 +260,11 @@ class ProductService:
         for col_idx in range(1, len(headers) + 1):
             cell = ws.cell(row=1, column=col_idx)
             cell.font = header_font
-            cell.fill = header_fill
+            header_name = headers[col_idx - 1]
+            if "*" in header_name:
+                cell.fill = required_header_fill
+            else:
+                cell.fill = header_fill
             cell.alignment = center_align
             cell.border = thin_border
             
@@ -248,14 +273,14 @@ class ProductService:
             "Ração Premium Gato Adulto 1kg",
             89.90,
             "Unidade (UN)",
-            "RAC-PREM-GAT-1",
-            "Ração premium para gatos adultos sabor salmão",
-            "Ração",
-            45.00,
             20,
             5,
             "7891234567890",
             "3801.10.00",
+            "RAC-PREM-GAT-1",
+            "Ração premium para gatos adultos sabor salmão",
+            "Ração",
+            45.00,
             "01.001.00",
             "5102",
             "102",

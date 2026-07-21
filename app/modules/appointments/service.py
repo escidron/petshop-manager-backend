@@ -369,17 +369,17 @@ class AppointmentService:
 
             db.flush()
 
-            # Coleta serviços cobertos por pacote que têm funcionário vinculado
-            covered_with_employee = [
+            # Coleta TODOS os serviços cobertos por pacote
+            covered_services = [
                 (item, service)
                 for item in appointment_full.items
                 for service in item.services
                 if (item.id, service.id) in covered_pairs
-                and item_emp_maps[item.id].get(service.id)
             ]
 
-            # Cria venda R$ 0 para que o relatório de comissões tenha referência de venda
-            if covered_with_employee:
+            # Cria venda R$ 0 para que o agendamento fique como pago (is_paid=True)
+            # e para que o relatório de comissões tenha referência
+            if covered_services:
                 from app.modules.sales.models import Sale, SaleItem  # lazy: evita importação circular
                 package_sale = Sale(
                     tenant_id=tenant_id,
@@ -392,8 +392,8 @@ class AppointmentService:
                 db.add(package_sale)
                 db.flush()
 
-                for item, service in covered_with_employee:
-                    employee_id = item_emp_maps[item.id][service.id]
+                for item, service in covered_services:
+                    employee_id = item_emp_maps[item.id].get(service.id)
                     real_price = Decimal(service.price_cents) / Decimal("100")
                     sale_item = SaleItem(
                         sale_id=package_sale.id,
@@ -408,21 +408,22 @@ class AppointmentService:
                     db.add(sale_item)
                     db.flush()
 
-                    try:
-                        self.commission_service.generate_entry(
-                            db=db,
-                            tenant_id=tenant_id,
-                            sale_id=package_sale.id,
-                            sale_item_id=sale_item.id,
-                            employee_id=employee_id,
-                            service_id=service.id,
-                            item_type="service",
-                            subtotal=real_price,
-                            ref_date=appointment_full.scheduled_at.date(),
-                            appointment_item_id=item.id,
-                        )
-                    except Exception:
-                        pass
+                    if employee_id:
+                        try:
+                            self.commission_service.generate_entry(
+                                db=db,
+                                tenant_id=tenant_id,
+                                sale_id=package_sale.id,
+                                sale_item_id=sale_item.id,
+                                employee_id=employee_id,
+                                service_id=service.id,
+                                item_type="service",
+                                subtotal=real_price,
+                                ref_date=appointment_full.scheduled_at.date(),
+                                appointment_item_id=item.id,
+                            )
+                        except Exception:
+                            pass
 
             db.commit()
 
