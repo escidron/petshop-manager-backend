@@ -117,6 +117,14 @@ def set_default(
     service.set_default_payment_method(db, ctx["tenant"], pm_id)
 
 
+@router.post("/change-to-pix", status_code=204)
+def change_to_pix(
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    service.change_subscription_to_pix(db, ctx["tenant"])
+
+
 @router.delete("/payment-methods/{pm_id}", status_code=204)
 def remove_payment_method(
     pm_id: str,

@@ -193,6 +193,7 @@ def create_checkout(
                 "zip_code": "01310100",
                 "line_1": "Não informado",
             }
+
             card_resp = client.post(
                 f"/customers/{customer_id}/cards",
                 json={"token": card_token, "billing_address": addr},
@@ -571,6 +572,23 @@ def set_default_payment_method(db: Session, tenant: Tenant, pm_id: str) -> None:
                 f"/subscriptions/{sub.pagarme_subscription_id}/card",
                 json={"card_id": pm_id},
             )
+
+def change_subscription_to_pix(db: Session, tenant: Tenant) -> None:
+    sub = _repo.get_active_by_tenant(db, tenant.id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Assinatura ativa não encontrada")
+        
+    if sub.payment_method == "pix":
+        return
+
+    # Se era cartão, cancela a assinatura no Pagar.me para interromper cobranças futuras
+    if sub.pagarme_subscription_id and sub.payment_method != "pix":
+        with _pagarme_client() as client:
+            resp = client.delete(f"/subscriptions/{sub.pagarme_subscription_id}")
+            if resp.status_code not in (200, 204, 400, 404):
+                raise HTTPException(status_code=502, detail=f"Erro ao cancelar no Pagar.me: {resp.text}")
+
+    _repo.update(db, sub, {"payment_method": "pix"})
 
 
 def detach_payment_method(db: Session, tenant: Tenant, pm_id: str) -> None:
