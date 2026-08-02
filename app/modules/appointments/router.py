@@ -175,4 +175,5 @@ def appointment_action(
         tenant_id=tenant_id,
         appointment_id=appointment_id,
         action=data.action,
+        cancel_all_future=data.cancel_all_future,
     )

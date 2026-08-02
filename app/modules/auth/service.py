@@ -210,11 +210,11 @@ class AuthService:
         # Deletar OTPs anteriores
         db.query(EmailVerificationOTP).filter(EmailVerificationOTP.user_id == user_id).delete()
         
-        # Salvar novo OTP (expira em 15 minutos)
+        # Salvar novo OTP (expira em 24 horas)
         new_otp = EmailVerificationOTP(
             user_id=user_id,
             otp_code=otp_code,
-            expires_at=datetime.utcnow() + timedelta(minutes=15)
+            expires_at=datetime.utcnow() + timedelta(hours=24)
         )
         db.add(new_otp)
         db.commit()

@@ -55,8 +55,18 @@ def _ensure_pagarme_customer(
                 # Customer existe e está acessível — só atualiza o documento se fornecido
                 if doc_digits:
                     client.put(f"/customers/{tenant.pagarme_customer_id}", json={
+                        "name": user_name,
+                        "email": user_email,
+                        "type": "individual",
                         "document": doc_digits,
                         "document_type": doc_type,
+                        "phones": {
+                            "mobile_phone": {
+                                "country_code": "55",
+                                "area_code": area_code,
+                                "number": phone_number,
+                            }
+                        },
                     })
                 return tenant.pagarme_customer_id
             else:
@@ -105,8 +115,18 @@ def _ensure_pagarme_customer(
     if doc_digits:
         with _pagarme_client() as client:
             client.put(f"/customers/{customer_id}", json={
+                "name": user_name,
+                "email": user_email,
+                "type": "individual",
                 "document": doc_digits,
                 "document_type": doc_type,
+                "phones": {
+                    "mobile_phone": {
+                        "country_code": "55",
+                        "area_code": area_code,
+                        "number": phone_number,
+                    }
+                },
             })
 
     return customer_id
@@ -145,7 +165,7 @@ def create_checkout(
         db.commit()
         return {"status": "trialing", "trial_ends_at": trial_ends_at.isoformat()}
 
-    if not plan.pagarme_plan_id:
+    if payment_method != "pix" and not plan.pagarme_plan_id:
         raise HTTPException(
             status_code=422,
             detail="Este plano ainda não possui um ID configurado no Pagar.me",
@@ -173,6 +193,7 @@ def create_checkout(
                 "zip_code": "01310100",
                 "line_1": "Não informado",
             }
+
             card_resp = client.post(
                 f"/customers/{customer_id}/cards",
                 json={"token": card_token, "billing_address": addr},
@@ -333,6 +354,14 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
             raise HTTPException(status_code=502, detail=f"Erro ao gerar cobrança PIX: {resp.text}")
 
     charge = resp.json()
+    if charge.get("status") == "failed":
+        last_tx = charge.get("last_transaction", {})
+        err_msg = "Falha ao gerar cobrança PIX no Pagar.me."
+        errors = last_tx.get("gateway_response", {}).get("errors", [])
+        if errors:
+            err_msg = errors[0].get("message", err_msg)
+        raise HTTPException(status_code=400, detail=err_msg)
+
     charge_id = charge["id"]
     pix_data = charge.get("last_transaction", {})
 
@@ -543,6 +572,23 @@ def set_default_payment_method(db: Session, tenant: Tenant, pm_id: str) -> None:
                 f"/subscriptions/{sub.pagarme_subscription_id}/card",
                 json={"card_id": pm_id},
             )
+
+def change_subscription_to_pix(db: Session, tenant: Tenant) -> None:
+    sub = _repo.get_active_by_tenant(db, tenant.id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Assinatura ativa não encontrada")
+        
+    if sub.payment_method == "pix":
+        return
+
+    # Se era cartão, cancela a assinatura no Pagar.me para interromper cobranças futuras
+    if sub.pagarme_subscription_id and sub.payment_method != "pix":
+        with _pagarme_client() as client:
+            resp = client.delete(f"/subscriptions/{sub.pagarme_subscription_id}")
+            if resp.status_code not in (200, 204, 400, 404):
+                raise HTTPException(status_code=502, detail=f"Erro ao cancelar no Pagar.me: {resp.text}")
+
+    _repo.update(db, sub, {"payment_method": "pix"})
 
 
 def detach_payment_method(db: Session, tenant: Tenant, pm_id: str) -> None:

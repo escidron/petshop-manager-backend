@@ -114,6 +114,12 @@ class Appointment(Base):
         index=True,
     )
 
+    recurrence_id: Mapped[str | None] = mapped_column(
+        String(50), 
+        nullable=True, 
+        index=True
+    )
+
     notes: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant, require_active_subscription
-from .schemas import ClientPackageResponse, ClientPackageSellRequest, ClientPackageCreditResponse, ClientPackageUsageResponse
+from .schemas import ClientPackageResponse, ClientPackageSellRequest, ClientPackageCreditResponse, ClientPackageUsageResponse, ConsumeCreditRequest
 from .service import ClientPackageService
 
 router = APIRouter(
@@ -22,7 +22,10 @@ def sell_package(
     tenant_id = request.state.tenant_user.tenant_id
     svc = ClientPackageService()
     from app.modules.pets.models import Pet
-    pet = db.query(Pet).filter(Pet.id == data.pet_id, Pet.tenant_id == tenant_id).first()
+    if not data.pet_ids:
+        raise HTTPException(status_code=400, detail="Nenhum pet selecionado")
+        
+    pet = db.query(Pet).filter(Pet.id == data.pet_ids[0], Pet.tenant_id == tenant_id).first()
     if not pet:
         raise HTTPException(status_code=404, detail="Pet não encontrado")
     return svc.sell(db, tenant_id, pet.client_id, data)
@@ -74,13 +77,14 @@ def deactivate(
 @router.post("/credits/{credit_id}/consume", response_model=ClientPackageCreditResponse)
 def consume_credit(
     credit_id: int,
+    payload: ConsumeCreditRequest,
     request: Request,
     db: Session = Depends(get_db),
 ):
     tenant_id = request.state.tenant_user.tenant_id
     user_id = request.state.tenant_user.user_id
     svc = ClientPackageService()
-    return svc.consume_credit(db, tenant_id, credit_id, user_id=user_id)
+    return svc.consume_credit(db, tenant_id, credit_id, user_id=user_id, notes=payload.notes)
 
 
 @router.post("/credits/{credit_id}/revert", response_model=ClientPackageCreditResponse)

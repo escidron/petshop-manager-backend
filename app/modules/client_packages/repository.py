@@ -2,6 +2,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 from .models import ClientPackage, ClientPackageCredit, ClientPackageUsage
 from datetime import datetime
+from app.modules.pets.models import Pet
+from app.modules.client_packages.models import ClientPackagePet
 
 class ClientPackageRepository:
     def create(
@@ -9,7 +11,7 @@ class ClientPackageRepository:
         db: Session,
         tenant_id: int,
         client_id: int,
-        pet_id: int,
+        pet_ids: list[int],
         package_id: int,
         package_name: str,
         credits_data: list[dict],
@@ -19,7 +21,6 @@ class ClientPackageRepository:
         client_package = ClientPackage(
             tenant_id=tenant_id,
             client_id=client_id,
-            pet_id=pet_id,
             package_id=package_id,
             package_name=package_name,
             expires_at=expires_at,
@@ -27,6 +28,9 @@ class ClientPackageRepository:
         )
         db.add(client_package)
         db.flush()
+
+        for pet_id in pet_ids:
+            db.add(ClientPackagePet(client_package_id=client_package.id, pet_id=pet_id))
 
         for credit in credits_data:
             db.add(
@@ -84,8 +88,7 @@ class ClientPackageRepository:
             )
             .filter(
                 ClientPackage.tenant_id == tenant_id,
-                ClientPackage.pet_id == pet_id,
-                ClientPackage.is_active == True,
+                ClientPackage.pets.any(Pet.id == pet_id),
             )
             .order_by(ClientPackage.created_at)
             .all()
@@ -126,7 +129,7 @@ class ClientPackageRepository:
                 selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
                 selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user),
                 selectinload(ClientPackage.client),
-                selectinload(ClientPackage.pet),
+                selectinload(ClientPackage.pets),
             )
             .filter(
                 ClientPackage.tenant_id == tenant_id,
@@ -145,7 +148,7 @@ class ClientPackageRepository:
             db.query(ClientPackageCredit)
             .join(ClientPackage)
             .filter(
-                ClientPackage.pet_id == pet_id,
+                ClientPackage.pets.any(Pet.id == pet_id),
                 ClientPackage.tenant_id == tenant_id,
                 ClientPackage.is_active == True,
                 ClientPackageCredit.service_id == service_id,
@@ -157,7 +160,7 @@ class ClientPackageRepository:
         )
 
     def consume_credit(
-        self, db: Session, credit: ClientPackageCredit
+        self, db: Session, credit: ClientPackageCredit, notes: str | None = None
     ) -> None:
         credit.used_qty += 1
         db.add(credit)
@@ -169,7 +172,7 @@ class ClientPackageRepository:
             client_package_id=credit.client_package_id,
             credit_id=credit.id,
             change_qty=1,
-            notes="Consumido via agendamento",
+            notes=notes or "Consumido via agendamento",
         )
         db.add(usage)
 

@@ -20,18 +20,18 @@ class ClientPackageService:
         data: ClientPackageSellRequest,
         is_paid: bool = False,
     ) -> ClientPackageResponse:
-        # Valida pet
-        pet = (
+        # Valida pets
+        pets = (
             db.query(Pet)
             .filter(
-                Pet.id == data.pet_id,
+                Pet.id.in_(data.pet_ids),
                 Pet.client_id == client_id,
                 Pet.tenant_id == tenant_id,
             )
-            .first()
+            .all()
         )
-        if not pet:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pet não encontrado")
+        if not pets or len(pets) != len(data.pet_ids):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Um ou mais pets não encontrados")
 
         # Valida pacote
         package = (
@@ -74,7 +74,7 @@ class ClientPackageService:
             db=db,
             tenant_id=tenant_id,
             client_id=client_id,
-            pet_id=data.pet_id,
+            pet_ids=data.pet_ids,
             package_id=package.id,
             package_name=package.name,
             credits_data=credits_data,
@@ -249,7 +249,7 @@ class ClientPackageService:
                 detail="Novo pet não encontrado ou pertence a outro cliente/tutor",
             )
 
-        client_pkg.pet_id = new_pet_id
+        client_pkg.pets = [new_pet]
         db.add(client_pkg)
         db.commit()
         db.refresh(client_pkg)
