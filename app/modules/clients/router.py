@@ -1,5 +1,6 @@
+import asyncio
 import io
-from fastapi import APIRouter, Depends, Request, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, File, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,7 @@ from .schemas import (
     ClientResponse,
 )
 from .service import ClientService
+from .import_jobs import create_job, get_job
 
 router = APIRouter(prefix="/clients", tags=["Clients"], dependencies=[Depends(get_current_tenant)])
 
@@ -84,12 +86,44 @@ def get_import_template():
 
 @router.post("/import", dependencies=[Depends(require_active_subscription)])
 async def import_clients(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     request: Request = None,
     db: Session = Depends(get_db),
 ):
+    """
+    Starts the bulk import as a background task and immediately returns a job_id.
+    The client should poll GET /import/status/{job_id} to track progress.
+    """
     service = ClientService()
     tenant_id = request.state.tenant_user.tenant_id
-    content = await file.read()
-    return await service.import_clients_from_excel(db, tenant_id, content)
+    file_content = await file.read()
 
+    job_id = create_job(tenant_id=tenant_id, job_type="clients")
+
+
+    def _run_in_background():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(
+                service.import_clients_from_excel_background(job_id, tenant_id, file_content)
+            )
+        finally:
+            loop.close()
+
+    background_tasks.add_task(_run_in_background)
+
+    return {"job_id": job_id}
+
+
+@router.get("/import/status/{job_id}")
+def get_import_status(job_id: str):
+    """
+    Returns the current status/progress of a bulk import job.
+    """
+    job = get_job(job_id)
+    if not job:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job não encontrado")
+    return job

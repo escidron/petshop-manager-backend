@@ -1,7 +1,12 @@
 import os
+import threading
+import logging
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app.services.email.resend_provider import ResendProvider
 from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
+
 
 class EmailService:
     def __init__(self):
@@ -17,12 +22,23 @@ class EmailService:
         # Pass app_name by default to all templates
         return template.render(app_name=settings.APP_NAME, **kwargs)
 
+    def _send_async(self, to: str, subject: str, html: str, text: str = None):
+        """Executes email dispatch asynchronously in a background thread to prevent HTTP response delays."""
+        def _target():
+            try:
+                self.provider.send_email(to=to, subject=subject, html=html, text=text)
+            except Exception as e:
+                logger.error(f"Error sending email in background to {to}: {e}")
+
+        thread = threading.Thread(target=_target, daemon=True)
+        thread.start()
+
     def send_welcome_email(self, to_email: str, user_name: str):
         subject = f"Bem-vindo ao {settings.APP_NAME}! 🐾"
         html_content = self._render_template("welcome.html", user_name=user_name)
         text_content = f"Olá {user_name}, bem-vindo ao {settings.APP_NAME}!"
-        
-        return self.provider.send_email(
+
+        self._send_async(
             to=to_email,
             subject=subject,
             html=html_content,
@@ -37,8 +53,8 @@ class EmailService:
             otp_code=otp_code
         )
         text_content = f"Olá {user_name}, seu código de recuperação é: {otp_code}. Ele expira em 15 minutos."
-        
-        return self.provider.send_email(
+
+        self._send_async(
             to=to_email,
             subject=subject,
             html=html_content,
@@ -54,11 +70,9 @@ class EmailService:
         )
         text_content = f"Olá {user_name}, seu código de verificação é: {otp_code}. Ele expira em 15 minutos."
 
-        return self.provider.send_email(
+        self._send_async(
             to=to_email,
             subject=subject,
             html=html_content,
             text=text_content
         )
-
-

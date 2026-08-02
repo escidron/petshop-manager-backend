@@ -232,24 +232,24 @@ class ServiceService:
         wb.save(out)
         return out.getvalue()
 
-    async def import_services_from_excel(self, db: Session, tenant_id: int, file_content: bytes):
+    async def import_services_from_excel(self, db: Session, tenant_id: int, file_content: bytes, progress_callback=None):
         import openpyxl
         import io
-        
+        from app.modules.tenant_services.models import Service
+
         if not file_content:
-            return {"imported": 0, "errors": ["Arquivo de planilha vazio"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": ["Arquivo de planilha vazio"]}
 
         try:
             wb = openpyxl.load_workbook(io.BytesIO(file_content), read_only=True, data_only=True)
             ws = wb.active
         except Exception as e:
-            return {"imported": 0, "errors": [f"Erro ao ler arquivo Excel: {str(e)}"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": [f"Erro ao ler arquivo Excel: {str(e)}"]}
 
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
-            return {"imported": 0, "errors": ["A planilha está vazia"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": ["A planilha está vazia"]}
 
-        # Clean headers
         raw_headers = rows[0]
         headers = []
         for h in raw_headers:
@@ -262,11 +262,33 @@ class ServiceService:
         missing_cols = [col for col in required_cols if col not in headers]
         if missing_cols:
             return {
-                "imported": 0,
+                "created": 0, "updated": 0, "total": 0,
                 "errors": [f"Colunas obrigatórias ausentes na planilha: {', '.join(missing_cols)}"]
             }
 
-        imported_count = 0
+        non_empty_rows = [
+            rv for rv in rows[1:]
+            if any(v is not None and str(v).strip() != "" for v in rv)
+        ]
+        total_rows = len(non_empty_rows)
+
+        if progress_callback and total_rows > 0:
+            progress_callback(0, total_rows, 0, 0)
+
+        # Pre-fetch existing services (1 query)
+        existing_services_q = db.query(Service).filter(Service.tenant_id == tenant_id).all()
+        existing_services: dict[tuple, Service] = {
+            (
+                s.name.lower().strip(),
+                (s.species or "").lower().strip(),
+                (s.size or "").upper().strip(),
+                (s.coat_type or "").lower().strip()
+            ): s for s in existing_services_q
+        }
+
+        created_count = 0
+        updated_count = 0
+        processed_count = 0
         errors = []
 
         def parse_money(val):
@@ -317,45 +339,35 @@ class ServiceService:
                 return None
             cleaned = str(val).strip().lower()
             coat_map = {
-                "curta": "short",
-                "média": "medium",
-                "media": "medium",
-                "longa": "long",
-                "dupla": "double",
-                "sem pelo": "hairless"
+                "curta": "short", "média": "medium", "media": "medium",
+                "longa": "long", "dupla": "double", "sem pelo": "hairless"
             }
             return coat_map.get(cleaned, None)
 
-        for row_idx, row_values in enumerate(rows[1:], start=2):
+        CHUNK_SIZE = 200
+        new_services: list[Service] = []
+
+        def _flush_chunk():
+            nonlocal new_services
+            if new_services:
+                db.add_all(new_services)
+                db.flush()
+                new_services = []
+            db.commit()
+
+        for row_idx, row_values in enumerate(non_empty_rows, start=2):
             try:
-                row = {}
-                has_any_value = False
-                for h, val in zip(headers, row_values):
-                    if h:
-                        row[h] = val
-                        if val is not None and str(val).strip() != "":
-                            has_any_value = True
-                
-                if not has_any_value:
-                    continue
+                row = {h: val for h, val in zip(headers, row_values) if h}
 
                 servico = clean_str(row.get("servico"))
                 if not servico:
                     raise ValueError("Nome do serviço é obrigatório")
 
                 especie_val = clean_str(row.get("especie"))
-                especie = None
-                if especie_val:
-                    especie = parse_species(especie_val)
-                    if not especie:
-                        raise ValueError("Espécie inválida (deve ser Canino ou Felino)")
+                especie = parse_species(especie_val) if especie_val else None
 
                 porte_val = clean_str(row.get("porte"))
-                porte = None
-                if porte_val:
-                    porte = parse_size(porte_val)
-                    if not porte:
-                        raise ValueError("Porte inválido (deve ser PP, P, M, G ou GG)")
+                porte = parse_size(porte_val) if porte_val else None
 
                 coat_val = clean_str(row.get("pelagem"))
                 coat_type = parse_coat_type(coat_val)
@@ -375,19 +387,92 @@ class ServiceService:
 
                 desc = clean_str(row.get("descricao"))
 
-                data = ServiceCreate(
-                    name=servico,
-                    description=desc,
-                    species=especie,
-                    size=porte,
-                    coat_type=coat_type,
-                    price_cents=price_cents,
-                    duration_minutes=duration_minutes,
-                    is_active=True
+                key = (
+                    servico.lower().strip(),
+                    (especie or "").lower().strip(),
+                    (porte or "").upper().strip(),
+                    (coat_type or "").lower().strip()
                 )
-                self.create(db, tenant_id, data)
-                imported_count += 1
+
+                service_obj = existing_services.get(key)
+                if not service_obj:
+                    service_obj = Service(
+                        tenant_id=tenant_id,
+                        name=servico,
+                        description=desc,
+                        species=especie,
+                        size=porte,
+                        coat_type=coat_type,
+                        price_cents=price_cents,
+                        duration_minutes=duration_minutes,
+                        is_active=True
+                    )
+                    new_services.append(service_obj)
+                    existing_services[key] = service_obj
+                    created_count += 1
+                else:
+                    _changed = False
+                    for attr, val in [
+                        ("price_cents", price_cents),
+                        ("duration_minutes", duration_minutes),
+                        ("description", desc),
+                    ]:
+                        if val is not None and getattr(service_obj, attr, None) != val:
+                            setattr(service_obj, attr, val)
+                            _changed = True
+                    if _changed:
+                        updated_count += 1
+
+                processed_count += 1
+
             except Exception as e:
                 errors.append(f"Linha {row_idx}: {str(e)}")
 
-        return {"imported": imported_count, "errors": errors}
+            if (row_idx - 1) % CHUNK_SIZE == 0:
+                _flush_chunk()
+                if progress_callback and total_rows > 0:
+                    pct = min(int((row_idx - 1) / total_rows * 100), 99)
+                    progress_callback(row_idx - 1, total_rows, processed_count, pct)
+
+        _flush_chunk()
+
+        return {
+            "created": created_count,
+            "updated": updated_count,
+            "total": total_rows,
+            "errors": errors,
+        }
+
+    async def import_services_from_excel_background(
+        self,
+        job_id: str,
+        tenant_id: int,
+        file_content: bytes,
+    ) -> None:
+        from app.modules.clients.import_jobs import update_job
+        from app.config.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            update_job(job_id, status="running", progress=0)
+
+            def _on_progress(processed: int, total: int, count: int, pct: int):
+                update_job(job_id, progress=pct, imported=count, total=total)
+
+            result = await self.import_services_from_excel(
+                db, tenant_id, file_content,
+                progress_callback=_on_progress,
+            )
+            update_job(
+                job_id,
+                status="done",
+                progress=100,
+                created=result["created"],
+                updated=result["updated"],
+                total=result.get("total", 0),
+                errors=result["errors"],
+            )
+        except Exception as e:
+            update_job(job_id, status="error", errors=[str(e)])
+        finally:
+            db.close()

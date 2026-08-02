@@ -50,27 +50,28 @@ class ProductService:
         self.inventory_repository.create_log(
             db, tenant_id, product_id, quantity_change, change_type, notes
         )
-        db.commit()
-        db.refresh(product)
-        return product    async def import_products_from_excel(self, db: Session, tenant_id: int, file_content: bytes):
+        return product
+
+    async def import_products_from_excel(self, db: Session, tenant_id: int, file_content: bytes, progress_callback=None):
+
         import openpyxl
-        
+        import io
+        from app.modules.products.models import Product
+
         if not file_content:
-            return {"imported": 0, "errors": ["Arquivo de planilha vazio"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": ["Arquivo de planilha vazio"]}
 
         try:
             wb = openpyxl.load_workbook(io.BytesIO(file_content), read_only=True, data_only=True)
             ws = wb.active
         except Exception as e:
-            return {"imported": 0, "errors": [f"Erro ao ler arquivo Excel: {str(e)}"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": [f"Erro ao ler arquivo Excel: {str(e)}"]}
 
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
-            return {"imported": 0, "errors": ["A planilha está vazia"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": ["A planilha está vazia"]}
 
-        # Headers are in the first row
         raw_headers = rows[0]
-        # Clean headers
         headers = []
         for h in raw_headers:
             if h is None:
@@ -82,26 +83,37 @@ class ProductService:
         missing_cols = [col for col in required_cols if col not in headers]
         if missing_cols:
             return {
-                "imported": 0,
+                "created": 0, "updated": 0, "total": 0,
                 "errors": [f"Colunas obrigatórias ausentes na planilha: {', '.join(missing_cols)}"]
             }
 
-        imported_count = 0
+        non_empty_rows = [
+            rv for rv in rows[1:]
+            if any(v is not None and str(v).strip() != "" for v in rv)
+        ]
+        total_rows = len(non_empty_rows)
+
+        if progress_callback and total_rows > 0:
+            progress_callback(0, total_rows, 0, 0)
+
+        # Pre-fetch existing products (1 query)
+        existing_prods = db.query(Product).filter(Product.tenant_id == tenant_id).all()
+        existing_by_barcode: dict[str, Product] = {p.barcode: p for p in existing_prods if p.barcode}
+        existing_by_sku: dict[str, Product] = {p.sku: p for p in existing_prods if p.sku}
+        existing_by_name: dict[str, Product] = {p.name.lower().strip(): p for p in existing_prods if p.name}
+
+        created_count = 0
+        updated_count = 0
+        processed_count = 0
         errors = []
 
-        # Helper to parse prices/costs robustly
         def parse_money(val):
             if val is None or str(val).strip() == "":
                 return None
-            
-            # If Excel has already parsed it as float or int, multiply by 100
             if isinstance(val, (int, float)):
                 return int(round(val * 100))
-                
             try:
-                # Remove R$, whitespace, and dots used as thousand separators
                 cleaned = str(val).replace("R$", "").strip()
-                
                 if "," in cleaned and "." in cleaned:
                     if cleaned.rfind(",") > cleaned.rfind("."):
                         cleaned = cleaned.replace(".", "").replace(",", ".")
@@ -109,84 +121,60 @@ class ProductService:
                         cleaned = cleaned.replace(",", "")
                 elif "," in cleaned:
                     cleaned = cleaned.replace(",", ".")
-                
                 return int(round(float(cleaned) * 100))
             except (ValueError, TypeError):
                 return None
 
-        # Process each row, skipping header (row_idx start=2 for standard 1-based index representation)
-        for row_idx, row_values in enumerate(rows[1:], start=2):
-            try:
-                # Build dict mapping cleaned header to cell value
-                row = {}
-                has_any_value = False
-                for h, val in zip(headers, row_values):
-                    if h: # Ignore empty/unnamed columns
-                        row[h] = val
-                        if val is not None and str(val).strip() != "":
-                            has_any_value = True
-                
-                if not has_any_value:
-                    continue
+        def clean_str(val):
+            if val is None or str(val).strip() == "":
+                return None
+            if isinstance(val, float) and val.is_integer():
+                return str(int(val))
+            return str(val).strip()
 
-                # Basic validation: Name is strictly required
-                name = row.get("nome")
-                if name is None or str(name).strip() == "":
+        def parse_unit(val):
+            if val is None or str(val).strip() == "":
+                return "UN"
+            cleaned = str(val).strip().lower()
+            unit_map = {
+                "unidade (un)": "UN", "grama (g)": "g", "quilograma (kg)": "kg",
+                "mililitro (ml)": "ml", "litro (l)": "L", "pacote (paq)": "PAQ",
+                "caixa (cx)": "CX", "un": "UN", "g": "g", "kg": "kg",
+                "ml": "ml", "l": "L", "paq": "PAQ", "cx": "CX"
+            }
+            return unit_map.get(cleaned, "UN")
+
+        CHUNK_SIZE = 200
+        new_products: list[Product] = []
+
+        def _flush_chunk():
+            nonlocal new_products
+            if new_products:
+                db.add_all(new_products)
+                db.flush()
+                new_products = []
+            db.commit()
+
+        for row_idx, row_values in enumerate(non_empty_rows, start=2):
+            try:
+                row = {h: val for h, val in zip(headers, row_values) if h}
+
+                name = clean_str(row.get("nome"))
+                if not name:
                     raise ValueError("Nome do produto é obrigatório")
-                name = str(name).strip()
-                
-                # Price is strictly required
+
                 raw_price = row.get("preco_venda")
                 price = parse_money(raw_price)
                 if price is None:
                     raise ValueError("Preço de venda é obrigatório e deve ser um valor válido")
-                
-                # Cost is optional
-                raw_cost = row.get("custo")
-                cost = parse_money(raw_cost) if raw_cost is not None else None
 
-                # Clean optional barcode, ncm, etc to string
-                def clean_str(val):
-                    if val is None or str(val).strip() == "":
-                        return None
-                    # If Excel parses standard numeric SKU/Barcode/NCM as float/int, avoid trailing .0
-                    if isinstance(val, float) and val.is_integer():
-                        return str(int(val))
-                    return str(val).strip()
-
-                # Parse unit of measure mapping descriptive names back to code
-                def parse_unit(val):
-                    if val is None or str(val).strip() == "":
-                        raise ValueError("Unidade de medida é obrigatória")
-                    cleaned = str(val).strip().lower()
-                    unit_map = {
-                        "unidade (un)": "UN",
-                        "grama (g)": "g",
-                        "quilograma (kg)": "kg",
-                        "mililitro (ml)": "ml",
-                        "litro (l)": "L",
-                        "pacote (paq)": "PAQ",
-                        "caixa (cx)": "CX",
-                        # Direct abbreviations fallback
-                        "un": "UN",
-                        "g": "g",
-                        "kg": "kg",
-                        "ml": "ml",
-                        "l": "L",
-                        "paq": "PAQ",
-                        "cx": "CX"
-                    }
-                    if cleaned not in unit_map:
-                         raise ValueError(f"Unidade de medida inválida: {val}")
-                    return unit_map[cleaned]
-
+                cost = parse_money(row.get("custo"))
                 barcode = clean_str(row.get("codigo_barras"))
-                if not barcode:
-                    raise ValueError("Código de barras é obrigatório")
-                    
+                sku = clean_str(row.get("sku"))
                 ncm = clean_str(row.get("ncm"))
-                if not ncm:
-                    raise ValueError("NCM é obrigatório")
+                description = clean_str(row.get("descricao"))
+                category = clean_str(row.get("categoria"))
+                unit = parse_unit(row.get("unidade"))
 
                 try:
                     quantity = int(row.get("quantidade") or 0)
@@ -198,30 +186,110 @@ class ProductService:
                 except (ValueError, TypeError):
                     min_stock = 0
 
-                data = ProductCreate(
-                    name=name,
-                    sku=clean_str(row.get("sku")),
-                    description=clean_str(row.get("descricao")),
-                    category=clean_str(row.get("categoria")),
-                    price=float(price),
-                    cost=float(cost) if cost is not None else None,
-                    quantity=quantity,
-                    min_stock=min_stock,
-                    barcode=barcode,
-                    ncm=ncm,
-                    cest=clean_str(row.get("cest")),
-                    cfop=clean_str(row.get("cfop")),
-                    csosn=clean_str(row.get("csosn")),
-                    cst_pis=clean_str(row.get("cst_pis")),
-                    cst_cofins=clean_str(row.get("cst_cofins")),
-                    unit=parse_unit(row.get("unidade")),
-                )
-                self.repository.create(db, tenant_id, data)
-                imported_count += 1
+                # Match existing product
+                product = None
+                if barcode and barcode in existing_by_barcode:
+                    product = existing_by_barcode[barcode]
+                elif sku and sku in existing_by_sku:
+                    product = existing_by_sku[sku]
+                elif name.lower() in existing_by_name:
+                    product = existing_by_name[name.lower()]
+
+                if not product:
+                    product = Product(
+                        tenant_id=tenant_id,
+                        name=name,
+                        price=price,
+                        cost=cost,
+                        barcode=barcode,
+                        sku=sku,
+                        ncm=ncm,
+                        description=description,
+                        category=category,
+                        unit=unit,
+                        quantity=quantity,
+                        min_stock=min_stock,
+                        cest=clean_str(row.get("cest")),
+                        cfop=clean_str(row.get("cfop")),
+                        csosn=clean_str(row.get("csosn")),
+                        cst_pis=clean_str(row.get("cst_pis")),
+                        cst_cofins=clean_str(row.get("cst_cofins")),
+                        is_active=True,
+                    )
+                    new_products.append(product)
+                    if barcode:
+                        existing_by_barcode[barcode] = product
+                    if sku:
+                        existing_by_sku[sku] = product
+                    existing_by_name[name.lower()] = product
+                    created_count += 1
+                else:
+                    _changed = False
+                    for attr, val in [
+                        ("price", price), ("cost", cost), ("sku", sku),
+                        ("ncm", ncm), ("description", description),
+                        ("category", category), ("unit", unit),
+                        ("quantity", quantity), ("min_stock", min_stock),
+                    ]:
+                        if val is not None and getattr(product, attr, None) != val:
+                            setattr(product, attr, val)
+                            _changed = True
+                    if _changed:
+                        updated_count += 1
+
+                processed_count += 1
+
             except Exception as e:
                 errors.append(f"Linha {row_idx}: {str(e)}")
 
-        return {"imported": imported_count, "errors": errors}
+            if (row_idx - 1) % CHUNK_SIZE == 0:
+                _flush_chunk()
+                if progress_callback and total_rows > 0:
+                    pct = min(int((row_idx - 1) / total_rows * 100), 99)
+                    progress_callback(row_idx - 1, total_rows, processed_count, pct)
+
+        _flush_chunk()
+
+        return {
+            "created": created_count,
+            "updated": updated_count,
+            "total": total_rows,
+            "errors": errors,
+        }
+
+    async def import_products_from_excel_background(
+        self,
+        job_id: str,
+        tenant_id: int,
+        file_content: bytes,
+    ) -> None:
+        from app.modules.clients.import_jobs import update_job
+        from app.config.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            update_job(job_id, status="running", progress=0)
+
+            def _on_progress(processed: int, total: int, count: int, pct: int):
+                update_job(job_id, progress=pct, imported=count, total=total)
+
+            result = await self.import_products_from_excel(
+                db, tenant_id, file_content,
+                progress_callback=_on_progress,
+            )
+            update_job(
+                job_id,
+                status="done",
+                progress=100,
+                created=result["created"],
+                updated=result["updated"],
+                total=result.get("total", 0),
+                errors=result["errors"],
+            )
+        except Exception as e:
+            update_job(job_id, status="error", errors=[str(e)])
+        finally:
+            db.close()
 
     def generate_import_template_excel(self) -> bytes:
         import openpyxl
