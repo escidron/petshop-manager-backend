@@ -256,15 +256,23 @@ class ServiceService:
             if h is None:
                 headers.append("")
             else:
-                headers.append(str(h).strip().lower().replace("*", "").strip())
+                h_str = str(h).strip().lower().replace("*", "").strip()
+                if h_str in ("nome", "serviço", "nome_servico", "nome_do_servico"):
+                    h_str = "servico"
+                elif h_str in ("preço", "valor", "preco_venda"):
+                    h_str = "preco"
+                elif h_str in ("duração", "duracao", "tempo"):
+                    h_str = "duracao_minutos"
+                headers.append(h_str)
 
-        required_cols = ["servico", "especie", "porte", "preco", "duracao_minutos"]
+        required_cols = ["servico", "preco"]
         missing_cols = [col for col in required_cols if col not in headers]
         if missing_cols:
             return {
                 "created": 0, "updated": 0, "total": 0,
                 "errors": [f"Colunas obrigatórias ausentes na planilha: {', '.join(missing_cols)}"]
             }
+
 
         non_empty_rows = [
             rv for rv in rows[1:]
@@ -329,6 +337,22 @@ class ServiceService:
         def parse_size(val):
             if val is None or str(val).strip() == "":
                 return None
+            v = str(val).strip().lower()
+            if v in ["pp", "mini", "micro"]:
+                return "PP"
+            elif v in ["p", "pequeno", "peq"]:
+                return "P"
+            elif v in ["m", "medio", "médio"]:
+                return "M"
+            elif v in ["g", "grande"]:
+                return "G"
+            elif v in ["gg", "gigante", "extra grande"]:
+                return "GG"
+            if "(pp)" in v or "mini" in v: return "PP"
+            if "(p)" in v or "pequeno" in v: return "P"
+            if "(m)" in v or "médio" in v or "medio" in v: return "M"
+            if "(g)" in v or "grande" in v: return "G"
+            if "(gg)" in v or "gigante" in v: return "GG"
             cleaned = str(val).strip().upper()
             if cleaned in ["PP", "P", "M", "G", "GG"]:
                 return cleaned
@@ -475,4 +499,50 @@ class ServiceService:
         except Exception as e:
             update_job(job_id, status="error", errors=[str(e)])
         finally:
-            db.close()
+            db.close()
+
+    def export_to_excel(self, db: Session, tenant_id: int) -> bytes:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        from io import BytesIO
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Serviços"
+        
+        headers = [
+            "ID", "Nome do Serviço", "Espécie", "Porte", "Pelagem", "Duração (min)", "Preço", "Descrição", "Ativo"
+        ]
+        ws.append(headers)
+        
+        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+
+        services = self.repo.list(db, tenant_id)
+        
+        coat_map = {
+            "short": "Curta",
+            "medium": "Média",
+            "long": "Longa",
+            "hairless": "Sem Pelo"
+        }
+        for s in services:
+            species_val = s.species.value if hasattr(s.species, "value") else (s.species or "Todos")
+            size_val = s.size.value if hasattr(s.size, "value") else (s.size or "Todos")
+            coat_val = coat_map.get(s.coat_type, s.coat_type) if s.coat_type else "Todos"
+            
+            ws.append([
+                s.id, s.name, species_val, size_val, coat_val,
+                s.duration_minutes or "", float(s.price_cents) / 100 if s.price_cents else 0.0,
+                s.description or "", "Sim" if s.is_active else "Não"
+            ])
+                
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()
+

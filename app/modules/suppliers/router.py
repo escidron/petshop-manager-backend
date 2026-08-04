@@ -1,13 +1,27 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from typing import List
+from fastapi.responses import StreamingResponse
+import io
 
 from app.config.database import get_db
-from app.modules.auth.dependencies import get_current_tenant, require_active_subscription
+from app.modules.auth.dependencies import get_current_tenant, require_active_subscription, require_owner
 from app.modules.suppliers import schemas, service
 
 router = APIRouter(prefix="/suppliers", tags=["Suppliers"])
 
+@router.get("/export", dependencies=[Depends(require_owner)])
+def export_suppliers(
+    db: Session = Depends(get_db),
+    auth_data: dict = Depends(get_current_tenant),
+):
+    tenant_id = auth_data["tenant"].id
+    excel_data = service.export_to_excel(db, tenant_id)
+    return StreamingResponse(
+        io.BytesIO(excel_data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="backup_fornecedores.xlsx"'}
+    )
 
 @router.get("/", response_model=List[schemas.SupplierResponse])
 def get_suppliers(

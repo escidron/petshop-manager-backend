@@ -13,7 +13,24 @@ from .schemas import (
 )
 from .service import EmployeeService
 
+from fastapi.responses import StreamingResponse
+import io
+
 router = APIRouter(prefix="/employees", tags=["Employees"], dependencies=[Depends(get_current_tenant)])
+
+@router.get("/export")
+def export_employees(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    service = EmployeeService()
+    tenant_id = request.state.tenant_user.tenant_id
+    excel_data = service.export_to_excel(db, tenant_id)
+    return StreamingResponse(
+        io.BytesIO(excel_data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="backup_funcionarios.xlsx"'}
+    )
 public_router = APIRouter(prefix="/public/employees", tags=["Public Employees"])
 
 

@@ -413,3 +413,39 @@ class ProductService:
         wb.save(out)
         return out.getvalue()
 
+    def export_to_excel(self, db: Session, tenant_id: int) -> bytes:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        from io import BytesIO
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Produtos"
+        
+        headers = [
+            "ID", "Nome", "Código de Barras", "NCM", "SKU", "Categoria", "Unidade",
+            "Preço Venda", "Preço Custo", "Estoque Atual", "Estoque Mínimo", "CEST", "CFOP", "CSOSN", "CST PIS", "CST COFINS", "Descrição", "Ativo"
+        ]
+        ws.append(headers)
+        
+        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+
+        products = self.repository.list(db, tenant_id)
+        
+        for p in products:
+            ws.append([
+                p.id, p.name, p.barcode or "", p.ncm or "", p.sku or "", p.category or "", p.unit or "",
+                float(p.price), float(p.cost) if p.cost is not None else "", p.quantity, p.min_stock, 
+                p.cest or "", p.cfop or "", p.csosn or "", p.cst_pis or "", p.cst_cofins or "", p.description or "",
+                "Sim" if p.is_active else "Não"
+            ])
+                
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()

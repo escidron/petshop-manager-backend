@@ -372,6 +372,23 @@ class ClientService:
                 return False
             return None
 
+        def parse_size(val):
+            if not val:
+                return None
+            cleaned = str(val).strip().lower()
+            if "mini" in cleaned or "pp" in cleaned or "micro" in cleaned:
+                return "PP"
+            elif "pequeno" in cleaned or " p " in f" {cleaned} " or cleaned == "p":
+                return "P"
+            elif "médio" in cleaned or "medio" in cleaned or " m " in f" {cleaned} " or cleaned == "m":
+                return "M"
+            elif "grande" in cleaned or " g " in f" {cleaned} " or cleaned == "g":
+                return "G"
+            elif "gigante" in cleaned or "gg" in cleaned or "extra" in cleaned:
+                return "GG"
+            return str(val).strip()[:5]
+
+
         # Filter completely empty rows early
         non_empty_rows = [
             rv for rv in rows[1:]
@@ -580,8 +597,9 @@ class ClientService:
                 pet_coat_type = parse_coat_type(row.get("pet_tipo_pelagem"))
                 pet_coat_color = clean_str(row.get("pet_cor_pelagem"))
                 pet_gender = parse_gender(clean_str(row.get("pet_genero")))
-                pet_size = clean_str(row.get("pet_porte"))
+                pet_size = parse_size(row.get("pet_porte"))
                 pet_neutered = parse_neutered(clean_str(row.get("pet_castrado")))
+
                 pet_birth = parse_date(row.get("pet_data_nascimento"))
                 pet_age_str = clean_num(row.get("pet_idade_aproximada"))
                 pet_age = int(pet_age_str) if pet_age_str else None
@@ -698,3 +716,98 @@ class ClientService:
             update_job(job_id, status="error", errors=[str(e)])
         finally:
             db.close()
+
+    def export_to_excel(self, db: Session, tenant_id: int) -> bytes:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        from io import BytesIO
+
+        wb = openpyxl.Workbook()
+        
+        # Sheet 1: Clientes
+        ws_clients = wb.active
+        ws_clients.title = "Clientes"
+        
+        client_headers = [
+            "ID", "Nome", "CPF/CNPJ", "Email", "Telefone", "Telefone 2", 
+            "Data Nascimento", "CEP", "Logradouro", "Número", "Complemento", "Bairro", "Cidade", "Estado", "Ativo"
+        ]
+        ws_clients.append(client_headers)
+        
+        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+        client_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        
+        for col_idx in range(1, len(client_headers) + 1):
+            cell = ws_clients.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = client_fill
+
+        clients = self.repository.list(db, tenant_id)
+        
+        for c in clients:
+            ws_clients.append([
+                c.id, c.name, c.document or "", c.email or "", c.phone or "", c.phone_secondary or "",
+                c.birth_date.strftime("%d/%m/%Y") if c.birth_date else "",
+                c.cep or "", c.street or "", c.number or "", c.complement or "", c.neighborhood or "", c.city or "", c.state or "",
+                "Sim" if c.is_active else "Não"
+            ])
+            
+        # Sheet 2: Pets
+        ws_pets = wb.create_sheet("Pets")
+        pet_headers = [
+            "ID", "ID Cliente", "Nome Cliente", "Nome Pet", "Espécie", "Raça", "Porte", 
+            "Tipo Pelagem", "Cor", "Gênero", "Castrado", "Data Nascimento", "Idade", "Unidade Idade", "Ativo", "Falecido", "Observações"
+        ]
+        ws_pets.append(pet_headers)
+        
+        pet_fill = PatternFill(start_color="00796B", end_color="00796B", fill_type="solid")
+        for col_idx in range(1, len(pet_headers) + 1):
+            cell = ws_pets.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = pet_fill
+            
+        coat_map = {
+            "short": "Curta",
+            "medium": "Média",
+            "long": "Longa",
+            "hairless": "Sem Pelo",
+            "double": "Dupla",
+            "curly": "Encaracolada"
+        }
+        
+        gender_map = {
+            "male": "Macho",
+            "female": "Fêmea",
+            "unknown": "Desconhecido"
+        }
+        
+        age_unit_map = {
+            "months": "Meses",
+            "years": "Anos"
+        }
+
+        species_map = {
+            "dog": "Canino",
+            "cat": "Felino",
+            "bird": "Ave",
+            "other": "Outros"
+        }
+            
+        for c in clients:
+            for p in c.pets:
+                coat_val = coat_map.get(p.coat_type, p.coat_type) if p.coat_type else ""
+                gender_val = gender_map.get(p.gender, p.gender) if p.gender else ""
+                age_unit_val = age_unit_map.get(p.age_unit, p.age_unit) if p.age_unit else ""
+                species_val = species_map.get(p.species, p.species) if p.species else ""
+                
+                ws_pets.append([
+                    p.id, c.id, c.name, p.name, species_val, p.breed or "", p.size or "",
+                    coat_val, p.coat_color or "", gender_val, "Sim" if p.is_neutered else "Não",
+                    p.birth_date.strftime("%d/%m/%Y") if p.birth_date else "",
+                    p.age or "", age_unit_val, "Sim" if p.is_active else "Não", "Sim" if p.is_deceased else "Não", p.notes or ""
+                ])
+                
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()
+
