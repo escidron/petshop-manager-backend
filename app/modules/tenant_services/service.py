@@ -232,41 +232,71 @@ class ServiceService:
         wb.save(out)
         return out.getvalue()
 
-    async def import_services_from_excel(self, db: Session, tenant_id: int, file_content: bytes):
+    async def import_services_from_excel(self, db: Session, tenant_id: int, file_content: bytes, progress_callback=None):
         import openpyxl
         import io
-        
+        from app.modules.tenant_services.models import Service
+
         if not file_content:
-            return {"imported": 0, "errors": ["Arquivo de planilha vazio"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": ["Arquivo de planilha vazio"]}
 
         try:
             wb = openpyxl.load_workbook(io.BytesIO(file_content), read_only=True, data_only=True)
             ws = wb.active
         except Exception as e:
-            return {"imported": 0, "errors": [f"Erro ao ler arquivo Excel: {str(e)}"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": [f"Erro ao ler arquivo Excel: {str(e)}"]}
 
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
-            return {"imported": 0, "errors": ["A planilha está vazia"]}
+            return {"created": 0, "updated": 0, "total": 0, "errors": ["A planilha está vazia"]}
 
-        # Clean headers
         raw_headers = rows[0]
         headers = []
         for h in raw_headers:
             if h is None:
                 headers.append("")
             else:
-                headers.append(str(h).strip().lower().replace("*", "").strip())
+                h_str = str(h).strip().lower().replace("*", "").strip()
+                if h_str in ("nome", "serviço", "nome_servico", "nome_do_servico"):
+                    h_str = "servico"
+                elif h_str in ("preço", "valor", "preco_venda"):
+                    h_str = "preco"
+                elif h_str in ("duração", "duracao", "tempo"):
+                    h_str = "duracao_minutos"
+                headers.append(h_str)
 
-        required_cols = ["servico", "especie", "porte", "preco", "duracao_minutos"]
+        required_cols = ["servico", "preco"]
         missing_cols = [col for col in required_cols if col not in headers]
         if missing_cols:
             return {
-                "imported": 0,
+                "created": 0, "updated": 0, "total": 0,
                 "errors": [f"Colunas obrigatórias ausentes na planilha: {', '.join(missing_cols)}"]
             }
 
-        imported_count = 0
+
+        non_empty_rows = [
+            rv for rv in rows[1:]
+            if any(v is not None and str(v).strip() != "" for v in rv)
+        ]
+        total_rows = len(non_empty_rows)
+
+        if progress_callback and total_rows > 0:
+            progress_callback(0, total_rows, 0, 0)
+
+        # Pre-fetch existing services (1 query)
+        existing_services_q = db.query(Service).filter(Service.tenant_id == tenant_id).all()
+        existing_services: dict[tuple, Service] = {
+            (
+                s.name.lower().strip(),
+                (s.species or "").lower().strip(),
+                (s.size or "").upper().strip(),
+                (s.coat_type or "").lower().strip()
+            ): s for s in existing_services_q
+        }
+
+        created_count = 0
+        updated_count = 0
+        processed_count = 0
         errors = []
 
         def parse_money(val):
@@ -307,6 +337,22 @@ class ServiceService:
         def parse_size(val):
             if val is None or str(val).strip() == "":
                 return None
+            v = str(val).strip().lower()
+            if v in ["pp", "mini", "micro"]:
+                return "PP"
+            elif v in ["p", "pequeno", "peq"]:
+                return "P"
+            elif v in ["m", "medio", "médio"]:
+                return "M"
+            elif v in ["g", "grande"]:
+                return "G"
+            elif v in ["gg", "gigante", "extra grande"]:
+                return "GG"
+            if "(pp)" in v or "mini" in v: return "PP"
+            if "(p)" in v or "pequeno" in v: return "P"
+            if "(m)" in v or "médio" in v or "medio" in v: return "M"
+            if "(g)" in v or "grande" in v: return "G"
+            if "(gg)" in v or "gigante" in v: return "GG"
             cleaned = str(val).strip().upper()
             if cleaned in ["PP", "P", "M", "G", "GG"]:
                 return cleaned
@@ -317,45 +363,35 @@ class ServiceService:
                 return None
             cleaned = str(val).strip().lower()
             coat_map = {
-                "curta": "short",
-                "média": "medium",
-                "media": "medium",
-                "longa": "long",
-                "dupla": "double",
-                "sem pelo": "hairless"
+                "curta": "short", "média": "medium", "media": "medium",
+                "longa": "long", "dupla": "double", "sem pelo": "hairless"
             }
             return coat_map.get(cleaned, None)
 
-        for row_idx, row_values in enumerate(rows[1:], start=2):
+        CHUNK_SIZE = 200
+        new_services: list[Service] = []
+
+        def _flush_chunk():
+            nonlocal new_services
+            if new_services:
+                db.add_all(new_services)
+                db.flush()
+                new_services = []
+            db.commit()
+
+        for row_idx, row_values in enumerate(non_empty_rows, start=2):
             try:
-                row = {}
-                has_any_value = False
-                for h, val in zip(headers, row_values):
-                    if h:
-                        row[h] = val
-                        if val is not None and str(val).strip() != "":
-                            has_any_value = True
-                
-                if not has_any_value:
-                    continue
+                row = {h: val for h, val in zip(headers, row_values) if h}
 
                 servico = clean_str(row.get("servico"))
                 if not servico:
                     raise ValueError("Nome do serviço é obrigatório")
 
                 especie_val = clean_str(row.get("especie"))
-                especie = None
-                if especie_val:
-                    especie = parse_species(especie_val)
-                    if not especie:
-                        raise ValueError("Espécie inválida (deve ser Canino ou Felino)")
+                especie = parse_species(especie_val) if especie_val else None
 
                 porte_val = clean_str(row.get("porte"))
-                porte = None
-                if porte_val:
-                    porte = parse_size(porte_val)
-                    if not porte:
-                        raise ValueError("Porte inválido (deve ser PP, P, M, G ou GG)")
+                porte = parse_size(porte_val) if porte_val else None
 
                 coat_val = clean_str(row.get("pelagem"))
                 coat_type = parse_coat_type(coat_val)
@@ -375,19 +411,138 @@ class ServiceService:
 
                 desc = clean_str(row.get("descricao"))
 
-                data = ServiceCreate(
-                    name=servico,
-                    description=desc,
-                    species=especie,
-                    size=porte,
-                    coat_type=coat_type,
-                    price_cents=price_cents,
-                    duration_minutes=duration_minutes,
-                    is_active=True
+                key = (
+                    servico.lower().strip(),
+                    (especie or "").lower().strip(),
+                    (porte or "").upper().strip(),
+                    (coat_type or "").lower().strip()
                 )
-                self.create(db, tenant_id, data)
-                imported_count += 1
+
+                service_obj = existing_services.get(key)
+                if not service_obj:
+                    service_obj = Service(
+                        tenant_id=tenant_id,
+                        name=servico,
+                        description=desc,
+                        species=especie,
+                        size=porte,
+                        coat_type=coat_type,
+                        price_cents=price_cents,
+                        duration_minutes=duration_minutes,
+                        is_active=True
+                    )
+                    new_services.append(service_obj)
+                    existing_services[key] = service_obj
+                    created_count += 1
+                else:
+                    _changed = False
+                    for attr, val in [
+                        ("price_cents", price_cents),
+                        ("duration_minutes", duration_minutes),
+                        ("description", desc),
+                    ]:
+                        if val is not None and getattr(service_obj, attr, None) != val:
+                            setattr(service_obj, attr, val)
+                            _changed = True
+                    if _changed:
+                        updated_count += 1
+
+                processed_count += 1
+
             except Exception as e:
                 errors.append(f"Linha {row_idx}: {str(e)}")
 
-        return {"imported": imported_count, "errors": errors}
+            if (row_idx - 1) % CHUNK_SIZE == 0:
+                _flush_chunk()
+                if progress_callback and total_rows > 0:
+                    pct = min(int((row_idx - 1) / total_rows * 100), 99)
+                    progress_callback(row_idx - 1, total_rows, processed_count, pct)
+
+        _flush_chunk()
+
+        return {
+            "created": created_count,
+            "updated": updated_count,
+            "total": total_rows,
+            "errors": errors,
+        }
+
+    async def import_services_from_excel_background(
+        self,
+        job_id: str,
+        tenant_id: int,
+        file_content: bytes,
+    ) -> None:
+        from app.modules.clients.import_jobs import update_job
+        from app.config.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            update_job(job_id, status="running", progress=0)
+
+            def _on_progress(processed: int, total: int, count: int, pct: int):
+                update_job(job_id, progress=pct, imported=count, total=total)
+
+            result = await self.import_services_from_excel(
+                db, tenant_id, file_content,
+                progress_callback=_on_progress,
+            )
+            update_job(
+                job_id,
+                status="done",
+                progress=100,
+                created=result["created"],
+                updated=result["updated"],
+                total=result.get("total", 0),
+                errors=result["errors"],
+            )
+        except Exception as e:
+            update_job(job_id, status="error", errors=[str(e)])
+        finally:
+            db.close()
+
+    def export_to_excel(self, db: Session, tenant_id: int) -> bytes:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        from io import BytesIO
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Serviços"
+        
+        headers = [
+            "ID", "Nome do Serviço", "Espécie", "Porte", "Pelagem", "Duração (min)", "Preço", "Descrição", "Ativo"
+        ]
+        ws.append(headers)
+        
+        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+
+        services = self.repo.list(db, tenant_id)
+        
+        coat_map = {
+            "short": "Curta",
+            "medium": "Média",
+            "long": "Longa",
+            "hairless": "Sem Pelo"
+        }
+        for s in services:
+            species_val = s.species.value if hasattr(s.species, "value") else (s.species or "Todos")
+            size_val = s.size.value if hasattr(s.size, "value") else (s.size or "Todos")
+            coat_val = coat_map.get(s.coat_type, s.coat_type) if s.coat_type else "Todos"
+            
+            ws.append([
+                s.id, s.name, species_val, size_val, coat_val,
+                s.duration_minutes or "", float(s.price_cents) / 100 if s.price_cents else 0.0,
+                s.description or "", "Sim" if s.is_active else "Não"
+            ])
+                
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()
+

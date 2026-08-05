@@ -43,6 +43,51 @@ class EmployeeService:
         db.refresh(employee)
         return employee
 
+    def export_to_excel(self, db: Session, tenant_id: int) -> bytes:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        from io import BytesIO
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Funcionários"
+        
+        headers = [
+            "ID", "Nome", "Cargo", "Telefone", "E-mail", "Ativo"
+        ]
+        ws.append(headers)
+        
+        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+
+        employees = self.repository.list(db, tenant_id)
+        
+        role_map = {
+            "groomer": "Tosador(a)",
+            "bather": "Banhista",
+            "vet": "Veterinário(a)",
+            "salesperson": "Vendedor(a)",
+            "receptionist": "Recepcionista",
+            "driver": "Motorista",
+            "other": "Outros"
+        }
+        
+        for emp in employees:
+            ws.append([
+                emp.id, emp.name, role_map.get(emp.role, emp.role), 
+                emp.phone or "", emp.email or "", 
+                "Sim" if emp.is_active else "Não"
+            ])
+                
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()
+
     def get_appointments_by_token(self, db: Session, token: str):
         from .models import Employee
         from app.modules.appointments.models import Appointment, AppointmentItem, AppointmentItemService

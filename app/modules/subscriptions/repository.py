@@ -113,3 +113,12 @@ class SubscriptionChargeRepository:
         db.refresh(charge)
         return charge
 
+    def get_first_paid_charge(self, db: Session, subscription_id: int) -> SubscriptionCharge | None:
+        return (
+            db.query(SubscriptionCharge)
+            .filter(SubscriptionCharge.subscription_id == subscription_id)
+            .filter(SubscriptionCharge.status.in_(["paid", "captured"]))
+            .order_by(SubscriptionCharge.created_at.asc())
+            .first()
+        )
+

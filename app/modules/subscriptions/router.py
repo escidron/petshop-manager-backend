@@ -4,11 +4,10 @@ from sqlalchemy.orm import Session
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant, require_owner
 from app.modules.subscriptions import service
-from app.modules.subscriptions.repository import SubscriptionRepository
+from app.modules.subscriptions.repository import SubscriptionRepository, SubscriptionChargeRepository
 from app.modules.subscriptions.schemas import (
     AddPaymentMethodRequest,
     CheckoutRequest,
-    CheckoutResponse,
     PaymentMethodResponse,
     SubscriptionResponse,
     SubscriptionChargeResponse,
@@ -68,6 +67,18 @@ def get_my_subscription(
         if period_end < datetime.now(timezone.utc):
             sub = _repo.update(db, sub, {"status": "past_due"})
 
+    # Check if eligible for refund
+    sub.eligible_for_refund = False
+    charge_repo = SubscriptionChargeRepository()
+    charge = charge_repo.get_first_paid_charge(db, sub.id)
+    if charge:
+        created_dt = charge.created_at
+        if created_dt.tzinfo is None:
+            created_dt = created_dt.replace(tzinfo=timezone.utc)
+        days_since_payment = (datetime.now(timezone.utc) - created_dt).days
+        if days_since_payment <= 7:
+            sub.eligible_for_refund = True
+
     return sub
 
 
@@ -78,6 +89,16 @@ def cancel(
 ):
     tenant = ctx["tenant"]
     return service.cancel_subscription(db, tenant)
+
+
+@router.post("/refund-and-cancel", response_model=SubscriptionResponse)
+def refund_and_cancel(
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Estorna a cobrança mais recente (se dentro de 7 dias do 1º pagamento) e cancela a assinatura."""
+    tenant = ctx["tenant"]
+    return service.refund_and_cancel_subscription(db, tenant)
 
 
 @router.post("/payment-methods", response_model=PaymentMethodResponse)

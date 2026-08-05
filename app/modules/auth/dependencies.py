@@ -8,8 +8,7 @@ from app.config.database import get_db
 from app.modules.auth.token import decode_token
 from app.modules.tenants.models import Tenant
 from app.modules.users.models import TenantUser, User
-from app.modules.subscriptions.repository import SubscriptionRepository
-
+from app.modules.subscriptions.repository import SubscriptionRepository, SubscriptionChargeRepository
 
 def get_current_user(
     request: Request,
@@ -86,6 +85,11 @@ def get_current_tenant(
             period_end = period_end.replace(tzinfo=timezone.utc)
         if period_end < datetime.now(timezone.utc):
             subscription = subscription_repo.update(db, subscription, {"status": "past_due"})
+
+    if subscription:
+        from app.modules.subscriptions.service import is_subscription_eligible_for_refund
+        subscription.eligible_for_refund = is_subscription_eligible_for_refund(db, subscription)
+                
     tenant.subscription = subscription
 
     request.state.tenant_user = tenant_user

@@ -11,6 +11,7 @@ from app.modules.tenants.schemas import TenantCreate, TenantUpdate, TenantUserCr
 from app.modules.users.models import User
 from app.modules.users.schemas import UserCreate
 from app.modules.users.service import UserService
+from app.modules.subscriptions.service import is_subscription_eligible_for_refund
 
 from .repository import TenantRepository, TenantTypeRepository, TenantUserRepository
 
@@ -185,7 +186,10 @@ class TenantService:
         sub = self.subscription_repository.get_active_by_tenant(db, tenant.id)
         if sub and sub.status not in ("canceled", "trialing"):
             try:
-                sub_service.cancel_subscription(db, tenant)
+                if is_subscription_eligible_for_refund(db, sub):
+                    sub_service.refund_and_cancel_subscription(db, tenant)
+                else:
+                    sub_service.cancel_subscription(db, tenant)
             except Exception:
                 # Even if Pagar.me call fails, proceed with deletion
                 pass

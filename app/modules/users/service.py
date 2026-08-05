@@ -71,4 +71,48 @@ class UserService:
 
         return user
 
+    def export_to_excel(self, db: Session, tenant_id: int) -> bytes:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        from io import BytesIO
+        from app.modules.users.models import User, TenantUser
 
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Funcionários"
+        
+        headers = [
+            "ID", "Nome", "E-mail", "Telefone", "Cargo", "Data Cadastro", "Ativo"
+        ]
+        ws.append(headers)
+        
+        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+        
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+
+        # Join TenantUser and User
+        users = db.query(TenantUser, User).join(User, TenantUser.user_id == User.id).filter(
+            TenantUser.tenant_id == tenant_id
+        ).all()
+        
+        role_map = {
+            "owner": "Proprietário",
+            "employee": "Funcionário"
+        }
+        
+        for t_user, user in users:
+            role_val = role_map.get(t_user.role, t_user.role)
+            ws.append([
+                user.id, user.name, user.email, user.phone or "", 
+                role_val, 
+                t_user.created_at.strftime("%d/%m/%Y") if t_user.created_at else "",
+                "Sim" if t_user.active else "Não"
+            ])
+                
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()

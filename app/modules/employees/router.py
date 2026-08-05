@@ -12,25 +12,46 @@ from .schemas import (
     PublicBookingResponse
 )
 from .service import EmployeeService
+from app.config.limiter import limiter
+
+from fastapi.responses import StreamingResponse
+import io
 
 router = APIRouter(prefix="/employees", tags=["Employees"], dependencies=[Depends(get_current_tenant)])
+
+@router.get("/export")
+def export_employees(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    service = EmployeeService()
+    tenant_id = request.state.tenant_user.tenant_id
+    excel_data = service.export_to_excel(db, tenant_id)
+    return StreamingResponse(
+        io.BytesIO(excel_data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="backup_funcionarios.xlsx"'}
+    )
 public_router = APIRouter(prefix="/public/employees", tags=["Public Employees"])
 
 
 @public_router.get("/schedule/{token}", response_model=PublicFreelancerScheduleResponse)
-def get_public_schedule(token: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+def get_public_schedule(request: Request, token: str, db: Session = Depends(get_db)):
     service = EmployeeService()
     return service.get_appointments_by_token(db, token)
 
 
 @public_router.get("/booking-info/{token}")
-def get_public_booking_info(token: str, appointment_id: int | None = None, sig: str | None = None, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+def get_public_booking_info(request: Request, token: str, appointment_id: int | None = None, sig: str | None = None, db: Session = Depends(get_db)):
     service = EmployeeService()
     return service.get_public_booking_info(db, token, appointment_id, sig)
 
 
 @public_router.post("/book/{token}", response_model=PublicBookingResponse)
-def create_public_booking(token: str, data: PublicBookingRequest, appointment_id: int | None = None, sig: str | None = None, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def create_public_booking(request: Request, token: str, data: PublicBookingRequest, appointment_id: int | None = None, sig: str | None = None, db: Session = Depends(get_db)):
     service = EmployeeService()
     return service.create_public_booking(db, token, data, appointment_id, sig)
 

@@ -104,6 +104,7 @@ def create_tenant(
     data: TenantCreate,
     response: Response,
     db: Session = Depends(get_db),
+    admin_user = Depends(require_admin),
 ):
     from app.modules.auth.token import create_access_token, create_refresh_token
 
