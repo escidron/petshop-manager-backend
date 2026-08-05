@@ -5,6 +5,7 @@ from typing import Optional
 from app.config.settings import settings
 from app.services.email.service import EmailService
 from app.modules.auth.token import decode_token
+from app.config.limiter import limiter
 
 logger = logging.getLogger("api.observability")
 
@@ -19,7 +20,8 @@ class ClientErrorPayload(BaseModel):
     tenant_id: Optional[str] = None
 
 @router.post("/client-error")
-async def report_client_error(payload: ClientErrorPayload, request: Request):
+@limiter.limit("5/minute")
+async def report_client_error(request: Request, payload: ClientErrorPayload):
     user_id = payload.user_id
     tenant_id = payload.tenant_id
 

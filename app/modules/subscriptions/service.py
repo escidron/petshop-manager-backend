@@ -501,6 +501,51 @@ def cancel_subscription(db: Session, tenant: Tenant) -> Subscription:
         "canceled_at": datetime.now(timezone.utc),
     })
 
+def is_subscription_eligible_for_refund(db: Session, sub: Subscription) -> bool:
+    charge = _charge_repo.get_first_paid_charge(db, sub.id)
+    if not charge:
+        return False
+    
+    created_dt = charge.created_at
+    if created_dt.tzinfo is None:
+        created_dt = created_dt.replace(tzinfo=timezone.utc)
+        
+    days_since_payment = (datetime.now(timezone.utc) - created_dt).days
+    if days_since_payment > 7:
+        return False
+        
+    # Anti-abuse: check se já teve algum estorno anterior na conta
+    has_refund = db.query(SubscriptionCharge).filter(
+        SubscriptionCharge.tenant_id == sub.tenant_id,
+        SubscriptionCharge.status == 'refunded'
+    ).first()
+    
+    if has_refund:
+        return False
+        
+    return True
+
+def refund_and_cancel_subscription(db: Session, tenant: Tenant) -> Subscription:
+    sub = _repo.get_active_by_tenant(db, tenant.id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Assinatura ativa não encontrada")
+
+    if not is_subscription_eligible_for_refund(db, sub):
+        raise HTTPException(status_code=400, detail="Prazo de 7 dias para estorno expirou ou estorno não aplicável.")
+
+    charge = _charge_repo.get_first_paid_charge(db, sub.id)
+    if not charge:
+        raise HTTPException(status_code=400, detail="Nenhum pagamento encontrado para estornar")
+
+    if charge.pagarme_charge_id and charge.status in ("paid", "captured"):
+        with _pagarme_client() as client:
+            resp = client.delete(f"/charges/{charge.pagarme_charge_id}")
+            if resp.status_code not in (200, 204):
+                raise HTTPException(status_code=502, detail=f"Erro ao estornar no Pagar.me: {resp.text}")
+        _charge_repo.update(db, charge, {"status": "refunded"})
+
+    return cancel_subscription(db, tenant)
+
 
 def list_payment_methods(db: Session, tenant: Tenant) -> list[dict]:
     # Busca os card_ids que pertencem especificamente a este tenant
@@ -677,6 +722,8 @@ def handle_webhook_event(payload: bytes, sig_header: str) -> None:
             _on_charge_authorized(db, event_data)
         elif event_type == "charge.refunded":
             _on_charge_refunded(db, event_data)
+        elif event_type == "charge.chargedback":
+            _on_charge_chargedback(db, event_data)
         elif event_type == "charge.voided":
             _on_charge_voided(db, event_data)
         elif event_type in (
@@ -987,6 +1034,21 @@ def _on_charge_status_update(db: Session, data: dict, status: str) -> None:
         _charge_repo.update(db, charge, {"status": status})
         db.commit()
 
+
+def _on_charge_chargedback(db: Session, data: dict) -> None:
+    charge_id = data.get("id")
+    if not charge_id:
+        return
+    charge = _charge_repo.get_by_pagarme_charge_id(db, charge_id)
+    if charge:
+        _charge_repo.update(db, charge, {"status": "chargedback"})
+        
+        # Bloquear o tenant imediatamente caso tenha tomado chargeback
+        sub = _repo.get_by_id(db, charge.subscription_id)
+        if sub and sub.status not in ("canceled", "past_due"):
+            _repo.update(db, sub, {"status": "past_due"})
+            
+        db.commit()
 
 def _on_charge_refunded(db: Session, data: dict) -> None:
     charge_id = data.get("id")

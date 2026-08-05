@@ -66,7 +66,7 @@ def signup(
     return result
 
 @router.post("/login")
-# @limiter.limit(settings.LOGIN_RATE_LIMIT)
+@limiter.limit("10/minute")
 def login(
     request: Request,
     data: LoginInput,

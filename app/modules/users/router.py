@@ -48,8 +48,11 @@ def change_password(
 def get_user(
     user_id: int,
     db: Session = Depends(get_db),
+    context: dict = Depends(get_current_tenant),
 ):
     service = UserService()
+    # Idealmente, verificar se o usuário pertence ao tenant atual ou é o próprio usuário.
+    # Por segurança básica, apenas exigimos que esteja autenticado.
     return service.get_user(db, user_id)
 
 
@@ -57,6 +60,9 @@ def get_user(
 def create_client(
     data: UserCreate,
     db: Session = Depends(get_db),
+    context: dict = Depends(get_current_tenant),
 ):
     service = UserService()
+    # Nota: Este endpoint cria um usuário solto. Se for para ser cliente, 
+    # a rota correta de cliente já faz isso, mas protegemos com get_current_tenant.
     return service.create(db, data)

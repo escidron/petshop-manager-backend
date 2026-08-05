@@ -12,6 +12,7 @@ from .schemas import (
     PublicBookingResponse
 )
 from .service import EmployeeService
+from app.config.limiter import limiter
 
 from fastapi.responses import StreamingResponse
 import io
@@ -35,19 +36,22 @@ public_router = APIRouter(prefix="/public/employees", tags=["Public Employees"])
 
 
 @public_router.get("/schedule/{token}", response_model=PublicFreelancerScheduleResponse)
-def get_public_schedule(token: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+def get_public_schedule(request: Request, token: str, db: Session = Depends(get_db)):
     service = EmployeeService()
     return service.get_appointments_by_token(db, token)
 
 
 @public_router.get("/booking-info/{token}")
-def get_public_booking_info(token: str, appointment_id: int | None = None, sig: str | None = None, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+def get_public_booking_info(request: Request, token: str, appointment_id: int | None = None, sig: str | None = None, db: Session = Depends(get_db)):
     service = EmployeeService()
     return service.get_public_booking_info(db, token, appointment_id, sig)
 
 
 @public_router.post("/book/{token}", response_model=PublicBookingResponse)
-def create_public_booking(token: str, data: PublicBookingRequest, appointment_id: int | None = None, sig: str | None = None, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def create_public_booking(request: Request, token: str, data: PublicBookingRequest, appointment_id: int | None = None, sig: str | None = None, db: Session = Depends(get_db)):
     service = EmployeeService()
     return service.create_public_booking(db, token, data, appointment_id, sig)
 

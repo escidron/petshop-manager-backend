@@ -90,6 +90,7 @@ class SubscriptionResponse(BaseModel):
     payment_method: Optional[str] = None
     pagarme_subscription_id: Optional[str] = None
     plan: PlanResponse
+    eligible_for_refund: Optional[bool] = False
 
     class Config:
         from_attributes = True
