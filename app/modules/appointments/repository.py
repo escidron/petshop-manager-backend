@@ -6,12 +6,16 @@ from .models import Appointment, AppointmentItem, AppointmentPackageCoverage
 from app.modules.tenant_services.models import Service
 
 
+from app.modules.pets.models import Pet
+
 def _eager_options():
     """Opções de eager loading reutilizáveis para evitar N+1."""
     return [
         joinedload(Appointment.client),                          # many-to-one → joinedload ok
+        selectinload(Appointment.sales),                         # one-to-many → selectinload
         selectinload(Appointment.items)                          # one-to-many → selectinload
-            .joinedload(AppointmentItem.pet),                    # many-to-one dentro do item
+            .joinedload(AppointmentItem.pet)                     # many-to-one dentro do item
+            .selectinload(Pet.photos),                           # one-to-many (pet.photos)
         selectinload(Appointment.items)
             .selectinload(AppointmentItem.services),             # many-to-many → selectinload
         selectinload(Appointment.items)
@@ -232,6 +236,7 @@ class AppointmentRepository:
             .filter(
                 Sale.appointment_id == Appointment.id,
                 Sale.status == "completed",
+                Sale.payment_method != "package",
             )
             .exists()
         )

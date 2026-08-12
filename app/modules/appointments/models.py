@@ -141,10 +141,10 @@ class Appointment(Base):
 
     @property
     def is_paid(self) -> bool:
-        """Checks if there's any completed sale linked to this appointment."""
+        """Checks if there's any completed POS sale linked to this appointment."""
         if not self.sales:
             return False
-        return any(sale.status == "completed" for sale in self.sales)
+        return any(sale.status == "completed" and sale.payment_method != "package" for sale in self.sales)
     
 
 class AppointmentItem(Base):
