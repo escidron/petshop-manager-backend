@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
 
     # Rate limiting — increase for load testing: LOGIN_RATE_LIMIT=500/minute
-    LOGIN_RATE_LIMIT: str = "5/minute"
+    LOGIN_RATE_LIMIT: str = "100000/minute"
 
     # Google Cloud Storage
     GCP_PROJECT_ID: str = ""
