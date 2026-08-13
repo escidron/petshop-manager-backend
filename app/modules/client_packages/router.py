@@ -31,14 +31,21 @@ def sell_package(
     return svc.sell(db, tenant_id, pet.client_id, data)
 
 
-@router.get("/unpaid", response_model=list[ClientPackageResponse])
+from typing import Optional
+from fastapi import Query
+from .schemas import PaginatedClientPackagesResponse
+
+@router.get("/unpaid", response_model=PaginatedClientPackagesResponse)
 def list_unpaid(
     request: Request,
     db: Session = Depends(get_db),
+    limit: Optional[int] = Query(None),
+    offset: Optional[int] = Query(0),
+    search: Optional[str] = Query(None),
 ):
     tenant_id = request.state.tenant_user.tenant_id
     svc = ClientPackageService()
-    return svc.list_unpaid_packages(db, tenant_id)
+    return svc.list_unpaid_packages(db, tenant_id, limit, offset, search)
 
 
 @router.get("/pet/{pet_id}", response_model=list[ClientPackageResponse])

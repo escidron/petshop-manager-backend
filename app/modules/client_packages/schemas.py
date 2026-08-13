@@ -2,6 +2,10 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 from app.modules.tenant_services.schemas import ServiceResponse
 
+class PaginatedClientPackagesResponse(BaseModel):
+    items: list["ClientPackageResponse"]
+    total: int
+
 class ClientPackageCreditResponse(BaseModel):
     id: int
     service_id: int | None

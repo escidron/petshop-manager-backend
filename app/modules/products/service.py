@@ -303,7 +303,7 @@ class ProductService:
         
         # Add headers
         headers = [
-            "nome *", "preco_venda *", "unidade *", "quantidade *", "estoque_minimo *", "codigo_barras *", "ncm *",
+            "nome *", "preco_venda *", "unidade *", "quantidade *", "estoque_minimo *", "codigo_barras", "ncm",
             "sku", "descricao", "categoria", "custo", 
             "cest", "cfop", "csosn", "cst_pis", "cst_cofins"
         ]
