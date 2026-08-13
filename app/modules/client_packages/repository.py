@@ -120,25 +120,46 @@ class ClientPackageRepository:
         return client_package
 
     def list_unpaid(
-        self, db: Session, tenant_id: int
-    ) -> list[ClientPackage]:
-        return (
-            db.query(ClientPackage)
-            .options(
-                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
-                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
-                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user),
-                selectinload(ClientPackage.client),
-                selectinload(ClientPackage.pets),
-            )
-            .filter(
-                ClientPackage.tenant_id == tenant_id,
-                ClientPackage.is_paid == False,
-                ClientPackage.is_active == True,
-            )
-            .order_by(ClientPackage.created_at.desc())
-            .all()
+        self,
+        db: Session,
+        tenant_id: int,
+        limit: int | None = None,
+        offset: int = 0,
+        search: str | None = None,
+    ) -> tuple[list[ClientPackage], int]:
+        from app.modules.clients.models import Client
+
+        query = db.query(ClientPackage).filter(
+            ClientPackage.tenant_id == tenant_id,
+            ClientPackage.is_paid == False,
+            ClientPackage.is_active == True,
         )
+
+        if search:
+            search_term = f"%{search}%"
+            query = query.outerjoin(Client, ClientPackage.client_id == Client.id)
+            query = query.outerjoin(ClientPackagePet, ClientPackage.id == ClientPackagePet.client_package_id)
+            query = query.outerjoin(Pet, ClientPackagePet.pet_id == Pet.id)
+            query = query.filter(
+                (Client.name.ilike(search_term)) | (Pet.name.ilike(search_term))
+            )
+            query = query.distinct()
+
+        total = query.count()
+
+        query = query.options(
+            selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
+            selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
+            selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user),
+            selectinload(ClientPackage.client),
+            selectinload(ClientPackage.pets),
+        ).order_by(ClientPackage.created_at.desc())
+
+        if limit is not None:
+            query = query.limit(limit).offset(offset)
+
+        return query.all(), total
+
 
     def find_active_credit(
         self, db: Session, tenant_id: int, pet_id: int, service_id: int

@@ -32,16 +32,23 @@ def create_appointment(
     return AppointmentService().create(db, tenant_id, data)
 
 
+from .schemas import (
+    PaginatedAppointmentsResponse,
+)
+
 @router.get(
     "/open-invoices",
-    response_model=list[AppointmentResponse],
+    response_model=PaginatedAppointmentsResponse,
 )
 def list_open_invoices(
     request: Request,
     db: Session = Depends(get_db),
+    limit: Optional[int] = Query(None),
+    offset: Optional[int] = Query(0),
+    search: Optional[str] = Query(None),
 ):
     tenant_id = request.state.tenant_user.tenant_id
-    return AppointmentService().list_open_invoices(db, tenant_id)
+    return AppointmentService().list_open_invoices(db, tenant_id, limit, offset, search)
 
 
 @router.get(

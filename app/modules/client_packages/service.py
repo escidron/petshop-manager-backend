@@ -88,9 +88,15 @@ class ClientPackageService:
         return self.repo.list_by_pet(db, tenant_id, pet_id)
 
     def list_unpaid_packages(
-        self, db: Session, tenant_id: int
-    ) -> list[ClientPackageResponse]:
-        return self.repo.list_unpaid(db, tenant_id)
+        self,
+        db: Session,
+        tenant_id: int,
+        limit: int | None = None,
+        offset: int = 0,
+        search: str | None = None,
+    ):
+        items, total = self.repo.list_unpaid(db, tenant_id, limit, offset, search)
+        return {"items": items, "total": total}
 
     def list_by_client(
         self, db: Session, tenant_id: int, client_id: int

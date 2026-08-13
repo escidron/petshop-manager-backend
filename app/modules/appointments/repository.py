@@ -220,7 +220,10 @@ class AppointmentRepository:
         self,
         db: Session,
         tenant_id: int,
-    ) -> list[Appointment]:
+        limit: int | None = None,
+        offset: int = 0,
+        search: str | None = None,
+    ) -> tuple[list[Appointment], int]:
         """Appointments completed but not yet paid — the 'open tabs'.
 
         is_paid is a Python property (not a DB column), so we use a NOT EXISTS
@@ -229,6 +232,8 @@ class AppointmentRepository:
         """
         from app.modules.sales.models import Sale
         from .models import AppointmentItem, AppointmentItemService, AppointmentPackageCoverage
+        from app.modules.clients.models import Client
+        from app.modules.pets.models import Pet
 
         # Subquery: any completed sale linked to this appointment?
         paid_subquery = (
@@ -258,18 +263,30 @@ class AppointmentRepository:
             .exists()
         )
 
-        return (
-            db.query(Appointment)
-            .options(*_eager_options())
-            .filter(
-                Appointment.tenant_id == tenant_id,
-                Appointment.status == "completed",
-                ~paid_subquery,       # no completed sale attached
-                has_uncovered_service,  # at least one service still needs payment
-            )
-            .order_by(Appointment.scheduled_at.desc())
-            .all()
+        query = db.query(Appointment).filter(
+            Appointment.tenant_id == tenant_id,
+            Appointment.status == "completed",
+            ~paid_subquery,       # no completed sale attached
+            has_uncovered_service,  # at least one service still needs payment
         )
+
+        if search:
+            search_term = f"%{search}%"
+            query = query.outerjoin(Client, Appointment.client_id == Client.id)
+            query = query.outerjoin(AppointmentItem, Appointment.id == AppointmentItem.appointment_id)
+            query = query.outerjoin(Pet, AppointmentItem.pet_id == Pet.id)
+            query = query.filter(
+                (Client.name.ilike(search_term)) | (Pet.name.ilike(search_term))
+            )
+
+        total = query.count()
+
+        query = query.options(*_eager_options()).order_by(Appointment.scheduled_at.desc())
+
+        if limit is not None:
+            query = query.limit(limit).offset(offset)
+
+        return query.all(), total
 
     def list_highlighted_days(
         self,

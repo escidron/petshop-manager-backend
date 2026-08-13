@@ -10,6 +10,10 @@ from app.modules.clients.schemas import ClientResponse
 from app.modules.pets.schemas import PetResponse
 
 
+class PaginatedAppointmentsResponse(BaseModel):
+    items: List["AppointmentResponse"]
+    total: int
+
 class AppointmentItemCreate(BaseModel):
     pet_id: int
     service_ids: List[int] = Field(
