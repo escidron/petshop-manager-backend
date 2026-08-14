@@ -74,3 +74,20 @@ class ClientResponse(ClientBase):
 
     class Config:
         from_attributes = True
+
+
+class ClientSummaryResponse(BaseModel):
+    """Payload mínimo usado na listagem de clientes (tabela).
+    
+    Apenas os campos exibidos na tabela: nome, telefone e status.
+    O ClientResponse completo é carregado somente no GET /clients/{id}.
+    """
+    id: int
+    name: str
+    phone: str
+    email: Optional[EmailStr] = None
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

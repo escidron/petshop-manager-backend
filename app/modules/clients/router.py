@@ -11,6 +11,7 @@ from .schemas import (
     ClientCreate,
     ClientUpdate,
     ClientResponse,
+    ClientSummaryResponse,
 )
 from .service import ClientService
 from .import_jobs import create_job, get_job
@@ -45,7 +46,7 @@ def create_client(
     return service.create_client(db, tenant_id, data)
 
 
-@router.get("/", response_model=list[ClientResponse])
+@router.get("/", response_model=list[ClientSummaryResponse])
 def list_clients(
     request: Request,
     db: Session = Depends(get_db),
