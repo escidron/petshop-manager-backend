@@ -28,7 +28,7 @@ def get_pos_startup(request: Request, db: Session = Depends(get_db)):
         services=ServiceService().list(db, tenant_id),
         packages=PackageService().list_packages(db, tenant_id),
         clients=ClientService().list_clients(db, tenant_id),
-        appointments=AppointmentService().list_by_tenant(db, tenant_id),
+        appointments=AppointmentService().list_open_invoices(db, tenant_id).get("items", []),
         pets=PetService().list_pets(db, tenant_id)
     )
 
