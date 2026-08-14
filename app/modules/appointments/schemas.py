@@ -6,7 +6,7 @@ from app.modules.appointments.models import (
     AppointmentAction,
     AppointmentStatus,
 )
-from app.modules.clients.schemas import ClientResponse
+from app.modules.clients.schemas import ClientSummaryResponse
 from app.modules.pets.schemas import PetResponse
 
 
@@ -99,7 +99,7 @@ class AppointmentResponse(BaseModel):
     notes: str | None = None
     status: AppointmentStatus
 
-    client: ClientResponse
+    client: ClientSummaryResponse
     items: List[AppointmentItemResponse]
     is_paid: bool = False
     is_fully_package_covered: bool = False
