@@ -5,11 +5,42 @@ from typing import List, Optional
 
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant, require_active_subscription
-from .schemas import SaleCreate, SaleResponse
+from app.modules.products.service import ProductService
+from app.modules.tenant_services.service import ServiceService
+from app.modules.packages.service import PackageService
+from app.modules.clients.service import ClientService
+from app.modules.appointments.service import AppointmentService
+from app.modules.client_packages.service import ClientPackageService
+from app.modules.pets.service import PetService
+
+from .schemas import SaleCreate, SaleResponse, POSStartupResponse, POSClientDetailsResponse
 from .service import SalesService
 from app.modules.commissions.schemas import AssignEmployeeRequest
 
 router = APIRouter(prefix="/sales", tags=["PDV / Vendas"], dependencies=[Depends(get_current_tenant)])
+
+@router.get("/pos-startup", response_model=POSStartupResponse)
+def get_pos_startup(request: Request, db: Session = Depends(get_db)):
+    tenant_id = request.state.tenant_user.tenant_id
+    
+    return POSStartupResponse(
+        products=ProductService().list_products(db, tenant_id),
+        services=ServiceService().list(db, tenant_id),
+        packages=PackageService().list_packages(db, tenant_id),
+        clients=ClientService().list_clients(db, tenant_id),
+        appointments=AppointmentService().list_by_tenant(db, tenant_id),
+        pets=PetService().list_pets(db, tenant_id)
+    )
+
+@router.get("/pos-client/{client_id}", response_model=POSClientDetailsResponse)
+def get_pos_client_details(client_id: int, request: Request, db: Session = Depends(get_db)):
+    tenant_id = request.state.tenant_user.tenant_id
+    
+    return POSClientDetailsResponse(
+        client_pets=PetService().list_pets_by_client(db, tenant_id, client_id),
+        client_packages=ClientPackageService().list_by_client(db, tenant_id, client_id),
+        client_appointments=AppointmentService().list_by_client(db, tenant_id, client_id)
+    )
 
 
 @router.post("/", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])
