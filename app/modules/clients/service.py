@@ -266,22 +266,21 @@ class ClientService:
         imported_count = 0
         errors = []
 
-        # ---- Helpers ----
-        def clean_str(val):
-            if val is None or str(val).strip() == "":
-                return None
-            val_str = str(val).strip()
-            if isinstance(val, float) and val.is_integer():
-                return str(int(val))
-            return val_str
+        # ---- Helpers — delegate to migration_service for consistent sanitisation ----
+        from app.modules.clients.migration_service import (
+            clean_str, clean_email, clean_cep, clean_address_str, clean_address_number,
+            clean_state, normalize_phone, parse_species, parse_gender, parse_age_unit,
+            parse_coat_type, parse_neutered, normalize_porte as parse_size, parse_deceased,
+        )
 
         def clean_num(val):
-            if val is None or str(val).strip() == "":
+            """Extract only digits; returns None for None/empty/'0'."""
+            if val is None or str(val).strip() in ("", "0"):
                 return None
-            return "".join(filter(str.isdigit, str(val)))
+            return "".join(filter(str.isdigit, str(val))) or None
 
         def parse_date(val):
-            if val is None or str(val).strip() == "":
+            if val is None or str(val).strip() in ("", "0"):
                 return None
             if hasattr(val, "date"):
                 return val.date()
@@ -314,85 +313,11 @@ class ClientService:
                 pass
             return None
 
-        def parse_species(val):
-            if not val:
-                return None
-            cleaned = str(val).strip().lower()
-            if "canino" in cleaned or "cão" in cleaned or "cao" in cleaned or "cachorro" in cleaned:
-                return "Canino"
-            if "felino" in cleaned or "gato" in cleaned:
-                return "Felino"
-            if "exotico" in cleaned or "exótico" in cleaned or "exoticos" in cleaned:
-                return "Exoticos"
-            return val
 
-        def parse_gender(val):
-            if not val:
-                return "unknown"
-            cleaned = str(val).strip().lower()
-            if "macho" in cleaned:
-                return "male"
-            if "fêmea" in cleaned or "femea" in cleaned:
-                return "female"
-            return "unknown"
-
-        def parse_age_unit(val):
-            if not val:
-                return None
-            cleaned = str(val).strip().lower()
-            if "meses" in cleaned or "mês" in cleaned or "mes" in cleaned:
-                return "months"
-            if "anos" in cleaned or "ano" in cleaned:
-                return "years"
-            return None
-
-        def parse_coat_type(val):
-            if not val:
-                return None
-            cleaned = str(val).strip().lower()
-            if "curta" in cleaned:
-                return "short"
-            if "média" in cleaned or "media" in cleaned:
-                return "medium"
-            if "longa" in cleaned:
-                return "long"
-            if "dupla" in cleaned:
-                return "double"
-            if "sem pelo" in cleaned:
-                return "hairless"
-            return val
-
-        def parse_neutered(val):
-            if not val:
-                return None
-            cleaned = str(val).strip().lower()
-            if "sim" in cleaned:
-                return True
-            if "não" in cleaned or "nao" in cleaned:
-                return False
-            return None
-
-        def parse_size(val):
-            if not val:
-                return None
-            cleaned = str(val).strip().lower()
-            if "mini" in cleaned or "pp" in cleaned or "micro" in cleaned:
-                return "PP"
-            elif "pequeno" in cleaned or " p " in f" {cleaned} " or cleaned == "p":
-                return "P"
-            elif "médio" in cleaned or "medio" in cleaned or " m " in f" {cleaned} " or cleaned == "m":
-                return "M"
-            elif "grande" in cleaned or " g " in f" {cleaned} " or cleaned == "g":
-                return "G"
-            elif "gigante" in cleaned or "gg" in cleaned or "extra" in cleaned:
-                return "GG"
-            return str(val).strip()[:5]
-
-
-        # Filter completely empty rows early
+        # Filter completely empty rows early (also treat rows that are ALL zeros as empty)
         non_empty_rows = [
             rv for rv in rows[1:]
-            if any(v is not None and str(v).strip() != "" for v in rv)
+            if any(v is not None and str(v).strip() not in ("", "0") for v in rv)
         ]
 
         # ------------------------------------------------------------------ #
@@ -486,13 +411,23 @@ class ClientService:
 
                 # 1. Client validation
                 name = clean_str(row.get("cliente_nome"))
-                phone = clean_str(row.get("cliente_telefone"))
+                phone = normalize_phone(row.get("cliente_telefone"))
                 if not name:
                     raise ValueError("Nome do cliente é obrigatório")
                 if not phone:
                     raise ValueError("Telefone do cliente é obrigatório")
 
-                email = clean_str(row.get("cliente_email"))
+                email = clean_email(row.get("cliente_email"))
+
+                # Extra phones (optional)
+                phone_secondary = normalize_phone(row.get("cliente_telefone_2"))
+                phone_secondary_name = clean_str(row.get("cliente_nome_contato_2"))
+                phone_tertiary = normalize_phone(row.get("cliente_telefone_3"))
+                phone_tertiary_name = clean_str(row.get("cliente_nome_contato_3"))
+
+                # Social networks (optional)
+                instagram = clean_str(row.get("cliente_instagram"))
+                facebook = clean_str(row.get("cliente_facebook"))
 
                 document = clean_num(row.get("cliente_documento"))
                 if document:
@@ -500,6 +435,10 @@ class ClientService:
                         document = "0" + document
                     elif len(document) == 13:
                         document = "0" + document
+
+                    # Ignorar CPFs/CNPJs genéricos de preenchimento (ex: "0", "00000000000")
+                    if len(document) < 11 or document == "0" * len(document):
+                        document = None
 
                 document_type = None
                 if document:
@@ -510,16 +449,15 @@ class ClientService:
 
                 birth_date = parse_date(row.get("cliente_data_nascimento"))
 
-                cep = clean_num(row.get("cliente_cep"))
-                if cep and len(cep) == 7:
-                    cep = "0" + cep
+                # Use the improved clean_cep which already handles 7→8 digit fix
+                cep = clean_cep(row.get("cliente_cep"))
 
-                street = clean_str(row.get("cliente_logradouro"))
-                number = clean_str(row.get("cliente_numero"))
-                complement = clean_str(row.get("cliente_complemento"))
-                neighborhood = clean_str(row.get("cliente_bairro"))
-                city = clean_str(row.get("cliente_cidade"))
-                state = clean_str(row.get("cliente_estado"))
+                street = clean_address_str(row.get("cliente_logradouro"))
+                number = clean_address_number(row.get("cliente_numero"))
+                complement = clean_address_str(row.get("cliente_complemento"))
+                neighborhood = clean_address_str(row.get("cliente_bairro"))
+                city = clean_address_str(row.get("cliente_cidade"))
+                state = clean_state(row.get("cliente_estado"))
 
                 # Use pre-fetched CEP cache (no HTTP call per row)
                 if cep and cep in cep_cache and not (street and neighborhood and city and state):
@@ -552,6 +490,12 @@ class ClientService:
                         document=document,
                         document_type=document_type,
                         birth_date=birth_date,
+                        phone_secondary=phone_secondary,
+                        phone_secondary_name=phone_secondary_name,
+                        phone_tertiary=phone_tertiary,
+                        phone_tertiary_name=phone_tertiary_name,
+                        instagram=instagram,
+                        facebook=facebook,
                         cep=cep,
                         street=street,
                         number=number,
@@ -574,6 +518,9 @@ class ClientService:
                         ("birth_date", birth_date), ("cep", cep), ("street", street),
                         ("number", number), ("complement", complement),
                         ("neighborhood", neighborhood), ("city", city), ("state", state),
+                        ("phone_secondary", phone_secondary), ("phone_secondary_name", phone_secondary_name),
+                        ("phone_tertiary", phone_tertiary), ("phone_tertiary_name", phone_tertiary_name),
+                        ("instagram", instagram), ("facebook", facebook),
                     ]:
                         if val is not None and getattr(client, attr, None) != val:
                             setattr(client, attr, val)
@@ -588,17 +535,18 @@ class ClientService:
                 if not pet_name:
                     raise ValueError("Nome do pet é obrigatório")
 
-                pet_species_raw = clean_str(row.get("pet_especie"))
-                if not pet_species_raw:
+                pet_species_raw = row.get("pet_especie")
+                if not pet_species_raw or str(pet_species_raw).strip() in ("", "0"):
                     raise ValueError("Espécie do pet é obrigatória")
 
                 pet_species = parse_species(pet_species_raw)
                 pet_breed = clean_str(row.get("pet_raca"))
                 pet_coat_type = parse_coat_type(row.get("pet_tipo_pelagem"))
                 pet_coat_color = clean_str(row.get("pet_cor_pelagem"))
-                pet_gender = parse_gender(clean_str(row.get("pet_genero")))
+                pet_gender = parse_gender(row.get("pet_genero"))
                 pet_size = parse_size(row.get("pet_porte"))
-                pet_neutered = parse_neutered(clean_str(row.get("pet_castrado")))
+                pet_neutered = parse_neutered(row.get("pet_castrado"))
+                pet_deceased = parse_deceased(row.get("pet_obito"))
 
                 pet_birth = parse_date(row.get("pet_data_nascimento"))
                 pet_age_str = clean_num(row.get("pet_idade_aproximada"))
@@ -625,6 +573,7 @@ class ClientService:
                         gender=pet_gender,
                         size=pet_size,
                         is_neutered=pet_neutered,
+                        is_deceased=pet_deceased,
                         birth_date=pet_birth,
                         age=pet_age,
                         age_unit=pet_age_unit,
@@ -651,6 +600,7 @@ class ClientService:
                                 ("breed", pet_breed), ("coat_type", pet_coat_type),
                                 ("coat_color", pet_coat_color), ("gender", pet_gender),
                                 ("size", pet_size), ("is_neutered", pet_neutered),
+                                ("is_deceased", pet_deceased),
                                 ("birth_date", pet_birth), ("age", pet_age),
                                 ("age_unit", pet_age_unit), ("notes", pet_notes),
                             ]:

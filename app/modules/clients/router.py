@@ -53,7 +53,8 @@ def list_clients(
 ):
     service = ClientService()
     tenant_id = request.state.tenant_user.tenant_id
-    return service.list_clients(db, tenant_id)
+    clients = service.list_clients(db, tenant_id)
+    return [ClientSummaryResponse.from_orm_client(c) for c in clients]
 
 
 @router.get("/{client_id}", response_model=ClientResponse)

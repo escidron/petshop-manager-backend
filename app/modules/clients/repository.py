@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.modules.clients.models import Client
 from app.modules.clients.schemas import ClientCreate, ClientUpdate
 
@@ -31,6 +31,7 @@ class ClientRepository:
     ) -> list[Client]:
         return (
             db.query(Client)
+            .options(joinedload(Client.pets))
             .filter(Client.tenant_id == tenant_id)
             .order_by(Client.name)
             .all()

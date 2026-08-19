@@ -20,6 +20,7 @@ from app.modules.commissions.router import router as commissions_router
 from app.modules.waiting_list.router import router as waiting_list_router
 from app.modules.whatsapp.router import router as whatsapp_router
 from app.modules.observability.router import router as observability_router
+from app.modules.dashboard.router import router as dashboard_router
 
 api_router = APIRouter()
 
@@ -45,3 +46,4 @@ api_router.include_router(webhooks_router)
 api_router.include_router(waiting_list_router)
 api_router.include_router(whatsapp_router)
 api_router.include_router(observability_router)
+api_router.include_router(dashboard_router)
