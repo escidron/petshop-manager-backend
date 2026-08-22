@@ -1,12 +1,23 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, Literal, List
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 AppliesTo = Literal["service", "product", "both"]
 CommissionType = Literal["percentage", "fixed"]
 CommissionStatus = Literal["pending", "paid"]
+
+
+class CommissionRuleServiceInfo(BaseModel):
+    id: int
+    name: str
+    species: Optional[str] = None
+    size: Optional[str] = None
+    coat_type: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 class CommissionRuleBase(BaseModel):
@@ -41,9 +52,37 @@ class CommissionRuleResponse(CommissionRuleBase):
     id: int
     tenant_id: int
     created_at: datetime
+    employee_name: Optional[str] = None
+    services: List[CommissionRuleServiceInfo] = []
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_relations(cls, data):
+        if isinstance(data, dict):
+            return data
+        employee = getattr(data, "employee", None)
+        employee_name = employee.name if employee else None
+        services = getattr(data, "services", [])
+        return {
+            "id": data.id,
+            "tenant_id": data.tenant_id,
+            "name": data.name,
+            "employee_id": data.employee_id,
+            "employee_name": employee_name,
+            "service_ids": [s.id for s in services],
+            "services": services,
+            "applies_to": data.applies_to,
+            "commission_type": data.commission_type,
+            "value": data.value,
+            "valid_from": data.valid_from,
+            "valid_until": data.valid_until,
+            "is_active": data.is_active,
+            "created_at": data.created_at,
+        }
+
 
 
 class CommissionEntryResponse(BaseModel):
