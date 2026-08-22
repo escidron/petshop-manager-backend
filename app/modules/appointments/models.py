@@ -155,11 +155,13 @@ class AppointmentItem(Base):
     appointment_id: Mapped[int] = mapped_column(
         ForeignKey("appointments.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
 
     pet_id: Mapped[int] = mapped_column(
         ForeignKey("pets.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
 
     appointment = relationship("Appointment", back_populates="items")

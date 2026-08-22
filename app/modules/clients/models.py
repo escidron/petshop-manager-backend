@@ -3,6 +3,7 @@ from sqlalchemy import Date, String, Boolean, ForeignKey, DateTime, func, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config.database import Base
+from .import_jobs import ImportJob
 
 
 class Client(Base):

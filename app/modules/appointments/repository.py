@@ -124,6 +124,7 @@ class AppointmentRepository:
     ) -> list[Appointment]:
         return (
             db.query(Appointment)
+            .options(*_eager_options())
             .filter(
                 Appointment.tenant_id == tenant_id,
                 Appointment.client_id == client_id,

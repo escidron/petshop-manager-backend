@@ -39,7 +39,10 @@ class CommissionRuleRepository:
     def get_by_id(self, db: Session, tenant_id: int, rule_id: int) -> CommissionRule | None:
         return (
             db.query(CommissionRule)
-            .options(joinedload(CommissionRule.services))
+            .options(
+                joinedload(CommissionRule.employee),
+                joinedload(CommissionRule.services),
+            )
             .filter(CommissionRule.id == rule_id, CommissionRule.tenant_id == tenant_id)
             .first()
         )
@@ -47,12 +50,16 @@ class CommissionRuleRepository:
     def list(self, db: Session, tenant_id: int) -> list[CommissionRule]:
         rules = (
             db.query(CommissionRule)
-            .options(joinedload(CommissionRule.services))
+            .options(
+                joinedload(CommissionRule.employee),
+                joinedload(CommissionRule.services),
+            )
             .filter(CommissionRule.tenant_id == tenant_id)
             .order_by(CommissionRule.name)
             .all()
         )
         return sorted(rules, key=lambda r: -_specificity(r))
+
 
     def update(self, db: Session, rule: CommissionRule, data: CommissionRuleUpdate) -> CommissionRule:
         for field, value in data.model_dump(exclude_unset=True, exclude={"service_ids"}).items():

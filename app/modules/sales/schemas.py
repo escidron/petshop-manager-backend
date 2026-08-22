@@ -1,6 +1,14 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Any
+
+from app.modules.clients.schemas import ClientResponse
+from app.modules.tenant_services.schemas import ServiceResponse
+from app.modules.products.schemas import ProductResponse
+from app.modules.packages.schemas import Package
+from app.modules.appointments.schemas import AppointmentResponse
+from app.modules.client_packages.schemas import ClientPackageResponse
+from app.modules.pets.schemas import PetResponse
 
 # Sale Items
 
@@ -80,3 +88,17 @@ class SaleResponse(SaleBase):
 
     class Config:
         from_attributes = True
+
+# POS Optimization Schemas
+class POSStartupResponse(BaseModel):
+    products: list[ProductResponse]
+    services: list[ServiceResponse]
+    packages: list[Package]
+    clients: list[ClientResponse]
+    appointments: list[AppointmentResponse]
+    pets: list[PetResponse]
+
+class POSClientDetailsResponse(BaseModel):
+    client_pets: list[PetResponse]
+    client_packages: list[ClientPackageResponse]
+    client_appointments: list[AppointmentResponse]

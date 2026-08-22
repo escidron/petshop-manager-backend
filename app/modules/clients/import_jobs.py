@@ -23,11 +23,7 @@ class ImportJobModel(Base):
     errors: Mapped[list] = mapped_column(JSON, default=list)
 
 
-# Ensure table exists in database on import
-try:
-    ImportJobModel.__table__.create(bind=engine, checkfirst=True)
-except Exception:
-    pass
+# Table creation is now handled by Alembic migrations
 
 
 class ImportJob(TypedDict):
