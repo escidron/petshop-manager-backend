@@ -78,6 +78,34 @@ class SubscriptionUpdate(BaseModel):
     payment_method: str
 
 
+class ProrationPreviewRequest(BaseModel):
+    package_code: str
+
+
+class ProrationPreviewResponse(BaseModel):
+    package_code: str
+    package_name: str
+    monthly_price_cents: int
+    prorated_price_cents: int
+    prorated_messages: Optional[int] = None
+    total_messages: Optional[int] = None
+    billing_day: int
+    days_remaining: int
+    total_days_in_cycle: int
+    next_billing_date: str
+    is_prorated: bool
+
+
+class HirePackageRequest(BaseModel):
+    package_code: str
+    payment_method: str = "credit_card"  # "credit_card" | "pix"
+    card_token: Optional[str] = None
+    card_id: Optional[str] = None
+    document: Optional[str] = None
+    billing_address: Optional[BillingAddressSchema] = None
+    idempotency_key: Optional[str] = None
+
+
 class SubscriptionResponse(BaseModel):
     id: int
     tenant_id: int
@@ -91,6 +119,15 @@ class SubscriptionResponse(BaseModel):
     pagarme_subscription_id: Optional[str] = None
     plan: PlanResponse
     eligible_for_refund: Optional[bool] = False
+
+    # WhatsApp Add-on Package Tracking
+    whatsapp_package_id: Optional[str] = None
+    whatsapp_package_status: Optional[str] = "inactive"
+    whatsapp_messages_limit: Optional[int] = 0
+    whatsapp_messages_used: Optional[int] = 0
+    whatsapp_period_end: Optional[datetime] = None
+    pagarme_whatsapp_subscription_id: Optional[str] = None
+    billing_day: Optional[int] = 1
 
     class Config:
         from_attributes = True

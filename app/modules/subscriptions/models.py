@@ -96,6 +96,33 @@ class Subscription(Base):
         default="card",
     )
 
+    # WhatsApp Add-on Package Tracking
+    whatsapp_package_id: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
+    whatsapp_package_status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        server_default="inactive",
+        default="inactive",
+    )
+    whatsapp_messages_limit: Mapped[int] = mapped_column(
+        default=0, server_default="0"
+    )
+    whatsapp_messages_used: Mapped[int] = mapped_column(
+        default=0, server_default="0"
+    )
+    whatsapp_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    pagarme_whatsapp_subscription_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    billing_day: Mapped[int] = mapped_column(
+        default=1, server_default="1"
+    )
+
     tenant = relationship("Tenant")
     plan = relationship("Plan")
     charges = relationship("SubscriptionCharge", back_populates="subscription", cascade="all, delete-orphan")

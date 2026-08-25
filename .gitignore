@@ -1,2 +1,15 @@
 .env
 /.vscode
+scripts/
+load-tests/
+scratch/
+tmp/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+petshop.db
