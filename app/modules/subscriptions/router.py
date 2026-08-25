@@ -8,7 +8,9 @@ from app.modules.subscriptions.repository import SubscriptionRepository, Subscri
 from app.modules.subscriptions.schemas import (
     AddPaymentMethodRequest,
     CheckoutRequest,
+    HirePackageRequest,
     PaymentMethodResponse,
+    ProrationPreviewResponse,
     SubscriptionResponse,
     SubscriptionChargeResponse,
     UpdateChargeCardRequest,
@@ -218,4 +220,54 @@ def cancel_charge(
     """Cancela/estorna uma cobrança no Pagar.me."""
     tenant = ctx["tenant"]
     return service.cancel_charge(db, tenant, charge_id)
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp Packages Endpoints (Proration + Checkout + Cancel)
+# ---------------------------------------------------------------------------
+
+@router.get("/package/preview-proration", response_model=ProrationPreviewResponse)
+def preview_package_proration(
+    package_code: str,
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Calcula o valor pro-rata proporcional do pacote até o próximo billing_day."""
+    tenant = ctx["tenant"]
+    return service.preview_package_proration(db, tenant, package_code)
+
+
+@router.post("/package/checkout", response_model=dict)
+def checkout_package(
+    body: HirePackageRequest,
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Contrata o pacote de WhatsApp com cobrança proporcional imediata e agendamento da assinatura no Pagar.me."""
+    tenant = ctx["tenant"]
+    user = ctx["user"]
+    return service.checkout_package(
+        db=db,
+        tenant=tenant,
+        user_email=user.email,
+        user_name=user.name,
+        package_code=body.package_code,
+        payment_method=body.payment_method,
+        card_token=body.card_token,
+        card_id=body.card_id,
+        document=body.document,
+        billing_address=body.billing_address.model_dump() if body.billing_address else None,
+        idempotency_key=body.idempotency_key,
+    )
+
+
+@router.post("/package/cancel", response_model=dict)
+def cancel_package(
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Cancela a assinatura do pacote de WhatsApp no Pagar.me."""
+    tenant = ctx["tenant"]
+    return service.cancel_package(db, tenant)
+
 

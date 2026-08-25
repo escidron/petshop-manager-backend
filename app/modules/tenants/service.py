@@ -81,6 +81,20 @@ class TenantService:
 
             now = datetime.now(timezone.utc)
 
+            # Process WhatsApp package if selected
+            pkg_code = data.whatsapp_package
+            pkg_id = None
+            pkg_status = "inactive"
+            pkg_limit = 0
+            if pkg_code:
+                if not pkg_code.startswith("pkg_"):
+                    pkg_code = f"pkg_{pkg_code}"
+                pkg_limits = {"pkg_200": 200, "pkg_500": 500, "pkg_1000": 1000, "pkg_2000": 2000}
+                if pkg_code in pkg_limits:
+                    pkg_id = pkg_code
+                    pkg_status = "pending_payment"
+                    pkg_limit = pkg_limits[pkg_code]
+
             # 6️⃣ Criar Subscription
             if plan.trial_days > 0:
                 trial_end = now + timedelta(days=plan.trial_days)
@@ -92,6 +106,11 @@ class TenantService:
                     status="trialing",
                     trial_ends_at=trial_end,
                     current_period_end=trial_end,
+                    whatsapp_package_id=pkg_id,
+                    whatsapp_package_status=pkg_status,
+                    whatsapp_messages_limit=pkg_limit,
+                    whatsapp_messages_used=0,
+                    billing_day=now.day,
                 )
             else:
                 period_end = now + timedelta(days=30)
@@ -102,6 +121,11 @@ class TenantService:
                     plan_id=plan.id,
                     status="incomplete",
                     current_period_end=period_end,
+                    whatsapp_package_id=pkg_id,
+                    whatsapp_package_status=pkg_status,
+                    whatsapp_messages_limit=pkg_limit,
+                    whatsapp_messages_used=0,
+                    billing_day=now.day,
                 )
 
             print("[DEBUG CREATE_TENANT] Committing transaction...")

@@ -6,7 +6,7 @@ from app.modules.users.models import TenantUser
 
 class TenantRepository:
     def create(self, db: Session, data: TenantCreate) -> Tenant:
-        tenant_data = data.model_dump(exclude={"plan_code"})
+        tenant_data = data.model_dump(exclude={"plan_code", "whatsapp_package"})
         tenant = Tenant(**tenant_data)
 
         db.add(tenant)

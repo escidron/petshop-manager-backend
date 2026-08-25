@@ -15,6 +15,7 @@ class SubscriptionRepository:
         current_period_end: datetime,
         trial_ends_at: datetime | None = None,
         pagarme_subscription_id: str | None = None,
+        **kwargs,
     ) -> Subscription:
         subscription = Subscription(
             tenant_id=tenant_id,
@@ -23,6 +24,7 @@ class SubscriptionRepository:
             trial_ends_at=trial_ends_at,
             current_period_end=current_period_end,
             pagarme_subscription_id=pagarme_subscription_id,
+            **kwargs,
         )
 
         db.add(subscription)

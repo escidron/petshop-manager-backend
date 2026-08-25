@@ -13,6 +13,7 @@ class TenantBase(BaseModel):
     plan_code: str = Field(..., max_length=50)
     onboarding_step: str = Field("services", max_length=50)
     document: Optional[str] = Field(None, max_length=20)
+    whatsapp_package: Optional[str] = Field(None, max_length=50)
 
 class TenantCreate(TenantBase):
     pass
