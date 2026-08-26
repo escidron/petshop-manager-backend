@@ -15,6 +15,7 @@ class UserCreate(UserBase):
 # ----------------- Resposta -----------------
 class UserResponse(UserBase):
     id: int
+    permissions: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True  # Pydantic v2: popula a partir de atributos de ORM

@@ -94,6 +94,10 @@ def get_current_tenant(
 
     request.state.tenant_user = tenant_user
 
+    # Injeta a role e permissões específicas do usuário neste tenant
+    user.role = tenant_user.role
+    user.permissions = tenant_user.permissions or []
+
     # 🔐 Set RLS tenant ID for the session
     db.execute(text("SET LOCAL app.current_tenant_id = :tid"), {"tid": tenant_id})
 

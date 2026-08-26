@@ -56,14 +56,31 @@ class TenantUserRepository:
         tenant_id: int,
         user_id: int,
         role: str,
+        permissions: list[str] | None = None,
     ):
         tenant_user = TenantUser(
             tenant_id=tenant_id,
             user_id=user_id,
             role=role,
+            permissions=permissions,
         )
         db.add(tenant_user)
         db.flush()
+        return tenant_user
+
+    def update_permissions(
+        self,
+        db: Session,
+        user_id: int,
+        tenant_id: int,
+        permissions: list[str],
+    ) -> TenantUser | None:
+        tenant_user = self.get_by_user_and_tenant(db, user_id, tenant_id)
+        if not tenant_user:
+            return None
+        tenant_user.permissions = permissions
+        db.commit()
+        db.refresh(tenant_user)
         return tenant_user
 
     def list_by_tenant(self, db: Session, tenant_id: int):

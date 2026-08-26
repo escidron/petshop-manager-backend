@@ -105,6 +105,8 @@ class AuthService:
                 "id": str(user.id),
                 "role": "owner",
                 "tenant_id": str(result.id),
+                "name": user.name,
+                "permissions": [],
             },
         }
 
@@ -286,5 +288,6 @@ def authenticate_user(
             "role": tenant.role,
             "tenant_id": str(tenant.tenant_id),
             "name": user.name,
+            "permissions": tenant.permissions or [],
         },
     }

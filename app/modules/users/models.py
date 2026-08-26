@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import DateTime, ForeignKey, String, Boolean, func
+from sqlalchemy import DateTime, ForeignKey, String, Boolean, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config.database import Base
@@ -40,6 +40,7 @@ class TenantUser(Base):
     # role do usuário DENTRO daquele tenant
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    permissions: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
