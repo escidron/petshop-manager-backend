@@ -52,6 +52,27 @@ class AppointmentItemResponse(BaseModel):
             return data
         # ORM object: injeta is_package_covered e employee_id em cada serviço
         covered_ids = {c.service_id for c in getattr(data, "coverages", [])}
+
+        # Se ainda não foi finalizado/coberto, verifica se o pet possui créditos ativos de pacote para o serviço
+        available_package_service_ids = set()
+        pet = getattr(data, "pet", None)
+        if pet and not covered_ids:
+            client_pkgs = getattr(pet, "client_packages", []) or []
+            from datetime import timezone
+            now = datetime.now(timezone.utc)
+            for pkg in client_pkgs:
+                if not getattr(pkg, "is_active", False):
+                    continue
+                exp = getattr(pkg, "expires_at", None)
+                if exp is not None:
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                    if exp <= now:
+                        continue
+                for credit in getattr(pkg, "credits", []) or []:
+                    if credit.service_id and (credit.total_qty - credit.used_qty) > 0:
+                        available_package_service_ids.add(credit.service_id)
+
         emp_map = {item_svc.service_id: item_svc.employee_id for item_svc in getattr(data, "item_services", [])}
         services_data = [
             {
@@ -59,7 +80,7 @@ class AppointmentItemResponse(BaseModel):
                 "name": svc.name,
                 "price_cents": svc.price_cents,
                 "duration_minutes": getattr(svc, "duration_minutes", None),
-                "is_package_covered": svc.id in covered_ids,
+                "is_package_covered": (svc.id in covered_ids) or (svc.id in available_package_service_ids),
                 "employee_id": emp_map.get(svc.id),
                 "species": getattr(svc, "species", None),
                 "size": getattr(svc, "size", None),

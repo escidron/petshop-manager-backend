@@ -61,7 +61,7 @@ class ClientPackage(Base):
         cascade="all, delete-orphan",
     )
     package = relationship("Package")
-    pets = relationship("Pet", secondary="client_package_pets")
+    pets = relationship("Pet", secondary="client_package_pets", back_populates="client_packages")
     client = relationship("Client")
 
 
