@@ -16,6 +16,7 @@ from .schemas import (
     TenantResponse,
     TenantUserCreate,
     TenantUserResponse,
+    TenantUserUpdatePermissions,
 )
 from app.modules.subscriptions.schemas import SubscriptionUpdate, SubscriptionResponse
 from .service import TenantService
@@ -40,6 +41,19 @@ def create_tenant_user(
 ):
     service = TenantService()
     return service.create_tenant_user(db, context["tenant"].id, data)
+
+
+@router.put("/users/{user_id}/permissions", response_model=TenantUserResponse)
+def update_tenant_user_permissions(
+    user_id: int,
+    data: TenantUserUpdatePermissions,
+    db: Session = Depends(get_db),
+    context: dict = Depends(require_owner),
+):
+    service = TenantService()
+    return service.update_tenant_user_permissions(
+        db, context["tenant"].id, user_id, data.permissions
+    )
 
 
 @router.delete("/users/{user_id}", status_code=204)

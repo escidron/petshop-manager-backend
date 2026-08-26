@@ -67,6 +67,7 @@ class TenantUserCreate(BaseModel):
     email: EmailStr = Field(..., max_length=255)
     password: str = Field(..., max_length=100)
     role: str = Field("employee", max_length=20)
+    permissions: Optional[list[str]] = None
 
 
 class TenantUserResponse(BaseModel):
@@ -75,4 +76,9 @@ class TenantUserResponse(BaseModel):
     email: str
     role: str
     is_active: bool
+    permissions: Optional[list[str]] = None
+
+
+class TenantUserUpdatePermissions(BaseModel):
+    permissions: list[str] = Field(default_factory=list)
 

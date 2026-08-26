@@ -103,6 +103,7 @@ class Pet(Base):
     # 🔗 Relacionamentos
     client = relationship("Client", back_populates="pets")
     photos = relationship("PetPhoto", back_populates="pet", cascade="all, delete-orphan")
+    client_packages = relationship("ClientPackage", secondary="client_package_pets", back_populates="pets")
 
     # 🧠 Helpers
     @property

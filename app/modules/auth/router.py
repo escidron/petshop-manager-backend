@@ -221,6 +221,7 @@ def select_tenant(
             "role": tenant_user.role,
             "tenant_id": str(data.tenant_id),
             "name": user.name,
+            "permissions": tenant_user.permissions or [],
         }
     }
 
@@ -284,6 +285,7 @@ def switch_tenant(
             "role": tenant_user.role,
             "tenant_id": str(data.tenant_id),
             "name": user.name,
+            "permissions": tenant_user.permissions or [],
         }
     }
 

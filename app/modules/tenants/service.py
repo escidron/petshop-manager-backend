@@ -230,6 +230,7 @@ class TenantService:
                 "email": user.email,
                 "role": tenant_user.role,
                 "is_active": user.is_active,
+                "permissions": tenant_user.permissions,
             }
             for tenant_user, user in results
         ]
@@ -254,12 +255,14 @@ class TenantService:
             if tenant_user:
                 tenant_user.active = True
                 tenant_user.role = data.role
+                tenant_user.permissions = data.permissions
             else:
                 self.tenant_users_repository.create(
                     db=db,
                     tenant_id=tenant_id,
                     user_id=existing.id,
                     role=data.role,
+                    permissions=data.permissions,
                 )
 
             db.commit()
@@ -270,6 +273,7 @@ class TenantService:
                 "email": existing.email,
                 "role": data.role,
                 "is_active": existing.is_active,
+                "permissions": data.permissions,
             }
 
         user_create = UserCreate(
@@ -285,6 +289,7 @@ class TenantService:
             tenant_id=tenant_id,
             user_id=user.id,
             role=data.role,
+            permissions=data.permissions,
         )
 
         db.commit()
@@ -296,6 +301,31 @@ class TenantService:
             "email": user.email,
             "role": data.role,
             "is_active": user.is_active,
+            "permissions": data.permissions,
+        }
+
+    def update_tenant_user_permissions(
+        self, db: Session, tenant_id: int, user_id: int, permissions: list[str]
+    ):
+        tenant_user = self.tenant_users_repository.update_permissions(
+            db=db,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            permissions=permissions,
+        )
+        if not tenant_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuário não encontrado neste estabelecimento",
+            )
+        user = db.query(User).filter(User.id == user_id).first()
+        return {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": tenant_user.role,
+            "is_active": user.is_active,
+            "permissions": tenant_user.permissions,
         }
 
     def remove_tenant_user(

@@ -4,8 +4,7 @@ from sqlalchemy import func
 
 from .models import Appointment, AppointmentItem, AppointmentPackageCoverage
 from app.modules.tenant_services.models import Service
-
-
+from app.modules.client_packages.models import ClientPackage
 from app.modules.pets.models import Pet
 
 def _eager_options():
@@ -16,6 +15,10 @@ def _eager_options():
         selectinload(Appointment.items)                          # one-to-many → selectinload
             .joinedload(AppointmentItem.pet)                     # many-to-one dentro do item
             .selectinload(Pet.photos),                           # one-to-many (pet.photos)
+        selectinload(Appointment.items)
+            .joinedload(AppointmentItem.pet)
+            .selectinload(Pet.client_packages)
+            .selectinload(ClientPackage.credits),
         selectinload(Appointment.items)
             .selectinload(AppointmentItem.services),             # many-to-many → selectinload
         selectinload(Appointment.items)

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List
 
 from app.modules.tenants.schemas import TenantCreate, TenantResponse
@@ -50,6 +50,8 @@ class UserAuthData(BaseModel):
     id: str
     role: str
     tenant_id: str
+    name: str = ""
+    permissions: list[str] = Field(default_factory=list)
 
 
 class AuthResponse(BaseModel):
