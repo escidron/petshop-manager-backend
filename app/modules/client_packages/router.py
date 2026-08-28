@@ -91,7 +91,14 @@ def consume_credit(
     tenant_id = request.state.tenant_user.tenant_id
     user_id = request.state.tenant_user.user_id
     svc = ClientPackageService()
-    return svc.consume_credit(db, tenant_id, credit_id, user_id=user_id, notes=payload.notes)
+    return svc.consume_credit(
+        db,
+        tenant_id,
+        credit_id,
+        user_id=user_id,
+        notes=payload.notes,
+        consumed_at=payload.consumed_at,
+    )
 
 
 @router.post("/credits/{credit_id}/revert", response_model=ClientPackageCreditResponse)

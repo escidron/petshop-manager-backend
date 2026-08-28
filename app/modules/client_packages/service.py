@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -112,7 +113,13 @@ class ClientPackageService:
         self.repo.deactivate(db, cp)
 
     def consume_credit(
-        self, db: Session, tenant_id: int, credit_id: int, user_id: int | None = None, notes: str = None
+        self,
+        db: Session,
+        tenant_id: int,
+        credit_id: int,
+        user_id: int | None = None,
+        notes: str | None = None,
+        consumed_at: datetime | None = None,
     ) -> ClientPackageCredit:
         credit = (
             db.query(ClientPackageCredit)
@@ -138,14 +145,18 @@ class ClientPackageService:
         credit.used_qty += 1
         db.add(credit)
 
-        usage = ClientPackageUsage(
-            tenant_id=tenant_id,
-            client_package_id=credit.client_package_id,
-            credit_id=credit.id,
-            change_qty=1,
-            notes=notes or "Consumo manual",
-            user_id=user_id,
-        )
+        usage_kwargs = {
+            "tenant_id": tenant_id,
+            "client_package_id": credit.client_package_id,
+            "credit_id": credit.id,
+            "change_qty": 1,
+            "notes": notes or "Consumo manual",
+            "user_id": user_id,
+        }
+        if consumed_at is not None:
+            usage_kwargs["created_at"] = consumed_at
+
+        usage = ClientPackageUsage(**usage_kwargs)
         db.add(usage)
 
         client_pkg = credit.client_package

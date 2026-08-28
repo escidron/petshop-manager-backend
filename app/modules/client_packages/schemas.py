@@ -24,6 +24,7 @@ class ClientPackageSellRequest(BaseModel):
 
 class ConsumeCreditRequest(BaseModel):
     notes: str | None = None
+    consumed_at: datetime | None = None
 
 
 class ClientPackageClientInfo(BaseModel):
