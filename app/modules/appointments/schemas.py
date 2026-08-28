@@ -112,6 +112,7 @@ class AppointmentUpdate(BaseModel):
     scheduled_at: datetime | None = None
     notes: str | None = None
     items: List[AppointmentItemCreate] | None = None
+    update_all_future: bool = False
 
 
 class AppointmentResponse(BaseModel):

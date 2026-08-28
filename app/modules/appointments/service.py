@@ -181,6 +181,7 @@ class AppointmentService:
         data: AppointmentUpdate,
     ):
         appointment = self.get(db, tenant_id, appointment_id)
+        old_scheduled_at = appointment.scheduled_at
 
         # 🔹 Atualizar campos simples
         if data.scheduled_at is not None:
@@ -217,6 +218,45 @@ class AppointmentService:
                     pet_id=item.pet_id,
                     services=services,
                 )
+
+        if data.update_all_future and appointment.recurrence_id:
+            from app.modules.appointments.models import Appointment
+            time_delta = (data.scheduled_at - old_scheduled_at) if data.scheduled_at is not None else None
+
+            future_appointments = (
+                db.query(Appointment)
+                .filter(
+                    Appointment.tenant_id == tenant_id,
+                    Appointment.recurrence_id == appointment.recurrence_id,
+                    Appointment.scheduled_at > old_scheduled_at,
+                    Appointment.id != appointment.id,
+                    Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
+                )
+                .order_by(Appointment.scheduled_at.asc())
+                .all()
+            )
+
+            for future_appt in future_appointments:
+                if time_delta is not None:
+                    future_appt.scheduled_at = future_appt.scheduled_at + time_delta
+
+                if data.notes is not None:
+                    future_appt.notes = data.notes
+
+                if data.items is not None:
+                    self.repo.delete_items(db, future_appt)
+                    for item in data.items:
+                        services = self._get_services(
+                            db,
+                            tenant_id,
+                            item.service_ids,
+                        )
+                        self.repo.create_item(
+                            db=db,
+                            appointment=future_appt,
+                            pet_id=item.pet_id,
+                            services=services,
+                        )
 
         db.commit()
 
