@@ -16,18 +16,35 @@ def get_current_user(
 ):
     token = request.cookies.get("access_token")
     if not token:
-        raise HTTPException(status_code=401)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token ausente",
+        )
 
     payload = decode_token(token)
-    if not payload:
-        raise HTTPException(status_code=401)
+    if not payload or payload.get("expired"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expirado ou inválido",
+        )
+
+    try:
+        user_id = int(payload["user_id"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Payload do token inválido",
+        )
 
     user = db.query(User).filter(
-        User.id == int(payload["user_id"])
+        User.id == user_id
     ).first()
 
     if not user:
-        raise HTTPException(status_code=401)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuário não encontrado",
+        )
 
     return user
 
@@ -43,11 +60,16 @@ def get_current_tenant(
         )
 
     payload = decode_token(token)
+    if not payload or payload.get("expired"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expired or invalid",
+        )
 
     try:
         user_id = int(payload["user_id"])
         tenant_id = int(payload["tenant_id"])
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",

@@ -113,7 +113,7 @@ def login(
     return {"user": result["user"]}
 
 @router.post("/refresh")
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 def refresh_token(
     request: Request,
     response: Response,
