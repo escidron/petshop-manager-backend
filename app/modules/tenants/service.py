@@ -128,10 +128,28 @@ class TenantService:
                     billing_day=now.day,
                 )
 
+            # 7️⃣ Seed default CashRegister and default CashDestinationAccount
+            from app.modules.cash_register.models import CashRegister, CashDestinationAccount
+            default_reg = CashRegister(
+                tenant_id=tenant.id,
+                name="Caixa Principal",
+                is_active=True,
+            )
+            db.add(default_reg)
+
+            default_acc = CashDestinationAccount(
+                tenant_id=tenant.id,
+                name="Caixa Administrativo",
+                account_type="internal_cash",
+                is_default=True,
+                is_active=True,
+            )
+            db.add(default_acc)
+
             print("[DEBUG CREATE_TENANT] Committing transaction...")
             db.commit()
             tenant.subscription = sub
-            print("[DEBUG CREATE_TENANT] Success! Tenant and subscription committed.")
+            print("[DEBUG CREATE_TENANT] Success! Tenant, subscription, default register, and destination account committed.")
             return tenant
         except Exception as e:
             print(f"[DEBUG CREATE_TENANT] ERROR occurred: {e}")

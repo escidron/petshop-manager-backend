@@ -120,7 +120,7 @@ class SalesService:
             from app.modules.cash_register.models import CashMovement
 
             cash_repo = CashRegisterRepository()
-            active_session = cash_repo.get_active_session(db, tenant_id)
+            active_session = cash_repo.get_active_session(db, tenant_id, data.cash_register_id)
             if active_session:
                 sale.cash_session_id = active_session.id
                 db.add(sale)

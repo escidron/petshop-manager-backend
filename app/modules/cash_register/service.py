@@ -4,9 +4,14 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from .models import CashRegister, CashSession, CashMovement
+from .models import CashRegister, CashSession, CashMovement, CashDestinationAccount
 from .schemas import (
     CashRegisterResponse,
+    CashRegisterCreate,
+    CashRegisterUpdate,
+    CashDestinationAccountResponse,
+    CashDestinationAccountCreate,
+    CashDestinationAccountUpdate,
     CashMovementResponse,
     CashSessionBrief,
     PaymentMethodSummary,
@@ -44,13 +49,15 @@ class CashRegisterService:
     def _auto_close_session(self, db: Session, session: CashSession) -> CashSession:
         current_balance = self._get_current_balance(db, session)
         session.status = "closed"
-        session.closed_at = datetime.now()
+        # Stamp at 23:59:59 of the date the session was opened
+        close_timestamp = datetime.combine(session.opened_at.date(), datetime.max.time().replace(microsecond=0))
+        session.closed_at = close_timestamp
         session.expected_closing_amount = current_balance
         session.actual_closing_amount = current_balance
         session.difference_amount = 0.0
-        session.closing_notes = "Fechamento automático por virada de turno/dia."
+        session.closing_notes = "Fechamento automático por virada de dia (23:59)."
         
-        # Movement for auto-closing
+        # Movement for auto-closing stamped at 23:59:59 of the opened date
         auto_movement = CashMovement(
             tenant_id=session.tenant_id,
             session_id=session.id,
@@ -60,6 +67,7 @@ class CashRegisterService:
             balance_after=current_balance,
             description="Fechamento automático por virada de dia.",
             destination_or_origin="Fechamento Automático",
+            created_at=close_timestamp,
         )
         self.repository.create_movement(db, auto_movement)
         return self.repository.update_session(db, session)
@@ -153,8 +161,14 @@ class CashRegisterService:
             movements=movements_resp,
         )
 
-    def get_current_status(self, db: Session, tenant_id: int) -> CurrentCashStatusResponse:
-        register = self.repository.get_or_create_default_register(db, tenant_id)
+    def get_current_status(self, db: Session, tenant_id: int, cash_register_id: Optional[int] = None) -> CurrentCashStatusResponse:
+        if cash_register_id:
+            register = self.repository.get_register_by_id(db, tenant_id, cash_register_id)
+            if not register:
+                register = self.repository.get_or_create_default_register(db, tenant_id)
+        else:
+            register = self.repository.get_or_create_default_register(db, tenant_id)
+
         active_session = self.repository.get_active_session(db, tenant_id, register.id)
 
         # Check if active session was opened on a previous day and should be auto-closed
@@ -230,17 +244,21 @@ class CashRegisterService:
         return self.build_session_detail(db, tenant_id, new_session)
 
     def add_supply(self, db: Session, tenant_id: int, user_id: int, data: CashSupplyRequest) -> CashSessionDetailResponse:
-        active_session = self.repository.get_active_session(db, tenant_id)
+        register_id = data.cash_register_id
+        if not register_id:
+            register = self.repository.get_or_create_default_register(db, tenant_id)
+            register_id = register.id
+
+        active_session = self.repository.get_active_session(db, tenant_id, register_id)
         if active_session and active_session.opened_at.date() < datetime.now().date():
             self._auto_close_session(db, active_session)
             active_session = None
 
         if not active_session:
-            suggested_amount = self.get_current_status(db, tenant_id).suggested_opening_amount
-            register = self.repository.get_or_create_default_register(db, tenant_id)
+            suggested_amount = self.get_current_status(db, tenant_id, register_id).suggested_opening_amount
             active_session = CashSession(
                 tenant_id=tenant_id,
-                cash_register_id=register.id,
+                cash_register_id=register_id,
                 status="open",
                 opened_at=datetime.now(),
                 opened_by_user_id=user_id,
@@ -277,17 +295,21 @@ class CashRegisterService:
         return self.build_session_detail(db, tenant_id, active_session)
 
     def add_bleed(self, db: Session, tenant_id: int, user_id: int, data: CashBleedRequest) -> CashSessionDetailResponse:
-        active_session = self.repository.get_active_session(db, tenant_id)
+        register_id = data.cash_register_id
+        if not register_id:
+            register = self.repository.get_or_create_default_register(db, tenant_id)
+            register_id = register.id
+
+        active_session = self.repository.get_active_session(db, tenant_id, register_id)
         if active_session and active_session.opened_at.date() < datetime.now().date():
             self._auto_close_session(db, active_session)
             active_session = None
 
         if not active_session:
-            suggested_amount = self.get_current_status(db, tenant_id).suggested_opening_amount
-            register = self.repository.get_or_create_default_register(db, tenant_id)
+            suggested_amount = self.get_current_status(db, tenant_id, register_id).suggested_opening_amount
             active_session = CashSession(
                 tenant_id=tenant_id,
-                cash_register_id=register.id,
+                cash_register_id=register_id,
                 status="open",
                 opened_at=datetime.now(),
                 opened_by_user_id=user_id,
@@ -324,7 +346,11 @@ class CashRegisterService:
         return self.build_session_detail(db, tenant_id, active_session)
 
     def close_session(self, db: Session, tenant_id: int, user_id: int, data: CashCloseRequest) -> CashSessionDetailResponse:
-        active_session = self.repository.get_active_session(db, tenant_id)
+        if data.cash_register_id:
+            active_session = self.repository.get_active_session(db, tenant_id, data.cash_register_id)
+        else:
+            active_session = self.repository.get_active_session(db, tenant_id)
+
         if not active_session:
             raise HTTPException(status_code=400, detail="Nenhum caixa está aberto no momento para ser fechado.")
 
@@ -361,10 +387,13 @@ class CashRegisterService:
         tenant_id: int,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
+        cash_register_id: Optional[int] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> List[CashSessionDetailResponse]:
-        sessions = self.repository.list_sessions(db, tenant_id, start_date=start_date, end_date=end_date, skip=skip, limit=limit)
+        sessions = self.repository.list_sessions(
+            db, tenant_id, start_date=start_date, end_date=end_date, cash_register_id=cash_register_id, skip=skip, limit=limit
+        )
         return [self.build_session_detail(db, tenant_id, s) for s in sessions]
 
     def get_session_detail(self, db: Session, tenant_id: int, session_id: int) -> CashSessionDetailResponse:
@@ -373,8 +402,8 @@ class CashRegisterService:
             raise HTTPException(status_code=404, detail="Sessão de caixa não encontrada.")
         return self.build_session_detail(db, tenant_id, session)
 
-    def list_registers(self, db: Session, tenant_id: int) -> List[CashRegisterResponse]:
-        registers = self.repository.list_registers(db, tenant_id)
+    def list_registers(self, db: Session, tenant_id: int, include_inactive: bool = False) -> List[CashRegisterResponse]:
+        registers = self.repository.list_registers(db, tenant_id, include_inactive=include_inactive)
         return [
             CashRegisterResponse(
                 id=r.id,
@@ -384,3 +413,104 @@ class CashRegisterService:
             )
             for r in registers
         ]
+
+    def create_register(self, db: Session, tenant_id: int, data: CashRegisterCreate) -> CashRegisterResponse:
+        register = CashRegister(
+            tenant_id=tenant_id,
+            name=data.name.strip(),
+            is_active=True,
+        )
+        register = self.repository.create_register(db, register)
+        return CashRegisterResponse(
+            id=register.id,
+            name=register.name,
+            is_active=register.is_active,
+            created_at=register.created_at,
+        )
+
+    def update_register(self, db: Session, tenant_id: int, register_id: int, data: CashRegisterUpdate) -> CashRegisterResponse:
+        register = self.repository.get_register_by_id(db, tenant_id, register_id)
+        if not register:
+            raise HTTPException(status_code=404, detail="Caixa não encontrado.")
+
+        if data.name is not None:
+            register.name = data.name.strip()
+        if data.is_active is not None:
+            register.is_active = data.is_active
+
+        updated = self.repository.update_register(db, register)
+        return CashRegisterResponse(
+            id=updated.id,
+            name=updated.name,
+            is_active=updated.is_active,
+            created_at=updated.created_at,
+        )
+
+    def list_destination_accounts(self, db: Session, tenant_id: int, include_inactive: bool = False) -> List[CashDestinationAccountResponse]:
+        accounts = self.repository.list_destination_accounts(db, tenant_id, include_inactive=include_inactive)
+        return [
+            CashDestinationAccountResponse(
+                id=acc.id,
+                name=acc.name,
+                account_type=acc.account_type,
+                is_default=acc.is_default,
+                is_active=acc.is_active,
+                created_at=acc.created_at,
+            )
+            for acc in accounts
+        ]
+
+    def create_destination_account(self, db: Session, tenant_id: int, data: CashDestinationAccountCreate) -> CashDestinationAccountResponse:
+        account = CashDestinationAccount(
+            tenant_id=tenant_id,
+            name=data.name.strip(),
+            account_type=data.account_type,
+            is_default=data.is_default,
+            is_active=True,
+        )
+        created = self.repository.create_destination_account(db, account)
+        return CashDestinationAccountResponse(
+            id=created.id,
+            name=created.name,
+            account_type=created.account_type,
+            is_default=created.is_default,
+            is_active=created.is_active,
+            created_at=created.created_at,
+        )
+
+    def update_destination_account(self, db: Session, tenant_id: int, account_id: int, data: CashDestinationAccountUpdate) -> CashDestinationAccountResponse:
+        account = self.repository.get_destination_account_by_id(db, tenant_id, account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="Conta de destino não encontrada.")
+
+        if data.name is not None:
+            account.name = data.name.strip()
+        if data.account_type is not None:
+            account.account_type = data.account_type
+        if data.is_default is not None:
+            account.is_default = data.is_default
+        if data.is_active is not None:
+            account.is_active = data.is_active
+
+        updated = self.repository.update_destination_account(db, account)
+        return CashDestinationAccountResponse(
+            id=updated.id,
+            name=updated.name,
+            account_type=updated.account_type,
+            is_default=updated.is_default,
+            is_active=updated.is_active,
+            created_at=updated.created_at,
+        )
+
+    def delete_destination_account(self, db: Session, tenant_id: int, account_id: int) -> dict:
+        account = self.repository.get_destination_account_by_id(db, tenant_id, account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="Conta de destino não encontrada.")
+        
+        # If default, don't allow deletion if it's the only one
+        accounts = self.repository.list_destination_accounts(db, tenant_id, include_inactive=True)
+        if len(accounts) <= 1:
+            raise HTTPException(status_code=400, detail="Você deve manter pelo menos uma conta cadastrada.")
+
+        self.repository.delete_destination_account(db, account)
+        return {"detail": "Conta de destino removida com sucesso."}
