@@ -74,6 +74,7 @@ class SaleBase(BaseModel):
 
 class SaleCreate(SaleBase):
     items: list[SaleItemCreate]
+    cash_register_id: int | None = None
 
 class SaleUpdateStatus(BaseModel):
     status: Literal["canceled"]

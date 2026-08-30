@@ -187,3 +187,42 @@ class CashMovement(Base):
     session = relationship("CashSession", back_populates="movements")
     user = relationship("User")
     sale = relationship("Sale")
+
+
+class CashDestinationAccount(Base):
+    __tablename__ = "cash_destination_accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # Multi-tenant
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )  # Ex: "Caixa Administrativo", "Cofre", "Conta Itaú"
+
+    account_type: Mapped[str] = mapped_column(
+        String(50), default="internal_cash", nullable=False
+    )  # "internal_cash", "bank_account", "safe", "other"
+
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # Relacionamentos
+    tenant = relationship("Tenant")
+
