@@ -23,6 +23,16 @@ class SalesService:
         self.commission_service = CommissionService()
 
     def create_sale(self, db: Session, tenant_id: int, data: SaleCreate) -> Sale:
+        # 0. Validate that cash register is open
+        from app.modules.cash_register.repository import CashRegisterRepository
+        cash_repo = CashRegisterRepository()
+        active_session = cash_repo.get_active_session(db, tenant_id)
+        if not active_session:
+            raise HTTPException(
+                status_code=400,
+                detail="O caixa está fechado. É necessário abrir o caixa antes de realizar vendas."
+            )
+
         # Validate discount and total amount mathematically
         items_subtotal = sum(item.subtotal for item in data.items)
         expected_total = float(Decimal(str(items_subtotal)) - Decimal(str(data.discount_amount)))
@@ -103,6 +113,37 @@ class SalesService:
                      
         # 2. If everything is fine, create the sale in db
         sale = self.repository.create(db, tenant_id, data)
+
+        # 2.1 Link with active CashSession if available
+        try:
+            from app.modules.cash_register.repository import CashRegisterRepository
+            from app.modules.cash_register.models import CashMovement
+
+            cash_repo = CashRegisterRepository()
+            active_session = cash_repo.get_active_session(db, tenant_id)
+            if active_session:
+                sale.cash_session_id = active_session.id
+                db.add(sale)
+
+                if data.payment_method == "money":
+                    latest_mov = cash_repo.get_latest_movement(db, active_session.id)
+                    current_balance = float(latest_mov.balance_after) if latest_mov is not None else float(active_session.initial_amount)
+                    new_balance = current_balance + float(sale.total_amount)
+
+                    mov = CashMovement(
+                        tenant_id=tenant_id,
+                        session_id=active_session.id,
+                        user_id=active_session.opened_by_user_id,
+                        type="sale",
+                        amount=float(sale.total_amount),
+                        balance_after=round(new_balance, 2),
+                        sale_id=sale.id,
+                        destination_or_origin="Venda PDV",
+                        description=f"Venda PDV #{sale.id}",
+                    )
+                    cash_repo.create_movement(db, mov)
+        except Exception:
+            pass  # Não bloqueia a venda caso haja inconsistência de caixa
 
         # 3. Auto-create or mark-as-paid ClientPackage
         for item in data.items:
@@ -245,4 +286,33 @@ class SalesService:
 
         # 2. Cancel sale
         updated_sale = self.repository.update_status(db, tenant_id, sale_id, "canceled")
+
+        # 3. Cash movement reversal if it was paid in money and had a session
+        if sale.payment_method == "money" and sale.cash_session_id:
+            try:
+                from app.modules.cash_register.repository import CashRegisterRepository
+                from app.modules.cash_register.models import CashMovement
+
+                cash_repo = CashRegisterRepository()
+                session = cash_repo.get_active_session(db, tenant_id) or cash_repo.get_session(db, tenant_id, sale.cash_session_id)
+                if session and session.status == "open":
+                    latest_mov = cash_repo.get_latest_movement(db, session.id)
+                    current_balance = float(latest_mov.balance_after) if latest_mov is not None else float(session.initial_amount)
+                    new_balance = current_balance - float(sale.total_amount)
+
+                    cancel_mov = CashMovement(
+                        tenant_id=tenant_id,
+                        session_id=session.id,
+                        user_id=session.opened_by_user_id,
+                        type="sale_cancel",
+                        amount=float(sale.total_amount),
+                        balance_after=round(new_balance, 2),
+                        sale_id=sale.id,
+                        destination_or_origin="Cancelamento / Estorno",
+                        description=f"Cancelamento de Venda #{sale.id}",
+                    )
+                    cash_repo.create_movement(db, cancel_mov)
+            except Exception:
+                pass
+
         return updated_sale
