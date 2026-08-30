@@ -44,6 +44,12 @@ class Sale(Base):
         index=True,
     )
 
+    cash_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cash_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     total_amount: Mapped[float] = mapped_column(
         Numeric(10, 2), nullable=False
     )
@@ -75,6 +81,7 @@ class Sale(Base):
     client = relationship("Client")
     pet = relationship("Pet")
     appointment = relationship("Appointment", back_populates="sales")
+    cash_session = relationship("CashSession", back_populates="sales")
 
 
 class SaleItem(Base):
