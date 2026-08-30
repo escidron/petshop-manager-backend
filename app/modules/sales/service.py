@@ -158,18 +158,20 @@ class SalesService:
                     except Exception:
                         pass
                 elif item.pet_ids and data.client_id:
-                    # Vendendo um novo pacote direto pelo PDV (nasce pago)
-                    # Não colocamos try/except geral para que erros de validação subam e cancelem a transação
-                    self.client_package_service.sell(
-                        db=db,
-                        tenant_id=tenant_id,
-                        client_id=data.client_id,
-                        data=ClientPackageSellRequest(
-                            pet_ids=item.pet_ids,
-                            package_id=item.item_id,
-                        ),
-                        is_paid=True, # Vendido no PDV já é pago
-                    )
+                    # Vendendo novos pacotes direto pelo PDV (nascem pagos)
+                    # Cria a quantidade exata comprada (ex: quantity=2 cria 2 pacotes independentes)
+                    qty = max(1, getattr(item, "quantity", 1) or 1)
+                    for _ in range(qty):
+                        self.client_package_service.sell(
+                            db=db,
+                            tenant_id=tenant_id,
+                            client_id=data.client_id,
+                            data=ClientPackageSellRequest(
+                                pet_ids=item.pet_ids,
+                                package_id=item.item_id,
+                            ),
+                            is_paid=True, # Vendido no PDV já é pago
+                        )
 
         # 4. Generate commission entries for items with employee_id
         for item in sale.items:
