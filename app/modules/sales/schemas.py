@@ -34,9 +34,17 @@ class SaleItemResponse(SaleItemBase):
         from_attributes = True
 
 # Nested helpers
+class PetBrief(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
 class ClientBrief(BaseModel):
     id: int
     name: str
+    pets: list[PetBrief] = []
 
     class Config:
         from_attributes = True
@@ -62,11 +70,65 @@ class AppointmentBrief(BaseModel):
     class Config:
         from_attributes = True
 
+# Comanda Items
+class ComandaItemBase(BaseModel):
+    item_type: Literal["product", "service", "package"]
+    item_id: int
+    name: str
+    quantity: int = Field(gt=0, default=1)
+    unit_price: float = Field(ge=0, default=0.0)
+    subtotal: float = Field(ge=0, default=0.0)
+    employee_id: int | None = None
+    pet_ids: list[int] | None = None
+    client_package_id_to_pay: int | None = None
+    unit: str | None = "UN"
+
+class ComandaItemCreate(ComandaItemBase):
+    pass
+
+class ComandaItemResponse(ComandaItemBase):
+    id: int
+    comanda_id: int
+
+    class Config:
+        from_attributes = True
+
+# Comandas
+class ComandaSaveRequest(BaseModel):
+    comanda_id: int | None = None
+    client_id: int
+    appointment_id: int | None = None
+    items: list[ComandaItemCreate] = []
+    discount_amount: float = Field(default=0.0, ge=0)
+    notes: str | None = None
+
+class ComandaResponse(BaseModel):
+    id: int
+    tenant_id: int
+    client_id: int
+    appointment_id: int | None = None
+    status: Literal["open", "completed", "canceled"] = "open"
+    total_amount: float = Field(ge=0)
+    discount_amount: float = Field(default=0.0, ge=0)
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    items: list[ComandaItemResponse] = []
+    client: ClientBrief | None = None
+
+    class Config:
+        from_attributes = True
+
+class PaginatedComandasResponse(BaseModel):
+    items: list[ComandaResponse]
+    total: int
+
 # Sales
 class SaleBase(BaseModel):
     client_id: int | None = None
     pet_id: int | None = None
     appointment_id: int | None = None
+    comanda_id: int | None = None
     total_amount: float = Field(ge=0)
     discount_amount: float = Field(default=0.0, ge=0)
     payment_method: Literal["pix", "credit_card", "debit_card", "money", "other", "package"]
@@ -98,8 +160,12 @@ class POSStartupResponse(BaseModel):
     clients: list[ClientResponse]
     appointments: list[AppointmentResponse]
     pets: list[PetResponse]
+    open_comandas: list[ComandaResponse] = []
+    cash_registers: list[Any] = []
+    cash_status: Any | None = None
 
 class POSClientDetailsResponse(BaseModel):
     client_pets: list[PetResponse]
     client_packages: list[ClientPackageResponse]
     client_appointments: list[AppointmentResponse]
+    open_comandas: list[ComandaResponse] = []

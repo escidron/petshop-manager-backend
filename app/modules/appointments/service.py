@@ -465,6 +465,57 @@ class AppointmentService:
                         except Exception:
                             pass
 
+            # Coleta TODOS os serviços NÃO cobertos por pacote (precisam de pagamento)
+            uncovered_services = [
+                (item, service)
+                for item in appointment_full.items
+                for service in item.services
+                if (item.id, service.id) not in covered_pairs
+            ]
+            if uncovered_services:
+                from app.modules.sales.models import Comanda, ComandaItem
+                existing_comanda = db.query(Comanda).filter(
+                    Comanda.client_id == appointment_full.client_id,
+                    Comanda.tenant_id == tenant_id,
+                    Comanda.status == "open",
+                ).first()
+
+                extra_total = sum(Decimal(service.price_cents) / Decimal("100") for _, service in uncovered_services)
+
+                if not existing_comanda:
+                    comanda = Comanda(
+                        tenant_id=tenant_id,
+                        client_id=appointment_full.client_id,
+                        appointment_id=appointment_full.id,
+                        status="open",
+                        total_amount=float(extra_total),
+                        discount_amount=0.0,
+                    )
+                    db.add(comanda)
+                    db.flush()
+                else:
+                    comanda = existing_comanda
+                    comanda.total_amount = float(Decimal(str(comanda.total_amount)) + extra_total)
+                    if not comanda.appointment_id:
+                        comanda.appointment_id = appointment_full.id
+
+                for item, service in uncovered_services:
+                    emp_id = item_emp_maps[item.id].get(service.id)
+                    price = float(Decimal(service.price_cents) / Decimal("100"))
+                    c_item = ComandaItem(
+                        comanda_id=comanda.id,
+                        item_type="service",
+                        item_id=service.id,
+                        name=service.name,
+                        quantity=1,
+                        unit_price=price,
+                        subtotal=price,
+                        employee_id=emp_id,
+                        pet_ids=[item.pet_id],
+                        unit="UN",
+                    )
+                    db.add(c_item)
+
             db.commit()
 
             # Envia notificação de Pet Pronto por WhatsApp
