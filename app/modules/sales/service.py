@@ -1,10 +1,11 @@
+from __future__ import annotations
 from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Tuple, Optional
 
-from .models import Sale
-from .schemas import SaleCreate, SaleUpdateStatus
+from .models import Sale, Comanda
+from .schemas import SaleCreate, SaleUpdateStatus, ComandaSaveRequest
 from .repository import SalesRepository
 from app.modules.products.service import ProductService
 from app.modules.appointments.service import AppointmentService
@@ -111,7 +112,7 @@ class SalesService:
                         except HTTPException as e:
                             raise HTTPException(status_code=400, detail=f"Estoque insuficiente no pacote {package.name}. {e.detail}")
                      
-        # 2. If everything is fine, create the sale in db
+        # 2. If everything is fine, create the sale in db (which marks comanda completed if linked)
         sale = self.repository.create(db, tenant_id, data)
 
         # 2.1 Link with active CashSession if available
@@ -204,8 +205,6 @@ class SalesService:
                     action="complete"
                 )
             except HTTPException as e:
-                # We don't want to fail the sale if the appointment status update fails, 
-                # but we should probably log it. For now, just continue.
                 pass
 
         return sale
@@ -318,3 +317,52 @@ class SalesService:
                 pass
 
         return updated_sale
+
+    # ── Comandas ────────────────────────────────────────────────────────────
+
+    def save_open_comanda(self, db: Session, tenant_id: int, data: ComandaSaveRequest) -> Comanda:
+        if not data.client_id:
+            raise HTTPException(status_code=400, detail="É necessário informar um cliente para criar uma comanda em aberto.")
+
+        from app.modules.clients.models import Client
+        client = db.query(Client).filter(Client.id == data.client_id, Client.tenant_id == tenant_id).first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+
+        # Discount validation if > 0
+        items_subtotal = sum(item.subtotal for item in data.items)
+        if data.discount_amount > 0:
+            from app.modules.tenants.models import Tenant
+            tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+            if tenant and not tenant.allow_discount:
+                raise HTTPException(status_code=400, detail="Descontos estão desativados para esta empresa.")
+            if tenant and items_subtotal > 0:
+                discount_percentage = (data.discount_amount / items_subtotal) * 100
+                if discount_percentage > (tenant.max_discount_percentage + 0.01):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite permitido ({tenant.max_discount_percentage:.2f}%)."
+                    )
+
+        return self.repository.save_open_comanda(db, tenant_id, data)
+
+    def get_comanda(self, db: Session, tenant_id: int, comanda_id: int) -> Comanda:
+        comanda = self.repository.get_comanda(db, tenant_id, comanda_id)
+        if not comanda:
+            raise HTTPException(status_code=404, detail="Comanda não encontrada.")
+        return comanda
+
+    def get_client_open_comanda(self, db: Session, tenant_id: int, client_id: int) -> Comanda | None:
+        return self.repository.get_client_open_comanda(db, tenant_id, client_id)
+
+    def list_open_comandas(
+        self, db: Session, tenant_id: int, search: str | None = None, limit: int = 100, offset: int = 0
+    ) -> dict:
+        items, total = self.repository.list_open_comandas(db, tenant_id, search=search, limit=limit, offset=offset)
+        return {"items": items, "total": total}
+
+    def delete_comanda(self, db: Session, tenant_id: int, comanda_id: int) -> dict:
+        success = self.repository.delete_comanda(db, tenant_id, comanda_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Comanda em aberto não encontrada para exclusão.")
+        return {"ok": True}

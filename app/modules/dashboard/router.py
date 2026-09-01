@@ -12,6 +12,7 @@ from app.modules.client_packages.service import ClientPackageService
 from app.modules.packages.service import PackageService
 from app.modules.waiting_list.service import WaitingListService
 from app.modules.waiting_list.models import WaitingListStatus
+from app.modules.sales.service import SalesService
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"], dependencies=[Depends(get_current_tenant)])
 
@@ -30,6 +31,7 @@ def get_dashboard_startup(
     
     invoices_res = AppointmentService().list_open_invoices(db, tenant_id, limit=15)
     unpaid_res = ClientPackageService().list_unpaid_packages(db, tenant_id, limit=15)
+    comandas_res = SalesService().list_open_comandas(db, tenant_id, limit=15)
     
     packages = PackageService().list_packages(db, tenant_id)
     waiting_list = WaitingListService().get_all(db, tenant_id, status=WaitingListStatus.PENDING)
@@ -40,6 +42,6 @@ def get_dashboard_startup(
         open_invoices=invoices_res,
         unpaid_packages=unpaid_res,
         packages_catalog=packages,
-        waiting_list_pending=waiting_list
+        waiting_list_pending=waiting_list,
+        open_comandas=comandas_res,
     )
-

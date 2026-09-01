@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import date
 from fastapi import APIRouter, Depends, Request, Query
 from sqlalchemy.orm import Session
@@ -13,15 +14,28 @@ from app.modules.appointments.service import AppointmentService
 from app.modules.client_packages.service import ClientPackageService
 from app.modules.pets.service import PetService
 
-from .schemas import SaleCreate, SaleResponse, POSStartupResponse, POSClientDetailsResponse
+from .schemas import (
+    SaleCreate,
+    SaleResponse,
+    POSStartupResponse,
+    POSClientDetailsResponse,
+    ComandaSaveRequest,
+    ComandaResponse,
+)
 from .service import SalesService
 from app.modules.commissions.schemas import AssignEmployeeRequest
+from app.modules.cash_register.service import CashRegisterService
 
 router = APIRouter(prefix="/sales", tags=["PDV / Vendas"], dependencies=[Depends(get_current_tenant)])
 
 @router.get("/pos-startup", response_model=POSStartupResponse)
 def get_pos_startup(request: Request, db: Session = Depends(get_db)):
     tenant_id = request.state.tenant_user.tenant_id
+    sales_service = SalesService()
+    cash_service = CashRegisterService()
+    
+    registers = cash_service.list_registers(db, tenant_id, include_inactive=False)
+    cash_status = cash_service.get_current_status(db, tenant_id)
     
     return POSStartupResponse(
         products=ProductService().list_products(db, tenant_id),
@@ -29,19 +43,70 @@ def get_pos_startup(request: Request, db: Session = Depends(get_db)):
         packages=PackageService().list_packages(db, tenant_id),
         clients=ClientService().list_clients(db, tenant_id),
         appointments=AppointmentService().list_open_invoices(db, tenant_id).get("items", []),
-        pets=PetService().list_pets(db, tenant_id)
+        pets=PetService().list_pets(db, tenant_id),
+        open_comandas=sales_service.list_open_comandas(db, tenant_id).get("items", []),
+        cash_registers=registers,
+        cash_status=cash_status,
     )
 
 @router.get("/pos-client/{client_id}", response_model=POSClientDetailsResponse)
 def get_pos_client_details(client_id: int, request: Request, db: Session = Depends(get_db)):
     tenant_id = request.state.tenant_user.tenant_id
+    sales_service = SalesService()
+    client_comanda = sales_service.get_client_open_comanda(db, tenant_id, client_id)
     
     return POSClientDetailsResponse(
         client_pets=PetService().list_pets_by_client(db, tenant_id, client_id),
         client_packages=ClientPackageService().list_by_client(db, tenant_id, client_id),
-        client_appointments=AppointmentService().list_by_client(db, tenant_id, client_id)
+        client_appointments=AppointmentService().list_by_client(db, tenant_id, client_id),
+        open_comandas=[client_comanda] if client_comanda else [],
     )
 
+
+# ── Comandas ────────────────────────────────────────────────────────────
+
+@router.post("/comandas", response_model=ComandaResponse, dependencies=[Depends(require_active_subscription)])
+def save_comanda(data: ComandaSaveRequest, request: Request, db: Session = Depends(get_db)):
+    service = SalesService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.save_open_comanda(db, tenant_id, data)
+
+
+@router.get("/comandas/open")
+def list_open_comandas(
+    request: Request,
+    db: Session = Depends(get_db),
+    search: Optional[str] = Query(None),
+    limit: int = 100,
+    offset: int = 0,
+):
+    service = SalesService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.list_open_comandas(db, tenant_id, search=search, limit=limit, offset=offset)
+
+
+@router.get("/comandas/client/{client_id}", response_model=Optional[ComandaResponse])
+def get_client_open_comanda(client_id: int, request: Request, db: Session = Depends(get_db)):
+    service = SalesService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.get_client_open_comanda(db, tenant_id, client_id)
+
+
+@router.get("/comandas/{comanda_id}", response_model=ComandaResponse)
+def get_comanda(comanda_id: int, request: Request, db: Session = Depends(get_db)):
+    service = SalesService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.get_comanda(db, tenant_id, comanda_id)
+
+
+@router.delete("/comandas/{comanda_id}", dependencies=[Depends(require_active_subscription)])
+def delete_comanda(comanda_id: int, request: Request, db: Session = Depends(get_db)):
+    service = SalesService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.delete_comanda(db, tenant_id, comanda_id)
+
+
+# ── Vendas / Sales ──────────────────────────────────────────────────────
 
 @router.post("/", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])
 def create_sale(data: SaleCreate, request: Request, db: Session = Depends(get_db)):
