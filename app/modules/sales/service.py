@@ -54,11 +54,12 @@ class SalesService:
             
             if items_subtotal > 0:
                 discount_percentage = (data.discount_amount / items_subtotal) * 100
+                max_discount = float(tenant.max_discount_percentage) if tenant.max_discount_percentage is not None else 100.0
                 # Float comparisons with small buffer
-                if discount_percentage > (tenant.max_discount_percentage + 0.01):
+                if discount_percentage > (max_discount + 0.01):
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite máximo permitido de {tenant.max_discount_percentage:.2f}%."
+                        detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite máximo permitido de {max_discount:.2f}%."
                     )
         
         # 1. First, validate stock and lower the stock for products BEFORE creating the sale
@@ -338,10 +339,11 @@ class SalesService:
                 raise HTTPException(status_code=400, detail="Descontos estão desativados para esta empresa.")
             if tenant and items_subtotal > 0:
                 discount_percentage = (data.discount_amount / items_subtotal) * 100
-                if discount_percentage > (tenant.max_discount_percentage + 0.01):
+                max_discount = float(tenant.max_discount_percentage) if tenant.max_discount_percentage is not None else 100.0
+                if discount_percentage > (max_discount + 0.01):
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite permitido ({tenant.max_discount_percentage:.2f}%)."
+                        detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite permitido ({max_discount:.2f}%)."
                     )
 
         return self.repository.save_open_comanda(db, tenant_id, data)
