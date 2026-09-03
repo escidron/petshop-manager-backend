@@ -16,6 +16,13 @@ commission_rule_services = Table(
     Column("service_id", ForeignKey("services.id", ondelete="CASCADE"), primary_key=True),
 )
 
+commission_rule_employees = Table(
+    "commission_rule_employees",
+    Base.metadata,
+    Column("rule_id", ForeignKey("commission_rules.id", ondelete="CASCADE"), primary_key=True),
+    Column("employee_id", ForeignKey("employees.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class CommissionRule(Base):
     __tablename__ = "commission_rules"
@@ -29,12 +36,6 @@ class CommissionRule(Base):
     )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-
-    employee_id: Mapped[int | None] = mapped_column(
-        ForeignKey("employees.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
 
     applies_to: Mapped[str] = mapped_column(
         SAEnum("service", "product", "both", name="commission_applies_to"),
@@ -60,8 +61,16 @@ class CommissionRule(Base):
         nullable=False,
     )
 
-    employee = relationship("Employee", foreign_keys=[employee_id])
+    employees = relationship("Employee", secondary="commission_rule_employees")
     services = relationship("Service", secondary="commission_rule_services")
+
+    @property
+    def employee_ids(self) -> list[int]:
+        return [e.id for e in self.employees]
+
+    @property
+    def employee_id(self) -> int | None:
+        return self.employees[0].id if self.employees else None
 
     @property
     def service_ids(self) -> list[int]:

@@ -9,6 +9,14 @@ CommissionType = Literal["percentage", "fixed"]
 CommissionStatus = Literal["pending", "paid"]
 
 
+class CommissionRuleEmployeeInfo(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
 class CommissionRuleServiceInfo(BaseModel):
     id: int
     name: str
@@ -23,6 +31,7 @@ class CommissionRuleServiceInfo(BaseModel):
 class CommissionRuleBase(BaseModel):
     name: str
     employee_id: Optional[int] = None
+    employee_ids: List[int] = []
     service_ids: List[int] = []
     applies_to: AppliesTo = "service"
     commission_type: CommissionType
@@ -39,6 +48,7 @@ class CommissionRuleCreate(CommissionRuleBase):
 class CommissionRuleUpdate(BaseModel):
     name: Optional[str] = None
     employee_id: Optional[int] = None
+    employee_ids: Optional[List[int]] = None  # None = não altera; [] = limpa todos
     service_ids: Optional[List[int]] = None  # None = não altera; [] = limpa todos
     applies_to: Optional[AppliesTo] = None
     commission_type: Optional[CommissionType] = None
@@ -53,6 +63,7 @@ class CommissionRuleResponse(CommissionRuleBase):
     tenant_id: int
     created_at: datetime
     employee_name: Optional[str] = None
+    employees: List[CommissionRuleEmployeeInfo] = []
     services: List[CommissionRuleServiceInfo] = []
 
     class Config:
@@ -63,15 +74,19 @@ class CommissionRuleResponse(CommissionRuleBase):
     def populate_relations(cls, data):
         if isinstance(data, dict):
             return data
-        employee = getattr(data, "employee", None)
-        employee_name = employee.name if employee else None
+        employees = getattr(data, "employees", [])
+        employee_names = [e.name for e in employees] if employees else []
+        employee_name = ", ".join(employee_names) if employee_names else None
+        employee_ids = [e.id for e in employees]
         services = getattr(data, "services", [])
         return {
             "id": data.id,
             "tenant_id": data.tenant_id,
             "name": data.name,
-            "employee_id": data.employee_id,
+            "employee_id": employee_ids[0] if employee_ids else None,
+            "employee_ids": employee_ids,
             "employee_name": employee_name,
+            "employees": employees,
             "service_ids": [s.id for s in services],
             "services": services,
             "applies_to": data.applies_to,
