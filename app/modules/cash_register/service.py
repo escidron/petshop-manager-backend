@@ -88,11 +88,18 @@ class CashRegisterService:
 
         total_sales_amount = 0.0
         for s in sales:
-            method = s.payment_method if s.payment_method in method_totals else "other"
-            amount = float(s.total_amount)
-            method_totals[method]["total"] += amount
-            method_totals[method]["count"] += 1
-            total_sales_amount += amount
+            if s.payments:
+                for p in s.payments:
+                    method = p.payment_method if p.payment_method in method_totals else "other"
+                    amount = float(p.amount)
+                    method_totals[method]["total"] += amount
+                    method_totals[method]["count"] += 1
+            else:
+                method = s.payment_method if s.payment_method in method_totals else "other"
+                amount = float(s.total_amount)
+                method_totals[method]["total"] += amount
+                method_totals[method]["count"] += 1
+            total_sales_amount += float(s.total_amount)
 
         payment_methods: list[PaymentMethodSummary] = []
         for method_key, data in method_totals.items():

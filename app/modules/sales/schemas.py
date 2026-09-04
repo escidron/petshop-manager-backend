@@ -123,6 +123,22 @@ class PaginatedComandasResponse(BaseModel):
     items: list[ComandaResponse]
     total: int
 
+# Sale Payments
+class SalePaymentBase(BaseModel):
+    payment_method: Literal["pix", "credit_card", "debit_card", "money", "other", "package"]
+    amount: float = Field(gt=0)
+
+class SalePaymentCreate(SalePaymentBase):
+    pass
+
+class SalePaymentResponse(SalePaymentBase):
+    id: int
+    sale_id: int
+
+    class Config:
+        from_attributes = True
+
+
 # Sales
 class SaleBase(BaseModel):
     client_id: int | None = None
@@ -131,12 +147,14 @@ class SaleBase(BaseModel):
     comanda_id: int | None = None
     total_amount: float = Field(ge=0)
     discount_amount: float = Field(default=0.0, ge=0)
-    payment_method: Literal["pix", "credit_card", "debit_card", "money", "other", "package"]
+    payment_method: Literal["pix", "credit_card", "debit_card", "money", "other", "package", "multiple"]
     status: Literal["completed", "canceled"] = "completed"
 
 class SaleCreate(SaleBase):
     items: list[SaleItemCreate]
+    payments: list[SalePaymentCreate] | None = None
     cash_register_id: int | None = None
+    unpaid_remainder: float | None = None
 
 class SaleUpdateStatus(BaseModel):
     status: Literal["canceled"]
@@ -146,6 +164,7 @@ class SaleResponse(SaleBase):
     tenant_id: int
     created_at: datetime
     items: list[SaleItemResponse] = []
+    payments: list[SalePaymentResponse] = []
     client: ClientBrief | None = None
     appointment: AppointmentBrief | None = None
 

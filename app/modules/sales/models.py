@@ -86,6 +86,9 @@ class Sale(Base):
     items = relationship(
         "SaleItem", back_populates="sale", cascade="all, delete-orphan"
     )
+    payments = relationship(
+        "SalePayment", back_populates="sale", cascade="all, delete-orphan", lazy="joined"
+    )
     client = relationship("Client")
     pet = relationship("Pet")
     appointment = relationship("Appointment", back_populates="sales")
@@ -134,6 +137,34 @@ class SaleItem(Base):
     )
 
     sale = relationship("Sale", back_populates="items")
+
+
+class SalePayment(Base):
+    __tablename__ = "sale_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    sale_id: Mapped[int] = mapped_column(
+        ForeignKey("sales.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    payment_method: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # pix, credit_card, debit_card, money, other, package
+
+    amount: Mapped[float] = mapped_column(
+        Numeric(10, 2), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    sale = relationship("Sale", back_populates="payments")
 
 
 class Comanda(Base):

@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import desc, func, or_
 
-from .models import Sale, SaleItem, Comanda, ComandaItem
+from .models import Sale, SaleItem, SalePayment, Comanda, ComandaItem
 from .schemas import SaleCreate, ComandaSaveRequest
 from app.modules.clients.models import Client
 
@@ -26,6 +26,22 @@ class SalesRepository:
         db.add(db_sale)
         db.flush()  # Flush to get db_sale.id
 
+        if data.payments:
+            for p in data.payments:
+                db_payment = SalePayment(
+                    sale_id=db_sale.id,
+                    payment_method=p.payment_method,
+                    amount=p.amount,
+                )
+                db.add(db_payment)
+        else:
+            db_payment = SalePayment(
+                sale_id=db_sale.id,
+                payment_method=data.payment_method,
+                amount=data.total_amount,
+            )
+            db.add(db_payment)
+
         for item in data.items:
             db_item = SaleItem(
                 sale_id=db_sale.id,
@@ -39,7 +55,7 @@ class SalesRepository:
             )
             db.add(db_item)
 
-        # If linked to a comanda (or if an open comanda exists for this appointment/client), mark it completed
+        # If linked to a comanda (or if an open comanda exists for this appointment/client)
         target_comanda = None
         if data.comanda_id:
             target_comanda = db.query(Comanda).filter(
@@ -52,8 +68,45 @@ class SalesRepository:
                 Comanda.tenant_id == tenant_id,
                 Comanda.status == "open",
             ).first()
+        elif data.client_id:
+            target_comanda = db.query(Comanda).filter(
+                Comanda.client_id == data.client_id,
+                Comanda.tenant_id == tenant_id,
+                Comanda.status == "open",
+            ).first()
 
-        if target_comanda:
+        if data.unpaid_remainder and data.unpaid_remainder > 0.01 and data.client_id:
+            remainder_val = round(float(data.unpaid_remainder), 2)
+            if not target_comanda:
+                target_comanda = Comanda(
+                    tenant_id=tenant_id,
+                    client_id=data.client_id,
+                    appointment_id=data.appointment_id,
+                    status="open",
+                    total_amount=remainder_val,
+                    discount_amount=0.0,
+                )
+                db.add(target_comanda)
+                db.flush()
+            else:
+                target_comanda.status = "open"
+                target_comanda.total_amount = remainder_val
+                target_comanda.discount_amount = 0.0
+                target_comanda.items.clear()
+                db.flush()
+
+            c_item = ComandaItem(
+                comanda_id=target_comanda.id,
+                item_type="service",
+                item_id=0,
+                name="Saldo em Aberto (Comanda)",
+                quantity=1,
+                unit_price=remainder_val,
+                subtotal=remainder_val,
+            )
+            db.add(c_item)
+            db_sale.comanda_id = target_comanda.id
+        elif target_comanda:
             target_comanda.status = "completed"
             db.add(target_comanda)
 
