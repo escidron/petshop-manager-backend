@@ -1,10 +1,14 @@
 import csv
 import io
-from fastapi import HTTPException, status
+import os
+import uuid
+from fastapi import HTTPException, status, UploadFile
 from sqlalchemy.orm import Session
+from .models import ProductPhoto
 from .repository import ProductRepository
 from .inventory_repository import InventoryRepository
 from .schemas import ProductCreate, ProductUpdate
+from app.services.gcs_service import GCSService
 
 
 class ProductService:
@@ -51,6 +55,143 @@ class ProductService:
             db, tenant_id, product_id, quantity_change, change_type, notes
         )
         return product
+
+    async def add_product_photos(
+        self,
+        db: Session,
+        tenant_id: int,
+        product_id: int,
+        files: list[UploadFile],
+    ) -> list[ProductPhoto]:
+        self.get_product(db, tenant_id, product_id)
+
+        has_primary = (
+            db.query(ProductPhoto)
+            .filter(
+                ProductPhoto.product_id == product_id,
+                ProductPhoto.tenant_id == tenant_id,
+                ProductPhoto.is_primary == True,
+            )
+            .first()
+            is not None
+        )
+
+        gcs = GCSService()
+        created_photos: list[ProductPhoto] = []
+
+        for file in files:
+            file_content = await file.read()
+            ext = os.path.splitext(file.filename or "")[1] or ".jpg"
+            unique_filename = f"products/{product_id}/{uuid.uuid4()}{ext}"
+            content_type = file.content_type or "image/jpeg"
+
+            photo_url = gcs.upload_file(file_content, unique_filename, content_type)
+
+            is_primary = False
+            if not has_primary and len(created_photos) == 0:
+                is_primary = True
+                has_primary = True
+
+            new_photo = ProductPhoto(
+                tenant_id=tenant_id,
+                product_id=product_id,
+                photo_url=photo_url,
+                is_primary=is_primary,
+            )
+            db.add(new_photo)
+            created_photos.append(new_photo)
+
+        db.commit()
+        for photo in created_photos:
+            db.refresh(photo)
+
+        return created_photos
+
+    def delete_product_photo(
+        self,
+        db: Session,
+        tenant_id: int,
+        product_id: int,
+        photo_id: int,
+    ) -> None:
+        self.get_product(db, tenant_id, product_id)
+
+        photo = (
+            db.query(ProductPhoto)
+            .filter(
+                ProductPhoto.id == photo_id,
+                ProductPhoto.product_id == product_id,
+                ProductPhoto.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not photo:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Foto não encontrada",
+            )
+
+        was_primary = photo.is_primary
+
+        gcs = GCSService()
+        bucket_prefix = f"https://storage.googleapis.com/{gcs.bucket_name}/"
+        if photo.photo_url.startswith(bucket_prefix):
+            blob_name = photo.photo_url[len(bucket_prefix):]
+            try:
+                gcs.delete_file(blob_name)
+            except Exception as e:
+                print(f"Erro ao deletar foto do produto no GCS: {e}")
+
+        db.delete(photo)
+        db.commit()
+
+        if was_primary:
+            next_photo = (
+                db.query(ProductPhoto)
+                .filter(
+                    ProductPhoto.product_id == product_id,
+                    ProductPhoto.tenant_id == tenant_id,
+                )
+                .order_by(ProductPhoto.id.asc())
+                .first()
+            )
+            if next_photo:
+                next_photo.is_primary = True
+                db.commit()
+
+    def set_primary_photo(
+        self,
+        db: Session,
+        tenant_id: int,
+        product_id: int,
+        photo_id: int,
+    ) -> ProductPhoto:
+        self.get_product(db, tenant_id, product_id)
+
+        photo = (
+            db.query(ProductPhoto)
+            .filter(
+                ProductPhoto.id == photo_id,
+                ProductPhoto.product_id == product_id,
+                ProductPhoto.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not photo:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Foto não encontrada",
+            )
+
+        db.query(ProductPhoto).filter(
+            ProductPhoto.product_id == product_id,
+            ProductPhoto.tenant_id == tenant_id,
+        ).update({"is_primary": False})
+
+        photo.is_primary = True
+        db.commit()
+        db.refresh(photo)
+        return photo
 
     async def import_products_from_excel(self, db: Session, tenant_id: int, file_content: bytes, progress_callback=None):
 

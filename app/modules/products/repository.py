@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.modules.products.models import Product
 from app.modules.products.schemas import ProductCreate, ProductUpdate
 
@@ -17,6 +17,7 @@ class ProductRepository:
     def get_by_id(self, db: Session, tenant_id: int, product_id: int) -> Product | None:
         return (
             db.query(Product)
+            .options(joinedload(Product.photos))
             .filter(
                 Product.id == product_id,
                 Product.tenant_id == tenant_id,
@@ -25,7 +26,7 @@ class ProductRepository:
         )
 
     def list(self, db: Session, tenant_id: int, exclude_internal: bool = False) -> list[Product]:
-        query = db.query(Product).filter(Product.tenant_id == tenant_id)
+        query = db.query(Product).options(joinedload(Product.photos)).filter(Product.tenant_id == tenant_id)
         if exclude_internal:
             query = query.filter(Product.is_internal_use == False)
         return query.order_by(Product.name).all()

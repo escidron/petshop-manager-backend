@@ -77,10 +77,11 @@ class ClientResponse(ClientBase):
 
 
 class ClientSummaryResponse(BaseModel):
-    """Payload mínimo usado na listagem de clientes (tabela).
+    """Payload mínimo usado na listagem de clientes (tabela) e agendamentos.
 
     Inclui nome, telefone, status e nomes dos pets para permitir
     busca por pet e coluna 'Pets' na tabela — tudo em uma query só.
+    Inclui campos de endereço e contatos adicionais quando disponíveis.
     """
     id: int
     name: str
@@ -89,6 +90,21 @@ class ClientSummaryResponse(BaseModel):
     is_active: bool
     created_at: datetime
     pet_names: List[str] = []
+
+    # Endereço
+    cep: Optional[str] = None
+    street: Optional[str] = None
+    number: Optional[str] = None
+    complement: Optional[str] = None
+    neighborhood: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+
+    # Telefones adicionais
+    phone_secondary_name: Optional[str] = None
+    phone_secondary: Optional[str] = None
+    phone_tertiary_name: Optional[str] = None
+    phone_tertiary: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -103,4 +119,15 @@ class ClientSummaryResponse(BaseModel):
             is_active=client.is_active,
             created_at=client.created_at,
             pet_names=[p.name for p in pets if p.name and not p.is_deceased],
+            cep=getattr(client, "cep", None),
+            street=getattr(client, "street", None),
+            number=getattr(client, "number", None),
+            complement=getattr(client, "complement", None),
+            neighborhood=getattr(client, "neighborhood", None),
+            city=getattr(client, "city", None),
+            state=getattr(client, "state", None),
+            phone_secondary_name=getattr(client, "phone_secondary_name", None),
+            phone_secondary=getattr(client, "phone_secondary", None),
+            phone_tertiary_name=getattr(client, "phone_tertiary_name", None),
+            phone_tertiary=getattr(client, "phone_tertiary", None),
         )

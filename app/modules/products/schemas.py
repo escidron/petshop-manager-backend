@@ -1,5 +1,16 @@
+from datetime import datetime
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Optional, List
+
+
+class ProductPhotoResponse(BaseModel):
+    id: int
+    product_id: int
+    photo_url: str
+    is_primary: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProductBase(BaseModel):
@@ -56,5 +67,6 @@ class ProductUpdate(BaseModel):
 
 class ProductResponse(ProductBase):
     id: int
+    photos: List[ProductPhotoResponse] = []
 
     model_config = ConfigDict(from_attributes=True)

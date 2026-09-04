@@ -1,5 +1,6 @@
-from sqlalchemy import String, Boolean, ForeignKey, Numeric, Integer, Index
-from sqlalchemy.orm import Mapped, mapped_column
+from datetime import datetime
+from sqlalchemy import String, Boolean, ForeignKey, Numeric, Integer, Index, DateTime, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config.database import Base
 
@@ -94,3 +95,35 @@ class Product(Base):
     unit: Mapped[str | None] = mapped_column(
         String(10), default="UN", nullable=True
     )
+
+    photos = relationship(
+        "ProductPhoto",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductPhoto.id",
+    )
+
+
+class ProductPhoto(Base):
+    __tablename__ = "product_photos"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    photo_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    product = relationship("Product", back_populates="photos")

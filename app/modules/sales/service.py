@@ -34,13 +34,16 @@ class SalesService:
                 detail="O caixa está fechado. É necessário abrir o caixa antes de realizar vendas."
             )
 
-        # Validate discount and total amount mathematically
+        # Validate discount and total amount mathematically (considering any unpaid remainder left in comanda)
         items_subtotal = sum(item.subtotal for item in data.items)
         expected_total = float(Decimal(str(items_subtotal)) - Decimal(str(data.discount_amount)))
-        if abs(data.total_amount - expected_total) > 0.01:
+        remainder = float(data.unpaid_remainder) if (data.unpaid_remainder and data.unpaid_remainder > 0.01) else 0.0
+        expected_paid_now = float(Decimal(str(expected_total)) - Decimal(str(remainder)))
+
+        if abs(data.total_amount - expected_paid_now) > 0.01:
              raise HTTPException(
                  status_code=400,
-                 detail=f"O valor total da venda (R$ {data.total_amount:.2f}) não corresponde ao subtotal dos itens (R$ {items_subtotal:.2f}) menos o desconto (R$ {data.discount_amount:.2f})."
+                 detail=f"O valor total da venda (R$ {data.total_amount:.2f}) somado ao saldo em aberto (R$ {remainder:.2f}) não corresponde ao subtotal dos itens (R$ {items_subtotal:.2f}) menos o desconto (R$ {data.discount_amount:.2f})."
              )
 
         if data.discount_amount > 0:
@@ -113,6 +116,29 @@ class SalesService:
                         except HTTPException as e:
                             raise HTTPException(status_code=400, detail=f"Estoque insuficiente no pacote {package.name}. {e.detail}")
                      
+        # 1.05 Validate unpaid remainder requires client
+        if data.unpaid_remainder and data.unpaid_remainder > 0.01 and not data.client_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Para deixar saldo em aberto na comanda, é obrigatório selecionar um cliente."
+            )
+
+        # 1.1 Multi-payment validation & normalization
+        if data.payments and len(data.payments) > 1:
+            total_payments = sum(p.amount for p in data.payments)
+            if abs(total_payments - data.total_amount) > 0.01:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A soma das formas de pagamento (R$ {total_payments:.2f}) não confere com o total da venda (R$ {data.total_amount:.2f})."
+                )
+            data.payment_method = "multiple"
+        elif data.payments and len(data.payments) == 1:
+            data.payment_method = data.payments[0].payment_method
+            data.payments[0].amount = data.total_amount
+        elif not data.payments:
+            from .schemas import SalePaymentCreate
+            data.payments = [SalePaymentCreate(payment_method=data.payment_method, amount=data.total_amount)]
+
         # 2. If everything is fine, create the sale in db (which marks comanda completed if linked)
         sale = self.repository.create(db, tenant_id, data)
 
@@ -127,21 +153,28 @@ class SalesService:
                 sale.cash_session_id = active_session.id
                 db.add(sale)
 
-                if data.payment_method == "money":
+                # Calculate physical money received in this sale
+                money_amount = 0.0
+                if data.payments:
+                    money_amount = sum(float(p.amount) for p in data.payments if p.payment_method == "money")
+                elif data.payment_method == "money":
+                    money_amount = float(sale.total_amount)
+
+                if money_amount > 0:
                     latest_mov = cash_repo.get_latest_movement(db, active_session.id)
                     current_balance = float(latest_mov.balance_after) if latest_mov is not None else float(active_session.initial_amount)
-                    new_balance = current_balance + float(sale.total_amount)
+                    new_balance = current_balance + money_amount
 
                     mov = CashMovement(
                         tenant_id=tenant_id,
                         session_id=active_session.id,
                         user_id=active_session.opened_by_user_id,
                         type="sale",
-                        amount=float(sale.total_amount),
+                        amount=round(money_amount, 2),
                         balance_after=round(new_balance, 2),
                         sale_id=sale.id,
                         destination_or_origin="Venda PDV",
-                        description=f"Venda PDV #{sale.id}",
+                        description=f"Venda PDV #{sale.id}" + (f" (Dinheiro: R$ {money_amount:.2f})" if data.payment_method == "multiple" else ""),
                     )
                     cash_repo.create_movement(db, mov)
         except Exception:
@@ -289,8 +322,14 @@ class SalesService:
         # 2. Cancel sale
         updated_sale = self.repository.update_status(db, tenant_id, sale_id, "canceled")
 
-        # 3. Cash movement reversal if it was paid in money and had a session
-        if sale.payment_method == "money" and sale.cash_session_id:
+        # 3. Cash movement reversal if any amount was paid in money and had a session
+        money_amount = 0.0
+        if sale.payments:
+            money_amount = sum(float(p.amount) for p in sale.payments if p.payment_method == "money")
+        elif sale.payment_method == "money":
+            money_amount = float(sale.total_amount)
+
+        if money_amount > 0 and sale.cash_session_id:
             try:
                 from app.modules.cash_register.repository import CashRegisterRepository
                 from app.modules.cash_register.models import CashMovement
@@ -300,18 +339,18 @@ class SalesService:
                 if session and session.status == "open":
                     latest_mov = cash_repo.get_latest_movement(db, session.id)
                     current_balance = float(latest_mov.balance_after) if latest_mov is not None else float(session.initial_amount)
-                    new_balance = current_balance - float(sale.total_amount)
+                    new_balance = current_balance - money_amount
 
                     cancel_mov = CashMovement(
                         tenant_id=tenant_id,
                         session_id=session.id,
                         user_id=session.opened_by_user_id,
                         type="sale_cancel",
-                        amount=float(sale.total_amount),
+                        amount=round(money_amount, 2),
                         balance_after=round(new_balance, 2),
                         sale_id=sale.id,
                         destination_or_origin="Cancelamento / Estorno",
-                        description=f"Cancelamento de Venda #{sale.id}",
+                        description=f"Cancelamento de Venda #{sale.id}" + (f" (Dinheiro: R$ {money_amount:.2f})" if sale.payment_method == "multiple" else ""),
                     )
                     cash_repo.create_movement(db, cancel_mov)
             except Exception:

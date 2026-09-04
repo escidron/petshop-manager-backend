@@ -75,6 +75,7 @@ class AppointmentRepository:
     ) -> Appointment | None:
         return (
             db.query(Appointment)
+            .options(*_eager_options())
             .filter(
                 Appointment.id == appointment_id,
                 Appointment.tenant_id == tenant_id,

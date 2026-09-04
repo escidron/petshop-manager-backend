@@ -192,6 +192,7 @@ class AppointmentService:
 
         # 🔹 Se vier items → reconstruir
         if data.items is not None:
+            existing_pet_ids = {it.pet_id for it in appointment.items}
 
             # Remove todos os items antigos
             self.repo.delete_items(db, appointment)
@@ -204,6 +205,7 @@ class AppointmentService:
                     tenant_id,
                     appointment.client_id,
                     item.pet_id,
+                    allow_deceased=(item.pet_id in existing_pet_ids),
                 )
 
                 services = self._get_services(
@@ -244,8 +246,16 @@ class AppointmentService:
                     future_appt.notes = data.notes
 
                 if data.items is not None:
+                    existing_future_pet_ids = {it.pet_id for it in future_appt.items}
                     self.repo.delete_items(db, future_appt)
                     for item in data.items:
+                        self._validate_pet(
+                            db,
+                            tenant_id,
+                            future_appt.client_id,
+                            item.pet_id,
+                            allow_deceased=(item.pet_id in existing_future_pet_ids),
+                        )
                         services = self._get_services(
                             db,
                             tenant_id,
@@ -289,6 +299,7 @@ class AppointmentService:
         tenant_id: int,
         client_id: int,
         pet_id: int,
+        allow_deceased: bool = False,
     ):
         pet = (
             db.query(Pet)
@@ -301,6 +312,8 @@ class AppointmentService:
         )
         if not pet:
             raise HTTPException(404, "Pet não encontrado")
+        if pet.is_deceased and not allow_deceased:
+            raise HTTPException(400, f"Não é possível agendar para o pet '{pet.name}', pois consta como óbito.")
         
     def _get_services(
         self,
