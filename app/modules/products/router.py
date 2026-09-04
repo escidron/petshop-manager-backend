@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant, require_active_subscription, require_owner
-from .schemas import ProductCreate, ProductUpdate, ProductResponse
+from .schemas import ProductCreate, ProductUpdate, ProductResponse, ProductPhotoResponse
 from .inventory_schemas import InventoryLogResponse, StockAdjustmentRequest, GlobalInventoryLogResponse
 from .service import ProductService
 
@@ -73,6 +73,42 @@ def delete_product(product_id: int, request: Request, db: Session = Depends(get_
     service = ProductService()
     tenant_id = request.state.tenant_user.tenant_id
     service.delete_product(db, tenant_id, product_id)
+
+
+@router.post("/{product_id}/photos", response_model=list[ProductPhotoResponse], dependencies=[Depends(require_active_subscription)])
+async def upload_product_photos(
+    product_id: int,
+    files: list[UploadFile] = File(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    service = ProductService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return await service.add_product_photos(db, tenant_id, product_id, files)
+
+
+@router.delete("/{product_id}/photos/{photo_id}", status_code=204, dependencies=[Depends(require_active_subscription)])
+def delete_product_photo(
+    product_id: int,
+    photo_id: int,
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    service = ProductService()
+    tenant_id = request.state.tenant_user.tenant_id
+    service.delete_product_photo(db, tenant_id, product_id, photo_id)
+
+
+@router.patch("/{product_id}/photos/{photo_id}/set-primary", response_model=ProductPhotoResponse, dependencies=[Depends(require_active_subscription)])
+def set_primary_product_photo(
+    product_id: int,
+    photo_id: int,
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    service = ProductService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.set_primary_photo(db, tenant_id, product_id, photo_id)
 
 
 @router.get("/{product_id}/inventory", response_model=list[InventoryLogResponse])
