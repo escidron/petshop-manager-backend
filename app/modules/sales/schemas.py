@@ -126,7 +126,7 @@ class PaginatedComandasResponse(BaseModel):
 # Sale Payments
 class SalePaymentBase(BaseModel):
     payment_method: Literal["pix", "credit_card", "debit_card", "money", "other", "package"]
-    amount: float = Field(gt=0)
+    amount: float = Field(ge=0)
 
 class SalePaymentCreate(SalePaymentBase):
     pass
