@@ -10,6 +10,7 @@ class Client(Base):
     __tablename__ = "clients"
     __table_args__ = (
         Index("ix_clients_tenant_name", "tenant_id", "name"),
+        Index("ix_clients_tenant_created_at", "tenant_id", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

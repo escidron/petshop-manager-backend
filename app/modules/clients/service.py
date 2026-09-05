@@ -35,6 +35,17 @@ class ClientService:
     def list_clients(self, db: Session, tenant_id: int):
         return self.repository.list(db, tenant_id)
 
+    def count_new_clients(
+        self,
+        db: Session,
+        tenant_id: int,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> int:
+        return self.repository.count_new_clients(
+            db, tenant_id, start_date=start_date, end_date=end_date
+        )
+
     def update_client(
         self,
         db: Session,

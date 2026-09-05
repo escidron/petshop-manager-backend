@@ -1,6 +1,6 @@
-import asyncio
-import io
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, File, UploadFile, Form
+from datetime import date
+from typing import Optional
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, File, UploadFile, Form, Query
 from fastapi.responses import StreamingResponse
 
 from sqlalchemy.orm import Session
@@ -55,6 +55,19 @@ def list_clients(
     tenant_id = request.state.tenant_user.tenant_id
     clients = service.list_clients(db, tenant_id)
     return [ClientSummaryResponse.from_orm_client(c) for c in clients]
+
+
+@router.get("/new-count")
+def count_new_clients(
+    request: Request,
+    db: Session = Depends(get_db),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+):
+    service = ClientService()
+    tenant_id = request.state.tenant_user.tenant_id
+    count = service.count_new_clients(db, tenant_id, start_date=start_date, end_date=end_date)
+    return {"count": count}
 
 
 @router.get("/{client_id}", response_model=ClientResponse)

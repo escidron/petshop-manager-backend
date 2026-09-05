@@ -1,3 +1,5 @@
+from datetime import date, datetime, time
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from app.modules.clients.models import Client
 from app.modules.clients.schemas import ClientCreate, ClientUpdate
@@ -53,3 +55,17 @@ class ClientRepository:
     def delete(self, db: Session, client: Client) -> None:
         db.delete(client)
         db.commit()
+
+    def count_new_clients(
+        self,
+        db: Session,
+        tenant_id: int,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> int:
+        q = db.query(func.count(Client.id)).filter(Client.tenant_id == tenant_id)
+        if start_date:
+            q = q.filter(Client.created_at >= datetime.combine(start_date, time.min))
+        if end_date:
+            q = q.filter(Client.created_at <= datetime.combine(end_date, time.max))
+        return q.scalar() or 0

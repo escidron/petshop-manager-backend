@@ -2,12 +2,24 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import List, Tuple, Optional
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import desc, func, or_
 
 from .models import Sale, SaleItem, SalePayment, Comanda, ComandaItem
 from .schemas import SaleCreate, ComandaSaveRequest
 from app.modules.clients.models import Client
+from app.modules.appointments.models import Appointment, AppointmentItem
+from app.modules.pets.models import Pet
+
+
+def _sale_eager_options():
+    return [
+        selectinload(Sale.items),
+        selectinload(Sale.payments),
+        joinedload(Sale.client).selectinload(Client.pets),
+        joinedload(Sale.appointment).joinedload(Appointment.client).selectinload(Client.pets),
+        joinedload(Sale.appointment).selectinload(Appointment.items).selectinload(AppointmentItem.services),
+    ]
 
 
 class SalesRepository:
@@ -115,10 +127,15 @@ class SalesRepository:
         return db_sale
 
     def get(self, db: Session, tenant_id: int, sale_id: int) -> Sale | None:
-        return db.query(Sale).filter(
-            Sale.id == sale_id,
-            Sale.tenant_id == tenant_id,
-        ).first()
+        return (
+            db.query(Sale)
+            .options(*_sale_eager_options())
+            .filter(
+                Sale.id == sale_id,
+                Sale.tenant_id == tenant_id,
+            )
+            .first()
+        )
 
     def list(
         self,
@@ -130,7 +147,11 @@ class SalesRepository:
         end_date: date | None = None,
         client_id: int | None = None,
     ) -> list[Sale]:
-        q = db.query(Sale).filter(Sale.tenant_id == tenant_id)
+        q = (
+            db.query(Sale)
+            .options(*_sale_eager_options())
+            .filter(Sale.tenant_id == tenant_id)
+        )
         if start_date:
             q = q.filter(Sale.created_at >= datetime.combine(start_date, time.min))
         if end_date:
