@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     Text,
     JSON,
+    Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +19,9 @@ from app.config.database import Base
 
 class Sale(Base):
     __tablename__ = "sales"
+    __table_args__ = (
+        Index("ix_sales_tenant_created_at", "tenant_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
