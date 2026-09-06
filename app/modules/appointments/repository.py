@@ -12,6 +12,7 @@ def _eager_options():
     return [
         joinedload(Appointment.client),                          # many-to-one → joinedload ok
         selectinload(Appointment.sales),                         # one-to-many → selectinload
+        selectinload(Appointment.sale_items),                    # one-to-many → selectinload
         selectinload(Appointment.items)                          # one-to-many → selectinload
             .joinedload(AppointmentItem.pet)                     # many-to-one dentro do item
             .selectinload(Pet.photos),                           # one-to-many (pet.photos)
@@ -235,13 +236,13 @@ class AppointmentRepository:
         subquery against the sales table to detect unpaid appointments.
         Appointments fully covered by packages are also excluded (no payment needed).
         """
-        from app.modules.sales.models import Sale
+        from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
         from .models import AppointmentItem, AppointmentItemService, AppointmentPackageCoverage
         from app.modules.clients.models import Client
         from app.modules.pets.models import Pet
 
-        # Subquery: any completed sale linked to this appointment?
-        paid_subquery = (
+        # Subquery: any completed sale linked to this appointment (directly, via items, or via comanda)?
+        paid_via_sale = (
             db.query(Sale.id)
             .filter(
                 Sale.appointment_id == Appointment.id,
@@ -250,6 +251,28 @@ class AppointmentRepository:
             )
             .exists()
         )
+        paid_via_sale_item = (
+            db.query(SaleItem.id)
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(
+                SaleItem.appointment_id == Appointment.id,
+                Sale.status == "completed",
+                Sale.payment_method != "package",
+            )
+            .exists()
+        )
+        paid_via_comanda = (
+            db.query(Sale.id)
+            .join(Comanda, Sale.comanda_id == Comanda.id)
+            .join(ComandaItem, Comanda.id == ComandaItem.comanda_id)
+            .filter(
+                (Comanda.appointment_id == Appointment.id) | (ComandaItem.appointment_id == Appointment.id),
+                Sale.status == "completed",
+                Sale.payment_method != "package",
+            )
+            .exists()
+        )
+        paid_subquery = paid_via_sale | paid_via_sale_item | paid_via_comanda
 
         # Subquery: does this appointment have at least one service NOT covered by a package?
         # If all services have coverage records, no payment is needed.

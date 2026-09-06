@@ -229,16 +229,29 @@ class SalesService:
 
         db.commit()
 
-        # 5. If it's linked to an appointment, mark appointment as completed
+        # 5. If linked to any appointments (directly, via items, or via comanda), mark them as completed
+        linked_appointment_ids: set[int] = set()
         if data.appointment_id:
+            linked_appointment_ids.add(data.appointment_id)
+        for item in data.items:
+            if getattr(item, "appointment_id", None):
+                linked_appointment_ids.add(item.appointment_id)
+        if sale.comanda:
+            if sale.comanda.appointment_id:
+                linked_appointment_ids.add(sale.comanda.appointment_id)
+            for c_item in sale.comanda.items:
+                if getattr(c_item, "appointment_id", None):
+                    linked_appointment_ids.add(c_item.appointment_id)
+
+        for apt_id in linked_appointment_ids:
             try:
                 self.appointment_service.apply_action(
                     db=db,
                     tenant_id=tenant_id,
-                    appointment_id=data.appointment_id,
+                    appointment_id=apt_id,
                     action="complete"
                 )
-            except HTTPException as e:
+            except HTTPException:
                 pass
 
         return sale

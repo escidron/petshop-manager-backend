@@ -48,7 +48,7 @@ jobs:
           region: ${{ env.REGION }}
           image: us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-production:${{ github.sha }}
           flags: |
-            --min-instances=0
+            --min-instances=1
             --max-instances=10
             --allow-unauthenticated
           env_vars: |
