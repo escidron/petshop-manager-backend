@@ -139,12 +139,23 @@ class Appointment(Base):
         lazy="select"
     )
 
+    sale_items = relationship(
+        "app.modules.sales.models.SaleItem",
+        back_populates="appointment",
+        lazy="select",
+    )
+
     @property
     def is_paid(self) -> bool:
-        """Checks if there's any completed POS sale linked to this appointment."""
-        if not self.sales:
-            return False
-        return any(sale.status == "completed" and sale.payment_method != "package" for sale in self.sales)
+        """Checks if there's any completed POS sale linked to this appointment directly or via sale items."""
+        if self.sales and any(sale.status == "completed" and sale.payment_method != "package" for sale in self.sales):
+            return True
+        if hasattr(self, "sale_items") and self.sale_items:
+            return any(
+                item.sale and item.sale.status == "completed" and item.sale.payment_method != "package"
+                for item in self.sale_items
+            )
+        return False
     
 
 class AppointmentItem(Base):

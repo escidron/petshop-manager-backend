@@ -526,6 +526,7 @@ class AppointmentService:
                         employee_id=emp_id,
                         pet_ids=[item.pet_id],
                         unit="UN",
+                        appointment_id=appointment_full.id,
                     )
                     db.add(c_item)
 

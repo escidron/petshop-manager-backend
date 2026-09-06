@@ -140,7 +140,14 @@ class SaleItem(Base):
         nullable=True,
     )
 
+    appointment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("appointments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     sale = relationship("Sale", back_populates="items")
+    appointment = relationship("Appointment", back_populates="sale_items")
 
 
 class SalePayment(Base):
@@ -283,4 +290,11 @@ class ComandaItem(Base):
         String(20), nullable=True, default="UN"
     )
 
+    appointment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("appointments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     comanda = relationship("Comanda", back_populates="items")
+    appointment = relationship("Appointment")

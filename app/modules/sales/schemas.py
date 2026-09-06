@@ -24,11 +24,13 @@ class SaleItemCreate(SaleItemBase):
     pet_ids: list[int] | None = None
     employee_id: int | None = None
     client_package_id_to_pay: int | None = None
+    appointment_id: int | None = None
 
 class SaleItemResponse(SaleItemBase):
     id: int
     sale_id: int
     employee_id: int | None = None
+    appointment_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -82,6 +84,7 @@ class ComandaItemBase(BaseModel):
     pet_ids: list[int] | None = None
     client_package_id_to_pay: int | None = None
     unit: str | None = "UN"
+    appointment_id: int | None = None
 
 class ComandaItemCreate(ComandaItemBase):
     pass
