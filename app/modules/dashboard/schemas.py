@@ -16,3 +16,4 @@ class DashboardStartupResponse(BaseModel):
     packages_catalog: list[Package]
     waiting_list_pending: list[WaitingListEntryResponse]
     open_comandas: Optional[PaginatedComandasResponse] = None
+    daily_revenue_cents: int = 0

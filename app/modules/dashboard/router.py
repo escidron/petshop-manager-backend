@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
-from datetime import date
+from sqlalchemy import func
+from datetime import date, datetime, time
 from typing import Optional
 
 from app.config.database import get_db
@@ -13,6 +14,7 @@ from app.modules.packages.service import PackageService
 from app.modules.waiting_list.service import WaitingListService
 from app.modules.waiting_list.models import WaitingListStatus
 from app.modules.sales.service import SalesService
+from app.modules.sales.models import Sale
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"], dependencies=[Depends(get_current_tenant)])
 
@@ -36,6 +38,16 @@ def get_dashboard_startup(
     packages = PackageService().list_packages(db, tenant_id)
     waiting_list = WaitingListService().get_all(db, tenant_id, status=WaitingListStatus.PENDING)
     
+    start_target = datetime.combine(target_date, time.min)
+    end_target = datetime.combine(target_date, time.max)
+    daily_revenue_val = db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(
+        Sale.tenant_id == tenant_id,
+        Sale.status == "completed",
+        Sale.created_at >= start_target,
+        Sale.created_at <= end_target,
+    ).scalar()
+    daily_revenue_cents = int(round(float(daily_revenue_val) * 100))
+
     return DashboardStartupResponse(
         appointments_today=appointments,
         highlighted_days=highlighted,
@@ -44,4 +56,6 @@ def get_dashboard_startup(
         packages_catalog=packages,
         waiting_list_pending=waiting_list,
         open_comandas=comandas_res,
+        daily_revenue_cents=daily_revenue_cents,
     )
+
