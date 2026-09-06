@@ -22,6 +22,7 @@ from app.modules.whatsapp.router import router as whatsapp_router
 from app.modules.observability.router import router as observability_router
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.cash_register.router import router as cash_router
+from app.modules.financial.router import router as financial_router
 
 api_router = APIRouter()
 
@@ -49,3 +50,4 @@ api_router.include_router(whatsapp_router)
 api_router.include_router(observability_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(cash_router)
+api_router.include_router(financial_router)
