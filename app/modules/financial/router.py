@@ -16,6 +16,7 @@ from app.modules.financial.schemas import (
     DREEntryResponse,
     DREReportResponse,
 )
+from app.modules.financial.operational_result_schemas import OperationalResultResponse
 from app.modules.financial.service import FinancialService
 
 router = APIRouter(
@@ -23,6 +24,54 @@ router = APIRouter(
     tags=["Financial DRE"],
     dependencies=[Depends(require_owner)],
 )
+
+operational_router = APIRouter(
+    prefix="/financial/operational-result",
+    tags=["Financial Operational Result"],
+    dependencies=[Depends(require_owner)],
+)
+
+
+@operational_router.get("", response_model=OperationalResultResponse)
+def get_operational_result(
+    request: Request,
+    year: int = Query(default=datetime.now().year, ge=2000, le=2100),
+    month: int = Query(default=datetime.now().month, ge=1, le=12),
+    db: Session = Depends(get_db),
+):
+    """
+    Retorna a matriz operacional de serviços diários do mês, indicadores (dias úteis, ticket médio) e comparativo anual.
+    Acesso restrito ao proprietário (owner).
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialService()
+    return service.get_operational_result(db, tenant_id=tenant_id, year=year, month=month)
+
+
+@operational_router.get("/export")
+def export_operational_result_excel(
+    request: Request,
+    year: int = Query(default=datetime.now().year, ge=2000, le=2100),
+    month: int = Query(default=datetime.now().month, ge=1, le=12),
+    db: Session = Depends(get_db),
+):
+    """
+    Exporta a planilha de Resultado Operacional em formato Excel (.xlsx).
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialService()
+    file_bytes = service.export_operational_result_excel(db, tenant_id=tenant_id, year=year, month=month)
+
+    filename = f"Resultado_Operacional_{month:02d}_{year}.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    return Response(
+        content=file_bytes.getvalue(),
+        headers=headers,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @router.get("", response_model=DREReportResponse)

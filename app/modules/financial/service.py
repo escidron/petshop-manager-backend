@@ -18,11 +18,14 @@ from app.modules.financial.schemas import (
     DREReportResponse,
 )
 from app.modules.financial.repository import FinancialRepository
+from app.modules.financial.operational_result_repository import OperationalResultRepository
+from app.modules.financial.operational_result_schemas import OperationalResultResponse
 
 
 class FinancialService:
     def __init__(self):
         self.repo = FinancialRepository()
+        self.operational_repo = OperationalResultRepository()
 
     def get_dre_report(self, db: Session, tenant_id: int, year: int) -> DREReportResponse:
         # 1. Garante que as contas padrão existam
@@ -504,3 +507,125 @@ class FinancialService:
         wb.save(output)
         output.seek(0)
         return output
+
+    def get_operational_result(
+        self, db: Session, tenant_id: int, year: int, month: int
+    ) -> OperationalResultResponse:
+        data = self.operational_repo.get_monthly_operational_data(db, tenant_id, year, month)
+        return OperationalResultResponse(**data)
+
+    def export_operational_result_excel(
+        self, db: Session, tenant_id: int, year: int, month: int
+    ) -> io.BytesIO:
+        data = self.operational_repo.get_monthly_operational_data(db, tenant_id, year, month)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Resultado Op {month:02d}-{year}"
+
+        # Estilos
+        title_font = Font(name="Calibri", size=13, bold=True, color="1E293B")
+        kpi_font = Font(name="Calibri", size=10, bold=True, color="334155")
+        header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+        weekend_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        footer_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        soft_green_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+        bold_font = Font(name="Calibri", size=10, bold=True)
+        regular_font = Font(name="Calibri", size=10)
+        thin_side = Side(border_style="thin", color="CBD5E1")
+        thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+
+        num_days = data["days_in_month"]
+        days_meta = data["days_metadata"]
+        summary = data["summary"]
+
+        # Linha 1: Título
+        ws.cell(row=1, column=1, value=f"RESULTADO OPERACIONAL - {month:02d}/{year}").font = title_font
+
+        # Linha 2: Resumo Executivo Operacional (KPIs)
+        kpi_text = (
+            f"Total de Serviços: {summary['total_services']} | "
+            f"Média / Dia Útil: {summary['avg_services_per_working_day']:.1f} atendimentos/dia | "
+            f"Dias Úteis: {summary['working_days']} dias | "
+            f"Dia de Pico: {summary.get('peak_day_label', '-')} | "
+            f"Top Serviço: {summary.get('top_service_name', '-')} ({summary.get('top_service_count', 0)} atend. - {summary.get('top_service_pct', 0.0)}%)"
+        )
+        ws.cell(row=2, column=1, value=kpi_text).font = kpi_font
+
+        # Linha 4: Cabeçalho da Tabela
+        header_row = 4
+        ws.cell(row=header_row, column=1, value="Serviço").fill = header_fill
+        ws.cell(row=header_row, column=1).font = header_font
+        ws.cell(row=header_row, column=1).alignment = Alignment(horizontal="left", vertical="center")
+
+        for idx, dm in enumerate(days_meta):
+            col = 2 + idx
+            is_closed = dm.get("is_closed", dm.get("is_weekend", False))
+            c = ws.cell(row=header_row, column=col, value=f"{dm['day_of_week']}\n{dm['date_str']}")
+            c.fill = weekend_fill if is_closed else header_fill
+            c.font = Font(name="Calibri", size=9, bold=True, color="1E293B" if is_closed else "FFFFFF")
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        tot_col = 2 + num_days
+        ws.cell(row=header_row, column=tot_col, value="Total").fill = header_fill
+        ws.cell(row=header_row, column=tot_col).font = header_font
+        ws.cell(row=header_row, column=tot_col).alignment = Alignment(horizontal="center", vertical="center")
+
+        # Linhas de Dados
+        current_row = header_row + 1
+        for r in data["rows"]:
+            ws.cell(row=current_row, column=1, value=r["name"]).font = regular_font
+            ws.cell(row=current_row, column=1).alignment = Alignment(horizontal="left", vertical="center")
+            ws.cell(row=current_row, column=1).border = thin_border
+
+            for idx, dm in enumerate(days_meta):
+                col = 2 + idx
+                is_closed = dm.get("is_closed", dm.get("is_weekend", False))
+                val = r["daily_counts"].get(dm["day"], 0)
+                c = ws.cell(row=current_row, column=col, value=val if val > 0 else "")
+                c.alignment = Alignment(horizontal="center", vertical="center")
+                c.font = regular_font
+                c.border = thin_border
+                if is_closed:
+                    c.fill = weekend_fill
+
+            # Total da Linha
+            c_tot = ws.cell(row=current_row, column=tot_col, value=r["total_count"])
+            c_tot.font = bold_font
+            c_tot.alignment = Alignment(horizontal="center", vertical="center")
+            c_tot.border = thin_border
+
+            current_row += 1
+
+        # Linha Rodapé - Volume Serviços / Dia (Estilo limpo e claro)
+        ws.cell(row=current_row, column=1, value="VOLUME SERVIÇOS/DIA").font = bold_font
+        ws.cell(row=current_row, column=1).alignment = Alignment(horizontal="left", vertical="center")
+        ws.cell(row=current_row, column=1).fill = footer_fill
+        ws.cell(row=current_row, column=1).border = thin_border
+
+        for idx, dm in enumerate(days_meta):
+            col = 2 + idx
+            d_tot = data["daily_totals"].get(dm["day"], 0)
+            c = ws.cell(row=current_row, column=col, value=d_tot)
+            c.font = bold_font
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.fill = footer_fill
+            c.border = thin_border
+
+        c_grand = ws.cell(row=current_row, column=tot_col, value=summary["total_services"])
+        c_grand.font = bold_font
+        c_grand.alignment = Alignment(horizontal="center", vertical="center")
+        c_grand.fill = soft_green_fill
+        c_grand.border = thin_border
+
+        # Ajuste de largura das colunas
+        ws.column_dimensions["A"].width = 28
+        for d in range(1, num_days + 1):
+            ws.column_dimensions[get_column_letter(1 + d)].width = 7
+        ws.column_dimensions[get_column_letter(tot_col)].width = 12
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return output
+
