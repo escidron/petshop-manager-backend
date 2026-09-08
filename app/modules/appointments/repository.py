@@ -1,5 +1,6 @@
 from datetime import date, datetime, time
 from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy import func
 
 from .models import Appointment, AppointmentItem, AppointmentPackageCoverage
@@ -73,16 +74,19 @@ class AppointmentRepository:
         db: Session,
         tenant_id: int,
         appointment_id: int,
+        for_update: bool = False,
     ) -> Appointment | None:
-        return (
+        query = (
             db.query(Appointment)
             .options(*_eager_options())
             .filter(
                 Appointment.id == appointment_id,
                 Appointment.tenant_id == tenant_id,
             )
-            .first()
         )
+        if for_update:
+            query = query.with_for_update(of=Appointment)
+        return query.first()
 
 
     def list_by_day(
@@ -187,7 +191,12 @@ class AppointmentRepository:
         for item in appointment.items:
             db.delete(item)
 
-        db.flush()
+        try:
+            db.flush()
+        except StaleDataError:
+            # Se itens ou serviços associados já foram removidos por outra transação concorrente,
+            # sincroniza o estado da coleção na sessão sem derrubar a requisição
+            db.expire(appointment, ["items"])
 
     def assign_employees(
         self,

@@ -3,7 +3,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.modules.appointments.models import AppointmentAction, AppointmentStatus
+from app.modules.appointments.models import Appointment, AppointmentAction, AppointmentStatus
 
 from .repository import AppointmentRepository
 from .schemas import AppointmentCreate, AppointmentUpdate
@@ -179,8 +179,10 @@ class AppointmentService:
         tenant_id: int,
         appointment_id: int,
         data: AppointmentUpdate,
-    ):
-        appointment = self.get(db, tenant_id, appointment_id)
+    ) -> Appointment:
+        appointment = self.repo.get_by_id(db, tenant_id, appointment_id, for_update=True)
+        if not appointment:
+            raise HTTPException(404, "Agendamento não encontrado")
         old_scheduled_at = appointment.scheduled_at
 
         # 🔹 Atualizar campos simples
@@ -222,7 +224,6 @@ class AppointmentService:
                 )
 
         if data.update_all_future and appointment.recurrence_id:
-            from app.modules.appointments.models import Appointment
             time_delta = (data.scheduled_at - old_scheduled_at) if data.scheduled_at is not None else None
 
             future_appointments = (
@@ -235,6 +236,7 @@ class AppointmentService:
                     Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
                 )
                 .order_by(Appointment.scheduled_at.asc())
+                .with_for_update(of=Appointment)
                 .all()
             )
 
