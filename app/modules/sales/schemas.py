@@ -46,6 +46,7 @@ class PetBrief(BaseModel):
 class ClientBrief(BaseModel):
     id: int
     name: str
+    phone: str | None = None
     pets: list[PetBrief] = []
 
     class Config:

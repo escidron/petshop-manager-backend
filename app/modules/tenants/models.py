@@ -26,6 +26,15 @@ class Tenant(Base):
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     document: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
+    # -------- Endereço --------
+    cep: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    street: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    complement: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    neighborhood: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(2), nullable=True)
+
     type_id: Mapped[int] = mapped_column(
         ForeignKey("tenant_types.id"),
         nullable=False,
