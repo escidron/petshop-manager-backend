@@ -14,6 +14,13 @@ class TenantBase(BaseModel):
     onboarding_step: str = Field("services", max_length=50)
     document: Optional[str] = Field(None, max_length=20)
     whatsapp_package: Optional[str] = Field(None, max_length=50)
+    cep: Optional[str] = Field(None, max_length=10)
+    street: Optional[str] = Field(None, max_length=150)
+    number: Optional[str] = Field(None, max_length=20)
+    complement: Optional[str] = Field(None, max_length=100)
+    neighborhood: Optional[str] = Field(None, max_length=100)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=2)
 
 class TenantCreate(TenantBase):
     pass
@@ -31,6 +38,13 @@ class TenantUpdate(BaseModel):
     allow_discount: Optional[bool] = None
     max_discount_percentage: Optional[float] = None
     feature_flags: Optional[dict] = None
+    cep: Optional[str] = Field(None, max_length=10)
+    street: Optional[str] = Field(None, max_length=150)
+    number: Optional[str] = Field(None, max_length=20)
+    complement: Optional[str] = Field(None, max_length=100)
+    neighborhood: Optional[str] = Field(None, max_length=100)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=2)
 
 class TenantTypeResponse(BaseModel):
     id: int
@@ -57,6 +71,13 @@ class TenantResponse(BaseModel):
     allow_discount: bool
     max_discount_percentage: float
     feature_flags: dict = Field(default_factory=dict)
+    cep: Optional[str] = None
+    street: Optional[str] = None
+    number: Optional[str] = None
+    complement: Optional[str] = None
+    neighborhood: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
 
     class Config:
         from_attributes = True
