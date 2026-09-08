@@ -20,6 +20,13 @@ from app.modules.financial.schemas import (
 from app.modules.financial.repository import FinancialRepository
 from app.modules.financial.operational_result_repository import OperationalResultRepository
 from app.modules.financial.operational_result_schemas import OperationalResultResponse
+from app.modules.financial.payroll_schemas import (
+    PayrollProfileResponse,
+    PayrollProfileUpdate,
+    PayrollSummaryResponse,
+    PayrollSyncToDRERequest,
+    PayrollSyncResponse,
+)
 
 
 class FinancialService:
@@ -92,6 +99,9 @@ class FinancialService:
                 total_amount = round(sum(monthly_amounts.values()), 2)
                 monthly_avg = round(total_amount / 12.0, 2)
 
+                is_payroll = bool(acc.system_source and acc.system_source.startswith("payroll_"))
+                is_editable = not acc.is_system and not is_payroll
+
                 row = DRERowData(
                     id=f"acc-{acc.id}",
                     account_id=acc.id,
@@ -104,7 +114,7 @@ class FinancialService:
                     is_subtotal=False,
                     is_result=False,
                     is_percentage_row=False,
-                    is_editable=True,
+                    is_editable=is_editable,
                     display_order=acc.order_index,
                     monthly_amounts=monthly_amounts,
                     monthly_percentages={},  # preenchido no passo da análise vertical
@@ -333,6 +343,12 @@ class FinancialService:
         notes: Optional[str] = None,
         user_id: Optional[int] = None,
     ) -> DREEntry:
+        acc = db.query(DREAccount).filter(DREAccount.id == account_id, DREAccount.tenant_id == tenant_id).first()
+        if acc and acc.system_source and acc.system_source.startswith("payroll_"):
+            raise ValueError(
+                "Esta conta é calculada automaticamente pela Folha de Pagamento. "
+                "Para alterar os valores, utilize o módulo de Gestão da Folha."
+            )
         return self.repo.upsert_entry(
             db, tenant_id, account_id, year, month, amount, notes, user_id
         )
@@ -344,10 +360,22 @@ class FinancialService:
         entries: List[DREEntryUpsert],
         user_id: Optional[int] = None,
     ) -> List[DREEntry]:
+        payroll_acc_ids = {
+            a.id for a in db.query(DREAccount.id).filter(
+                DREAccount.tenant_id == tenant_id,
+                DREAccount.system_source.like("payroll_%")
+            ).all()
+        }
+        safe_entries = [e for e in entries if e.account_id not in payroll_acc_ids]
+        if not safe_entries and entries:
+            raise ValueError(
+                "As contas de Folha de Pagamento são gerenciadas automaticamente. "
+                "Utilize a Gestão da Folha para atualizá-las."
+            )
         return self.repo.batch_upsert_entries(
             db=db,
             tenant_id=tenant_id,
-            entries=entries,
+            entries=safe_entries,
             user_id=user_id,
         )
 
@@ -358,6 +386,12 @@ class FinancialService:
         data: DREEntryReplicate,
         user_id: Optional[int] = None,
     ) -> List[DREEntry]:
+        acc = db.query(DREAccount).filter(DREAccount.id == data.account_id, DREAccount.tenant_id == tenant_id).first()
+        if acc and acc.system_source and acc.system_source.startswith("payroll_"):
+            raise ValueError(
+                "Esta conta é calculada automaticamente pela Folha de Pagamento. "
+                "Para alterar os valores, utilize o módulo de Gestão da Folha."
+            )
         return self.repo.replicate_entry(
             db,
             tenant_id=tenant_id,
@@ -384,6 +418,9 @@ class FinancialService:
         return self.repo.update_account(db, tenant_id, account_id, data)
 
     def delete_account(self, db: Session, tenant_id: int, account_id: int) -> bool:
+        acc = db.query(DREAccount).filter(DREAccount.id == account_id, DREAccount.tenant_id == tenant_id).first()
+        if acc and (acc.is_system or (acc.system_source and acc.system_source.startswith("payroll_"))):
+            raise ValueError("Contas do sistema e vinculadas à Folha de Pagamento não podem ser excluídas.")
         return self.repo.delete_account(db, tenant_id, account_id)
 
     # ── EXPORTAÇÃO EXCEL (.XLSX) PROFISSIONAL ──────────────────────────────
@@ -628,4 +665,75 @@ class FinancialService:
         wb.save(output)
         output.seek(0)
         return output
+
+    # ── GESTÃO DE FOLHA DE PAGAMENTO, SALÁRIOS & BENEFÍCIOS ─────────────────
+    def get_payroll_profiles(self, db: Session, tenant_id: int) -> List[PayrollProfileResponse]:
+        raw_list = self.repo.get_payroll_profiles(db, tenant_id)
+        return [PayrollProfileResponse(**item) for item in raw_list]
+
+    def upsert_payroll_profile(
+        self, db: Session, tenant_id: int, employee_id: int, data: PayrollProfileUpdate
+    ) -> PayrollProfileResponse:
+        update_dict = data.model_dump(exclude_unset=True)
+        if "custom_benefits" in update_dict and update_dict["custom_benefits"] is not None:
+            update_dict["custom_benefits"] = [
+                b.model_dump() if hasattr(b, "model_dump") else b for b in update_dict["custom_benefits"]
+            ]
+        self.repo.upsert_payroll_profile(db, tenant_id, employee_id, update_dict)
+        all_profiles = self.get_payroll_profiles(db, tenant_id)
+        target = next((p for p in all_profiles if p.employee_id == employee_id), None)
+        if not target:
+            raise ValueError("Funcionário não encontrado")
+        return target
+
+    def get_payroll_summary(self, db: Session, tenant_id: int) -> PayrollSummaryResponse:
+        profiles = self.get_payroll_profiles(db, tenant_id)
+        active = [p for p in profiles if p.is_active and p.employee_is_active]
+
+        tot_base = round(sum(p.base_salary for p in active), 2)
+        tot_13 = round(sum(p.thirteenth_salary for p in active), 2)
+        tot_vac = round(sum(p.vacation_provision for p in active), 2)
+        tot_salaries = round(sum(p.total_salaries_and_provisions for p in active), 2)
+        tot_inss = round(sum(p.total_inss for p in active), 2)
+        tot_fgts = round(sum(p.total_fgts for p in active), 2)
+        tot_charges = round(tot_inss + tot_fgts, 2)
+        tot_vt = round(sum(p.transport_voucher for p in active), 2)
+        tot_va = round(sum(p.food_voucher for p in active), 2)
+        tot_vr = round(sum(p.meal_voucher for p in active), 2)
+        tot_health = round(sum(p.health_insurance for p in active), 2)
+        tot_other = round(sum(p.other_benefits for p in active), 2)
+        tot_benefits = round(sum(p.total_benefits for p in active), 2)
+        tot_monthly = round(sum(p.total_monthly_cost for p in active), 2)
+
+        return PayrollSummaryResponse(
+            total_base_salary=tot_base,
+            total_thirteenth=tot_13,
+            total_vacation=tot_vac,
+            total_salaries_and_provisions=tot_salaries,
+            total_inss=tot_inss,
+            total_fgts=tot_fgts,
+            total_charges=tot_charges,
+            total_transport_voucher=tot_vt,
+            total_food_voucher=tot_va,
+            total_meal_voucher=tot_vr,
+            total_health_insurance=tot_health,
+            total_other_benefits=tot_other,
+            total_benefits=tot_benefits,
+            total_monthly_cost=tot_monthly,
+            total_annual_cost=round(tot_monthly * 12.0, 2),
+            active_employees_count=len(active),
+        )
+
+    def sync_payroll_to_dre(
+        self, db: Session, tenant_id: int, request: PayrollSyncToDRERequest, user_id: Optional[int] = None
+    ) -> PayrollSyncResponse:
+        res = self.repo.sync_payroll_to_dre(
+            db=db,
+            tenant_id=tenant_id,
+            year=request.year,
+            months=request.months,
+            account_mapping=request.account_mapping,
+            user_id=user_id,
+        )
+        return PayrollSyncResponse(**res)
 

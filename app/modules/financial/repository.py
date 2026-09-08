@@ -1,11 +1,12 @@
 from datetime import datetime, date
 from decimal import Decimal
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, and_, desc, or_, text
 
-from app.modules.financial.models import DREAccount, DREEntry
+from app.modules.financial.models import DREAccount, DREEntry, EmployeePayrollProfile
 from app.modules.financial.schemas import DREAccountCreate, DREAccountUpdate
+from app.modules.employees.models import Employee
 from app.modules.sales.models import Sale, SaleItem
 from app.modules.products.models import Product
 from app.modules.commissions.models import CommissionEntry
@@ -106,6 +107,7 @@ class FinancialRepository:
             .scalar()
         )
         if count and count > 0:
+            self._ensure_payroll_accounts_tagged(db, tenant_id)
             return self.get_accounts(db, tenant_id, active_only=False)
 
         defaults = [
@@ -185,28 +187,28 @@ class FinancialRepository:
                 "order_index": 40,
             },
             {
-                "name": "Salários e Folha de Pagamento",
+                "name": "Salários & Provisões (Salário Base + 13º + Férias)",
                 "code": "3.05",
                 "group_type": "fixed_expense",
                 "is_system": False,
-                "system_source": None,
+                "system_source": "payroll_salaries",
                 "order_index": 50,
             },
             {
-                "name": "INSS e Encargos",
+                "name": "Encargos Trabalhistas (INSS + FGTS)",
                 "code": "3.06",
                 "group_type": "fixed_expense",
                 "is_system": False,
-                "system_source": None,
-                "order_index": 60,
+                "system_source": "payroll_charges",
+                "order_index": 52,
             },
             {
-                "name": "FGTS",
+                "name": "Benefícios a Funcionários (VT + VA + VR + Saúde + Outros)",
                 "code": "3.07",
                 "group_type": "fixed_expense",
                 "is_system": False,
-                "system_source": None,
-                "order_index": 70,
+                "system_source": "payroll_benefits",
+                "order_index": 54,
             },
             {
                 "name": "Aluguel e Condomínio",
@@ -656,3 +658,303 @@ class FinancialRepository:
             commissions_by_month[m] = float(total or 0.0)
 
         return commissions_by_month
+
+    def _ensure_payroll_accounts_tagged(self, db: Session, tenant_id: int):
+        accounts = db.query(DREAccount).filter(DREAccount.tenant_id == tenant_id).all()
+
+        sal_acc = None
+        charges_acc = None
+        fgts_acc = None
+        ben_acc = None
+
+        for acc in accounts:
+            name_lower = (acc.name or "").lower()
+            if acc.system_source == "payroll_salaries" or "salário" in name_lower or "folha de pagamento" in name_lower:
+                if not sal_acc:
+                    sal_acc = acc
+            elif acc.system_source in ("payroll_charges", "payroll_inss") or "inss" in name_lower or "encargo" in name_lower:
+                if not charges_acc:
+                    charges_acc = acc
+            elif acc.system_source == "payroll_fgts" or "fgts" in name_lower:
+                fgts_acc = acc
+            elif acc.system_source == "payroll_benefits" or "benefício" in name_lower:
+                ben_acc = acc
+
+        # Linha 1: Salários & Provisões (Salário Base + 13º + Férias)
+        if sal_acc:
+            sal_acc.name = "Salários & Provisões (Salário Base + 13º + Férias)"
+            sal_acc.code = "3.05"
+            sal_acc.order_index = 50
+            sal_acc.system_source = "payroll_salaries"
+            sal_acc.is_active = True
+
+        # Linha 2: Encargos Trabalhistas (INSS + FGTS)
+        if charges_acc:
+            charges_acc.name = "Encargos Trabalhistas (INSS + FGTS)"
+            charges_acc.code = "3.06"
+            charges_acc.order_index = 52
+            charges_acc.system_source = "payroll_charges"
+            charges_acc.is_active = True
+        else:
+            charges_acc = DREAccount(
+                tenant_id=tenant_id,
+                name="Encargos Trabalhistas (INSS + FGTS)",
+                code="3.06",
+                group_type="fixed_expense",
+                is_system=False,
+                system_source="payroll_charges",
+                order_index=52,
+                is_active=True,
+            )
+            db.add(charges_acc)
+
+        # Desativar conta isolada de FGTS para não duplicar no DRE
+        if fgts_acc and fgts_acc.id != charges_acc.id:
+            fgts_acc.is_active = False
+            db.query(DREEntry).filter(
+                DREEntry.tenant_id == tenant_id,
+                DREEntry.account_id == fgts_acc.id
+            ).delete()
+
+        # Linha 3: Benefícios a Funcionários (VT + VA + VR + Saúde + Outros)
+        if ben_acc:
+            ben_acc.name = "Benefícios a Funcionários (VT + VA + VR + Saúde + Outros)"
+            ben_acc.code = "3.07"
+            ben_acc.order_index = 54
+            ben_acc.system_source = "payroll_benefits"
+            ben_acc.is_active = True
+        else:
+            ben_acc = DREAccount(
+                tenant_id=tenant_id,
+                name="Benefícios a Funcionários (VT + VA + VR + Saúde + Outros)",
+                code="3.07",
+                group_type="fixed_expense",
+                is_system=False,
+                system_source="payroll_benefits",
+                order_index=54,
+                is_active=True,
+            )
+            db.add(ben_acc)
+
+        db.commit()
+
+    def get_payroll_profiles(self, db: Session, tenant_id: int) -> List[Dict[str, Any]]:
+        self._ensure_payroll_accounts_tagged(db, tenant_id)
+
+        employees = (
+            db.query(Employee)
+            .filter(Employee.tenant_id == tenant_id, Employee.is_active == True)
+            .order_by(Employee.name.asc())
+            .all()
+        )
+        profiles = (
+            db.query(EmployeePayrollProfile)
+            .filter(EmployeePayrollProfile.tenant_id == tenant_id)
+            .all()
+        )
+        profile_map = {p.employee_id: p for p in profiles}
+
+        result = []
+        for emp in employees:
+            p = profile_map.get(emp.id)
+            base_salary = float(p.base_salary) if p else 0.0
+            thirteenth = float(p.thirteenth_salary) if p else 0.0
+            vacation = float(p.vacation_provision) if p else 0.0
+            fgts = float(p.fgts_amount) if p else 0.0
+            inss = float(p.inss_amount) if p else 0.0
+            vt = float(p.transport_voucher) if p else 0.0
+            va = float(p.food_voucher) if p else 0.0
+            vr = float(p.meal_voucher) if p else 0.0
+            health = float(p.health_insurance) if p else 0.0
+            other = float(p.other_benefits) if p else 0.0
+
+            custom_sum = 0.0
+            if p and p.custom_benefits and isinstance(p.custom_benefits, list):
+                custom_sum = round(
+                    sum(
+                        float(item.get("amount", 0.0) or 0.0)
+                        for item in p.custom_benefits
+                        if isinstance(item, dict)
+                    ),
+                    2,
+                )
+
+            salaries_and_provisions = round(base_salary + thirteenth + vacation, 2)
+            total_benefits = round(vt + va + vr + health + other + custom_sum, 2)
+            total_monthly = round(salaries_and_provisions + fgts + inss + total_benefits, 2)
+            overhead_pct = (
+                round(((total_monthly - base_salary) / base_salary) * 100.0, 2)
+                if base_salary > 0
+                else 0.0
+            )
+
+            ROLE_TRANSLATIONS = {
+                "groomer": "Tosador(a)",
+                "bather": "Banhista",
+                "vet": "Veterinário(a)",
+                "salesperson": "Vendedor(a)",
+                "receptionist": "Recepcionista",
+                "driver": "Motorista / Entregador",
+                "other": "Outro",
+                "manager": "Gerente",
+                "admin": "Administrador",
+            }
+            role_raw = emp.role.value if hasattr(emp.role, "value") else str(emp.role)
+            role_str = ROLE_TRANSLATIONS.get(role_raw.lower(), role_raw)
+
+            result.append({
+                "id": p.id if p else None,
+                "employee_id": emp.id,
+                "employee_name": emp.name,
+                "employee_role": role_str,
+                "employee_is_active": emp.is_active,
+                "base_salary": base_salary,
+                "thirteenth_salary": thirteenth,
+                "vacation_provision": vacation,
+                "fgts_amount": fgts,
+                "inss_amount": inss,
+                "transport_voucher": vt,
+                "food_voucher": va,
+                "meal_voucher": vr,
+                "health_insurance": health,
+                "other_benefits": other,
+                "other_benefits_description": p.other_benefits_description if p else None,
+                "custom_benefits": p.custom_benefits if p else None,
+                "notes": p.notes if p else None,
+                "is_active": p.is_active if p else True,
+                "total_salaries_and_provisions": salaries_and_provisions,
+                "total_inss": round(inss, 2),
+                "total_fgts": round(fgts, 2),
+                "total_benefits": total_benefits,
+                "total_monthly_cost": total_monthly,
+                "overhead_percentage": overhead_pct,
+            })
+        return result
+
+    def upsert_payroll_profile(
+        self, db: Session, tenant_id: int, employee_id: int, data: Dict[str, Any]
+    ) -> EmployeePayrollProfile:
+        profile = (
+            db.query(EmployeePayrollProfile)
+            .filter(
+                EmployeePayrollProfile.tenant_id == tenant_id,
+                EmployeePayrollProfile.employee_id == employee_id,
+            )
+            .first()
+        )
+        if not profile:
+            profile = EmployeePayrollProfile(
+                tenant_id=tenant_id,
+                employee_id=employee_id,
+            )
+            db.add(profile)
+
+        for key, value in data.items():
+            if hasattr(profile, key) and value is not None:
+                setattr(profile, key, value)
+
+        db.commit()
+        db.refresh(profile)
+        return profile
+
+    def sync_payroll_to_dre(
+        self,
+        db: Session,
+        tenant_id: int,
+        year: int,
+        months: List[int],
+        account_mapping: Optional[Dict[str, int]] = None,
+        user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        profiles_data = self.get_payroll_profiles(db, tenant_id)
+        active_profiles = [p for p in profiles_data if p["is_active"] and p["employee_is_active"]]
+
+        tot_salaries = round(sum(p["total_salaries_and_provisions"] for p in active_profiles), 2)
+        tot_charges = round(sum(p["total_inss"] + p["total_fgts"] for p in active_profiles), 2)
+        tot_benefits = round(sum(p["total_benefits"] for p in active_profiles), 2)
+
+        if tot_salaries <= 0 and tot_charges <= 0 and tot_benefits <= 0:
+            raise ValueError(
+                "Nenhum valor de salário ou benefício foi encontrado para lançar no DRE. "
+                "Informe e salve o salário de pelo menos um colaborador antes de sincronizar."
+            )
+
+        accounts = self.get_accounts(db, tenant_id, active_only=True)
+        acc_by_source = {acc.system_source: acc for acc in accounts if acc.system_source}
+
+        def resolve_acc(key: str, default_source: str, search_name: str) -> Optional[DREAccount]:
+            if account_mapping and account_mapping.get(key):
+                acc = db.query(DREAccount).filter(
+                    DREAccount.id == account_mapping[key],
+                    DREAccount.tenant_id == tenant_id
+                ).first()
+                if acc:
+                    return acc
+            if default_source in acc_by_source:
+                return acc_by_source[default_source]
+            for acc in accounts:
+                if search_name.lower() in (acc.name or "").lower():
+                    return acc
+            return None
+
+        salaries_acc = resolve_acc("salaries", "payroll_salaries", "salário")
+        charges_acc = (
+            resolve_acc("charges", "payroll_charges", "encargo")
+            or resolve_acc("inss", "payroll_charges", "encargo")
+            or resolve_acc("charges", "payroll_inss", "inss")
+        )
+        benefits_acc = resolve_acc("benefits", "payroll_benefits", "benefício")
+
+        items_to_sync = []
+        if salaries_acc:
+            items_to_sync.append((salaries_acc.id, tot_salaries, "Salários & Provisões (Salário Base + 13º + Férias)"))
+        if charges_acc:
+            items_to_sync.append((charges_acc.id, tot_charges, "Encargos Trabalhistas (INSS + FGTS)"))
+        if benefits_acc:
+            items_to_sync.append((benefits_acc.id, tot_benefits, "Benefícios a Funcionários (VT + VA + VR + Saúde + Outros)"))
+
+        entries_count = 0
+        for acc_id, amount, note in items_to_sync:
+            for m in months:
+                entry = (
+                    db.query(DREEntry)
+                    .filter(
+                        DREEntry.tenant_id == tenant_id,
+                        DREEntry.account_id == acc_id,
+                        DREEntry.competence_year == year,
+                        DREEntry.competence_month == m,
+                    )
+                    .first()
+                )
+                if not entry:
+                    entry = DREEntry(
+                        tenant_id=tenant_id,
+                        account_id=acc_id,
+                        competence_year=year,
+                        competence_month=m,
+                        amount=Decimal(str(amount)),
+                        notes=note,
+                        created_by_user_id=user_id,
+                    )
+                    db.add(entry)
+                else:
+                    entry.amount = Decimal(str(amount))
+                    entry.notes = note
+                    entry.created_by_user_id = user_id
+                entries_count += 1
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Folha de pagamento lançada com sucesso no DRE de {year} para {len(months)} meses.",
+            "year": year,
+            "months_updated": months,
+            "entries_created_or_updated": entries_count,
+            "accounts_used": {
+                "salaries": {"account_id": salaries_acc.id, "name": salaries_acc.name, "amount": tot_salaries} if salaries_acc else None,
+                "charges": {"account_id": charges_acc.id, "name": charges_acc.name, "amount": tot_charges} if charges_acc else None,
+                "benefits": {"account_id": benefits_acc.id, "name": benefits_acc.name, "amount": tot_benefits} if benefits_acc else None,
+            },
+        }
+
