@@ -10,7 +10,7 @@ class DREAccountBase(BaseModel):
     code: Optional[str] = Field(None, max_length=50)
     group_type: str = Field(
         ...,
-        description="gross_revenue, cmv, fixed_expense, variable_expense, financial_result",
+        description="gross_revenue, cmv, fixed_expense, variable_expense, financial_revenue, financial_expense, financial_result",
     )
     order_index: int = 0
     is_active: bool = True
@@ -116,7 +116,9 @@ class DRESummary(BaseModel):
     variable_expenses_total: float
     ebitda_total: float
     ebitda_pct: float
-    financial_result_total: float
+    financial_revenue_total: float = 0.0
+    financial_expense_total: float = 0.0
+    financial_result_total: float = 0.0
     net_profit_total: float
     net_margin_pct: float
 

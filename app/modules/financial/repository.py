@@ -13,9 +13,30 @@ from app.modules.commissions.models import CommissionEntry
 
 
 class FinancialRepository:
+    def migrate_legacy_financial_accounts(self, db: Session, tenant_id: Optional[int] = None) -> None:
+        """Migra contas legadas com group_type='financial_result' para financial_revenue ou financial_expense."""
+        q = db.query(DREAccount).filter(DREAccount.group_type == "financial_result")
+        if tenant_id:
+            q = q.filter(DREAccount.tenant_id == tenant_id)
+        legacy = q.all()
+        if not legacy:
+            return
+        for acc in legacy:
+            name_lower = (acc.name or "").lower()
+            if "rendimento" in name_lower or "receita" in name_lower or "desconto" in name_lower:
+                acc.group_type = "financial_revenue"
+                if acc.code and acc.code.startswith("5."):
+                    acc.code = "5.01"
+            else:
+                acc.group_type = "financial_expense"
+                if acc.code and acc.code.startswith("5."):
+                    acc.code = "6." + acc.code[2:]
+        db.commit()
+
     def get_accounts(
         self, db: Session, tenant_id: int, active_only: bool = True
     ) -> List[DREAccount]:
+        self.migrate_legacy_financial_accounts(db, tenant_id)
         q = db.query(DREAccount).filter(DREAccount.tenant_id == tenant_id)
         if active_only:
             q = q.filter(DREAccount.is_active == True)
@@ -339,38 +360,47 @@ class FinancialRepository:
                 "system_source": None,
                 "order_index": 80,
             },
-            # ── 5. RESULTADOS NÃO OPERACIONAIS / FINANCEIROS ───────────────
+            # ── 5. RECEITAS NÃO OPERACIONAIS / FINANCEIRAS ────────────────
+            {
+                "name": "Rendimentos de Aplicações Financeiras",
+                "code": "5.01",
+                "group_type": "financial_revenue",
+                "is_system": False,
+                "system_source": None,
+                "order_index": 10,
+            },
+            {
+                "name": "Descontos Obtidos e Outras Receitas Financeiras",
+                "code": "5.02",
+                "group_type": "financial_revenue",
+                "is_system": False,
+                "system_source": None,
+                "order_index": 20,
+            },
+            # ── 6. DESPESAS NÃO OPERACIONAIS / FINANCEIRAS ────────────────
             {
                 "name": "Despesas com Empréstimos e Financiamentos",
-                "code": "5.01",
-                "group_type": "financial_result",
+                "code": "6.01",
+                "group_type": "financial_expense",
                 "is_system": False,
                 "system_source": None,
                 "order_index": 10,
             },
             {
                 "name": "Tarifa de Cobrança e Bancárias",
-                "code": "5.02",
-                "group_type": "financial_result",
+                "code": "6.02",
+                "group_type": "financial_expense",
                 "is_system": False,
                 "system_source": None,
                 "order_index": 20,
             },
             {
                 "name": "IOF e Juros",
-                "code": "5.03",
-                "group_type": "financial_result",
+                "code": "6.03",
+                "group_type": "financial_expense",
                 "is_system": False,
                 "system_source": None,
                 "order_index": 30,
-            },
-            {
-                "name": "Rendimentos de Aplicações Financeiras",
-                "code": "5.04",
-                "group_type": "financial_result",
-                "is_system": False,
-                "system_source": None,
-                "order_index": 40,
             },
         ]
 

@@ -57,7 +57,8 @@ class FinancialService:
             ("cmv", "(-) CUSTO MERCADORIA E SERVIÇO VENDIDO (CMV / CSP)", "TOTAL CMV / CSP"),
             ("fixed_expense", "(-) DESPESAS OPERACIONAIS FIXAS", "TOTAL DESPESAS FIXAS"),
             ("variable_expense", "(-) DESPESAS OPERACIONAIS VARIÁVEIS", "TOTAL DESPESAS VARIÁVEIS"),
-            ("financial_result", "(+/-) RESULTADOS NÃO OPERACIONAIS / FINANCEIROS", "TOTAL RESULTADO FINANCEIRO"),
+            ("financial_revenue", "(+) RECEITAS NÃO OPERACIONAIS / FINANCEIRAS", "TOTAL RECEITAS NÃO OPERACIONAIS"),
+            ("financial_expense", "(-) DESPESAS NÃO OPERACIONAIS / FINANCEIRAS", "TOTAL DESPESAS NÃO OPERACIONAIS"),
         ]
 
         accounts_by_group: Dict[str, List[DREAccount]] = {g[0]: [] for g in groups_config}
@@ -129,7 +130,8 @@ class FinancialService:
         cmv_m = group_monthly_totals["cmv"]
         fixed_exp_m = group_monthly_totals["fixed_expense"]
         var_exp_m = group_monthly_totals["variable_expense"]
-        fin_res_m = group_monthly_totals["financial_result"]
+        fin_rev_m = group_monthly_totals["financial_revenue"]
+        fin_exp_m = group_monthly_totals["financial_expense"]
 
         gross_margin_m = {m: round(gross_rev_m[m] - cmv_m[m], 2) for m in range(1, 13)}
         ebitda_m = {
@@ -137,7 +139,8 @@ class FinancialService:
             for m in range(1, 13)
         }
         net_profit_m = {
-            m: round(ebitda_m[m] + fin_res_m[m], 2) for m in range(1, 13)
+            m: round(ebitda_m[m] + fin_rev_m[m] - fin_exp_m[m], 2)
+            for m in range(1, 13)
         }
 
         gross_rev_tot = round(sum(gross_rev_m.values()), 2)
@@ -146,8 +149,10 @@ class FinancialService:
         fixed_exp_tot = round(sum(fixed_exp_m.values()), 2)
         var_exp_tot = round(sum(var_exp_m.values()), 2)
         ebitda_tot = round(gross_margin_tot - fixed_exp_tot - var_exp_tot, 2)
-        fin_res_tot = round(sum(fin_res_m.values()), 2)
-        net_profit_tot = round(ebitda_tot + fin_res_tot, 2)
+        fin_rev_tot = round(sum(fin_rev_m.values()), 2)
+        fin_exp_tot = round(sum(fin_exp_m.values()), 2)
+        fin_res_tot = round(fin_rev_tot - fin_exp_tot, 2)
+        net_profit_tot = round(ebitda_tot + fin_rev_tot - fin_exp_tot, 2)
 
         # 7. Preenche a Análise Vertical (% da receita bruta do mês e do ano)
         def calc_pct(val: float, base: float) -> float:
@@ -319,6 +324,8 @@ class FinancialService:
             variable_expenses_total=var_exp_tot,
             ebitda_total=ebitda_tot,
             ebitda_pct=calc_pct(ebitda_tot, gross_rev_tot),
+            financial_revenue_total=fin_rev_tot,
+            financial_expense_total=fin_exp_tot,
             financial_result_total=fin_res_tot,
             net_profit_total=net_profit_tot,
             net_margin_pct=calc_pct(net_profit_tot, gross_rev_tot),
@@ -432,15 +439,18 @@ class FinancialService:
         ws = wb.active
         ws.title = f"DRE {year}"
 
-        # Paleta de estilos inspirada na planilha do cliente
+        # Paleta de estilos alinhada com a interface do DRE
         header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
         header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
 
-        subtotal_fill = PatternFill(start_color="F59E0B", end_color="F59E0B", fill_type="solid")  # Dourado âmbar
-        subtotal_font = Font(name="Calibri", size=11, bold=True, color="000000")
+        section_fill = PatternFill(start_color="A7F3D0", end_color="A7F3D0", fill_type="solid")  # Verde seções
+        section_font = Font(name="Calibri", size=11, bold=True, color="000000")
 
-        result_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")  # Âmbar suave
-        result_font = Font(name="Calibri", size=11, bold=True, color="92400E")
+        totalizer_fill = PatternFill(start_color="FDBA74", end_color="FDBA74", fill_type="solid")  # Laranja totalizadores
+        totalizer_font = Font(name="Calibri", size=11, bold=True, color="000000")
+
+        pct_fill = PatternFill(start_color="FED7AA", end_color="FED7AA", fill_type="solid")  # Laranja suave %
+        pct_font = Font(name="Calibri", size=10, bold=True, color="000000")
 
         thin_border = Border(
             left=Side(style="thin", color="E2E8F0"),
@@ -472,12 +482,18 @@ class FinancialService:
 
         current_row = 4
         currency_format = 'R$ #,##0.00;[Red](R$ #,##0.00);"-"'
+        currency_expense_format = '- R$ #,##0.00;[Red]- R$ #,##0.00;"-"'
         pct_format = '0.00%'
 
         for row_data in report.all_rows:
             ws.row_dimensions[current_row].height = 20
             is_sub = row_data.is_subtotal or row_data.is_result
             is_pct = row_data.is_percentage_row
+            is_expense = (
+                row_data.group_type in ("cmv", "fixed_expense", "variable_expense", "financial_expense")
+                and not row_data.is_result
+            )
+            curr_fmt = currency_expense_format if is_expense else currency_format
 
             # Coluna Nome
             name_cell = ws.cell(row=current_row, column=1, value=("   " if not is_sub else "") + row_data.name)
@@ -486,11 +502,14 @@ class FinancialService:
             # Formatação visual de linha
             if is_sub:
                 if row_data.id.startswith("subtotal-"):
-                    row_fill = subtotal_fill
-                    row_font = subtotal_font
+                    row_fill = section_fill
+                    row_font = section_font
+                elif row_data.id == "result-net-profit-pct":
+                    row_fill = pct_fill
+                    row_font = pct_font
                 else:
-                    row_fill = result_fill
-                    row_font = result_font
+                    row_fill = totalizer_fill
+                    row_font = totalizer_font
             else:
                 row_fill = PatternFill(fill_type=None)
                 row_font = Font(name="Calibri", size=10)
@@ -501,7 +520,7 @@ class FinancialService:
             # Coluna Total
             tot_val = row_data.total_amount if not is_pct else (row_data.total_amount / 100.0)
             tot_cell = ws.cell(row=current_row, column=2, value=tot_val)
-            tot_cell.number_format = pct_format if is_pct else currency_format
+            tot_cell.number_format = pct_format if is_pct else curr_fmt
             tot_cell.fill = row_fill
             tot_cell.font = row_font
             tot_cell.alignment = Alignment(horizontal="right", vertical="center")
@@ -510,7 +529,7 @@ class FinancialService:
             # Coluna Média
             avg_val = row_data.monthly_average if not is_pct else (row_data.monthly_average / 100.0)
             avg_cell = ws.cell(row=current_row, column=3, value=avg_val)
-            avg_cell.number_format = pct_format if is_pct else currency_format
+            avg_cell.number_format = pct_format if is_pct else curr_fmt
             avg_cell.fill = row_fill
             avg_cell.font = row_font
             avg_cell.alignment = Alignment(horizontal="right", vertical="center")
@@ -524,7 +543,7 @@ class FinancialService:
                     m_val = m_val / 100.0
 
                 m_cell = ws.cell(row=current_row, column=col_i, value=m_val)
-                m_cell.number_format = pct_format if is_pct else currency_format
+                m_cell.number_format = pct_format if is_pct else curr_fmt
                 m_cell.fill = row_fill
                 m_cell.font = row_font
                 m_cell.alignment = Alignment(horizontal="right", vertical="center")
