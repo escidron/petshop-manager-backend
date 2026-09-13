@@ -103,10 +103,18 @@ class OperationalResultRepository:
         Busca todos os serviços do tenant e os atendimentos realizados no mês.
         """
         num_days = calendar.monthrange(year, month)[1]
+        start_date = datetime(year, month, 1, 0, 0, 0)
+        if month == 12:
+            end_date = datetime(year + 1, 1, 1, 0, 0, 0)
+        else:
+            end_date = datetime(year, month + 1, 1, 0, 0, 0)
 
         # 0. Carrega configuração de funcionamento do tenant (working_hours)
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-        tenant_working_hours = tenant.working_hours if tenant else None
+        tenant_working_hours = (
+            db.query(Tenant.working_hours)
+            .filter(Tenant.id == tenant_id)
+            .scalar()
+        )
 
         # 1. Metadados dos dias
         days_metadata = []
@@ -159,7 +167,7 @@ class OperationalResultRepository:
                     "order_index": s.id,
                 }
 
-        # 3. Buscar atendimentos de agendamento (status completed)
+        # 3. Buscar atendimentos de agendamento (status completed) com range de datas indexado
         sql_appointments = text("""
             SELECT 
                 EXTRACT(day FROM a.scheduled_at) AS day_num,
@@ -174,13 +182,13 @@ class OperationalResultRepository:
             JOIN services s ON s.id = ais.service_id
             WHERE a.tenant_id = :tenant_id
               AND a.status = 'completed'
-              AND EXTRACT(year FROM a.scheduled_at) = :year
-              AND EXTRACT(month FROM a.scheduled_at) = :month
+              AND a.scheduled_at >= :start_date
+              AND a.scheduled_at < :end_date
         """)
 
         apt_rows = db.execute(
             sql_appointments,
-            {"tenant_id": tenant_id, "year": year, "month": month}
+            {"tenant_id": tenant_id, "start_date": start_date, "end_date": end_date}
         ).fetchall()
 
         for r in apt_rows:
@@ -217,7 +225,7 @@ class OperationalResultRepository:
             rows_map[row_key]["daily_counts"][day_num] += 1
             rows_map[row_key]["total_count"] += 1
 
-        # 4. Buscar serviços vendidos avulsos no PDV sem agendamento vinculado
+        # 4. Buscar serviços vendidos avulsos no PDV sem agendamento vinculado com range indexado
         sql_sales = text("""
             SELECT 
                 EXTRACT(day FROM s.created_at) AS day_num,
@@ -236,13 +244,13 @@ class OperationalResultRepository:
               AND si.item_type = 'service'
               AND s.appointment_id IS NULL
               AND si.appointment_id IS NULL
-              AND EXTRACT(year FROM s.created_at) = :year
-              AND EXTRACT(month FROM s.created_at) = :month
+              AND s.created_at >= :start_date
+              AND s.created_at < :end_date
         """)
 
         sale_rows = db.execute(
             sql_sales,
-            {"tenant_id": tenant_id, "year": year, "month": month}
+            {"tenant_id": tenant_id, "start_date": start_date, "end_date": end_date}
         ).fetchall()
 
         for r in sale_rows:
@@ -315,33 +323,39 @@ class OperationalResultRepository:
 
         # Apuração do Faturamento de Serviços Efetivamente Pagos (Sales finalizadas com status 'completed')
         # Considera o valor efetivamente pago na venda (total_amount) proporcional à parcela de serviços,
-        # evitando dupla contagem de saldos divididos em comandas.
+        # filtrando previamente apenas as vendas do mês via CTE para evitar full-scan em sale_items.
         sql_paid_services = text("""
+            WITH month_sales AS (
+                SELECT s.id, s.total_amount
+                FROM sales s
+                WHERE s.tenant_id = :tenant_id
+                  AND s.status = 'completed'
+                  AND s.created_at >= :start_date
+                  AND s.created_at < :end_date
+            ),
+            totals AS (
+                SELECT 
+                    si.sale_id,
+                    SUM(si.subtotal) AS all_subtotal,
+                    SUM(CASE WHEN si.item_type = 'service' THEN si.subtotal ELSE 0 END) AS service_subtotal
+                FROM sale_items si
+                JOIN month_sales ms ON ms.id = si.sale_id
+                GROUP BY si.sale_id
+                HAVING SUM(CASE WHEN si.item_type = 'service' THEN si.subtotal ELSE 0 END) > 0
+            )
             SELECT 
                 COALESCE(SUM(
                     CASE 
-                        WHEN totals.all_subtotal > 0 THEN s.total_amount * (totals.service_subtotal / totals.all_subtotal)
+                        WHEN totals.all_subtotal > 0 THEN ms.total_amount * (totals.service_subtotal / totals.all_subtotal)
                         ELSE 0 
                     END
                 ), 0) AS paid_revenue
-            FROM sales s
-            JOIN (
-                SELECT 
-                    sale_id,
-                    SUM(subtotal) AS all_subtotal,
-                    SUM(CASE WHEN item_type = 'service' THEN subtotal ELSE 0 END) AS service_subtotal
-                FROM sale_items
-                GROUP BY sale_id
-            ) totals ON totals.sale_id = s.id
-            WHERE s.tenant_id = :tenant_id
-              AND s.status = 'completed'
-              AND totals.service_subtotal > 0
-              AND EXTRACT(year FROM s.created_at) = :year
-              AND EXTRACT(month FROM s.created_at) = :month
+            FROM month_sales ms
+            JOIN totals ON totals.sale_id = ms.id;
         """)
         paid_res = db.execute(
             sql_paid_services,
-            {"tenant_id": tenant_id, "year": year, "month": month}
+            {"tenant_id": tenant_id, "start_date": start_date, "end_date": end_date}
         ).fetchone()
         paid_revenue = float(paid_res[0] if paid_res else 0.0)
 
@@ -359,12 +373,12 @@ class OperationalResultRepository:
                 JOIN services s ON s.id = ais.service_id
                 WHERE a.tenant_id = :tenant_id
                   AND a.status = 'completed'
-                  AND EXTRACT(year FROM a.scheduled_at) = :year
-                  AND EXTRACT(month FROM a.scheduled_at) = :month
+                  AND a.scheduled_at >= :start_date
+                  AND a.scheduled_at < :end_date
             """)
             apt_rev_res = db.execute(
                 sql_apt_rev,
-                {"tenant_id": tenant_id, "year": year, "month": month}
+                {"tenant_id": tenant_id, "start_date": start_date, "end_date": end_date}
             ).fetchone()
             total_revenue = round(float((apt_rev_res[0] if apt_rev_res else 0) / 100.0), 2)
 
@@ -456,6 +470,9 @@ class OperationalResultRepository:
         """
         service_id_to_name = service_id_to_name or {}
         previous_year = current_year - 1
+        start_date = datetime(previous_year, 1, 1, 0, 0, 0)
+        end_date = datetime(current_year + 1, 1, 1, 0, 0, 0)
+
         monthly_curr = {m: 0 for m in range(1, 13)}
         monthly_prev = {m: 0 for m in range(1, 13)}
         service_curr: Dict[str, Dict[int, int]] = {}
@@ -472,13 +489,14 @@ class OperationalResultRepository:
             JOIN appointment_item_services ais ON ais.appointment_item_id = ai.id
             WHERE a.tenant_id = :tenant_id
               AND a.status = 'completed'
-              AND EXTRACT(year FROM a.scheduled_at) IN (:curr_year, :prev_year)
+              AND a.scheduled_at >= :start_date
+              AND a.scheduled_at < :end_date
             GROUP BY yr, mo, ais.service_id
         """)
 
         rows = db.execute(
             sql_yearly,
-            {"tenant_id": tenant_id, "curr_year": current_year, "prev_year": previous_year}
+            {"tenant_id": tenant_id, "start_date": start_date, "end_date": end_date}
         ).fetchall()
 
         for r in rows:
@@ -513,13 +531,14 @@ class OperationalResultRepository:
               AND si.item_type = 'service'
               AND s.appointment_id IS NULL
               AND si.appointment_id IS NULL
-              AND EXTRACT(year FROM s.created_at) IN (:curr_year, :prev_year)
+              AND s.created_at >= :start_date
+              AND s.created_at < :end_date
             GROUP BY yr, mo, si.item_id, si.name
         """)
 
         sales_rows = db.execute(
             sql_sales_yearly,
-            {"tenant_id": tenant_id, "curr_year": current_year, "prev_year": previous_year}
+            {"tenant_id": tenant_id, "start_date": start_date, "end_date": end_date}
         ).fetchall()
 
         for r in sales_rows:
