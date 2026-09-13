@@ -60,6 +60,7 @@ class ServiceBrief(BaseModel):
         from_attributes = True
 
 class AppointmentItemBrief(BaseModel):
+    pet: PetBrief | None = None
     services: list[ServiceBrief] = []
 
     class Config:
@@ -78,14 +79,14 @@ class ComandaItemBase(BaseModel):
     item_type: Literal["product", "service", "package"]
     item_id: int
     name: str
-    quantity: int = Field(gt=0, default=1)
-    unit_price: float = Field(ge=0, default=0.0)
-    subtotal: float = Field(ge=0, default=0.0)
+    quantity: float = Field(default=1.0, gt=0)
+    unit_price: float = Field(ge=0)
+    subtotal: float = Field(ge=0)
     employee_id: int | None = None
     pet_ids: list[int] | None = None
     client_package_id_to_pay: int | None = None
-    unit: str | None = "UN"
     appointment_id: int | None = None
+    unit: str = "UN"
 
 class ComandaItemCreate(ComandaItemBase):
     pass
@@ -170,6 +171,7 @@ class SaleResponse(SaleBase):
     items: list[SaleItemResponse] = []
     payments: list[SalePaymentResponse] = []
     client: ClientBrief | None = None
+    pet: PetBrief | None = None
     appointment: AppointmentBrief | None = None
 
     class Config:

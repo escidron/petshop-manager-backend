@@ -16,9 +16,11 @@ def _sale_eager_options():
     return [
         selectinload(Sale.items),
         selectinload(Sale.payments),
+        joinedload(Sale.pet),
         joinedload(Sale.client).selectinload(Client.pets),
         joinedload(Sale.appointment).joinedload(Appointment.client).selectinload(Client.pets),
         joinedload(Sale.appointment).selectinload(Appointment.items).selectinload(AppointmentItem.services),
+        joinedload(Sale.appointment).selectinload(Appointment.items).joinedload(AppointmentItem.pet),
     ]
 
 
