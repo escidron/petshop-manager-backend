@@ -36,11 +36,18 @@ class FinancialRepository:
     def get_accounts(
         self, db: Session, tenant_id: int, active_only: bool = True
     ) -> List[DREAccount]:
-        self.migrate_legacy_financial_accounts(db, tenant_id)
         q = db.query(DREAccount).filter(DREAccount.tenant_id == tenant_id)
         if active_only:
             q = q.filter(DREAccount.is_active == True)
-        return q.order_by(DREAccount.order_index, DREAccount.id).all()
+        accounts = q.order_by(DREAccount.order_index, DREAccount.id).all()
+
+        # Migração pontual sob demanda apenas se houver conta antiga com group_type legada
+        has_legacy = any(acc.group_type == "financial_result" for acc in accounts)
+        if has_legacy:
+            self.migrate_legacy_financial_accounts(db, tenant_id)
+            return q.order_by(DREAccount.order_index, DREAccount.id).all()
+
+        return accounts
 
     def get_account(
         self, db: Session, tenant_id: int, account_id: int
@@ -122,14 +129,9 @@ class FinancialRepository:
     def seed_default_accounts_if_needed(
         self, db: Session, tenant_id: int
     ) -> List[DREAccount]:
-        count = (
-            db.query(func.count(DREAccount.id))
-            .filter(DREAccount.tenant_id == tenant_id)
-            .scalar()
-        )
-        if count and count > 0:
-            self._ensure_payroll_accounts_tagged(db, tenant_id)
-            return self.get_accounts(db, tenant_id, active_only=False)
+        accounts = self.get_accounts(db, tenant_id, active_only=False)
+        if accounts:
+            return accounts
 
         defaults = [
             # ── 1. RECEITA BRUTA ──────────────────────────────────────────
@@ -574,19 +576,26 @@ class FinancialRepository:
 
     # ── AGREGADORES AUTOMÁTICOS DO SISTEMA ─────────────────────────────────
 
-    def get_sales_aggregated_by_month(
+    def get_sales_and_cmv_aggregated_by_month(
         self, db: Session, tenant_id: int, year: int
     ) -> Dict[str, Dict[int, float]]:
         """
-        Retorna as vendas líquidas reais de produtos e serviços agrupadas por mês (1-12),
-        já deduzidos proporcionalmente os descontos concedidos em cada venda.
+        Retorna em uma única query otimizada:
+        1. Vendas líquidas de produtos (deduzidos descontos rateados)
+        2. Vendas líquidas de serviços (deduzidos descontos rateados)
+        3. CMV dos produtos vendidos
+        Utiliza range de datas exatas para ativar o índice ix_sales_tenant_created_at.
         """
         results = {
             "sales_products": {m: 0.0 for m in range(1, 13)},
             "sales_services": {m: 0.0 for m in range(1, 13)},
+            "cmv_products": {m: 0.0 for m in range(1, 13)},
         }
 
-        # Query consolidada rateando o valor efetivamente recebido (total_amount) entre produtos e serviços
+        start_date = datetime(year, 1, 1, 0, 0, 0)
+        end_date = datetime(year + 1, 1, 1, 0, 0, 0)
+
+        # Query consolidada rateando o valor recebido e apurando CMV em 1 única passagem
         sql = text("""
             WITH sale_breakdown AS (
                 SELECT 
@@ -594,12 +603,15 @@ class FinancialRepository:
                     EXTRACT(month FROM s.created_at) AS month,
                     s.total_amount,
                     COALESCE(SUM(CASE WHEN si.item_type = 'product' THEN si.subtotal ELSE 0 END), 0) AS p_gross,
-                    COALESCE(SUM(CASE WHEN si.item_type IN ('service', 'package') THEN si.subtotal ELSE 0 END), 0) AS s_gross
+                    COALESCE(SUM(CASE WHEN si.item_type IN ('service', 'package') THEN si.subtotal ELSE 0 END), 0) AS s_gross,
+                    COALESCE(SUM(CASE WHEN si.item_type = 'product' THEN si.quantity * COALESCE(p.cost, 0) ELSE 0 END), 0) AS p_cmv
                 FROM sales s
                 LEFT JOIN sale_items si ON si.sale_id = s.id
+                LEFT JOIN products p ON p.id = si.item_id AND si.item_type = 'product'
                 WHERE s.tenant_id = :tenant_id
                   AND s.status = 'completed'
-                  AND EXTRACT(year FROM s.created_at) = :year
+                  AND s.created_at >= :start_date
+                  AND s.created_at < :end_date
                 GROUP BY s.id, month, s.total_amount
             )
             SELECT 
@@ -615,59 +627,51 @@ class FinancialRepository:
                         WHEN (p_gross + s_gross) > 0 THEN total_amount * (s_gross / (p_gross + s_gross))
                         ELSE 0 
                     END
-                ) AS numeric), 2) AS service_net
+                ) AS numeric), 2) AS service_net,
+                ROUND(CAST(SUM(p_cmv) AS numeric), 2) AS cmv
             FROM sale_breakdown
             GROUP BY month
             ORDER BY month;
         """)
 
-        rows = db.execute(sql, {"tenant_id": tenant_id, "year": year}).fetchall()
+        rows = db.execute(
+            sql, {"tenant_id": tenant_id, "start_date": start_date, "end_date": end_date}
+        ).fetchall()
         for r in rows:
             m = int(r.month)
             results["sales_products"][m] = float(r.product_net or 0.0)
             results["sales_services"][m] = float(r.service_net or 0.0)
+            results["cmv_products"][m] = float(r.cmv or 0.0)
 
         return results
+
+    def get_sales_aggregated_by_month(
+        self, db: Session, tenant_id: int, year: int
+    ) -> Dict[str, Dict[int, float]]:
+        """Retorna vendas líquidas agregadas por mês (reaproveita a query unificada)."""
+        data = self.get_sales_and_cmv_aggregated_by_month(db, tenant_id, year)
+        return {
+            "sales_products": data["sales_products"],
+            "sales_services": data["sales_services"],
+        }
 
     def get_cmv_aggregated_by_month(
         self, db: Session, tenant_id: int, year: int
     ) -> Dict[int, float]:
-        """
-        Calcula o CMV de produtos vendidos no ano:
-        Soma(sale_items.quantity * coalesce(products.cost, 0)) agrupado por mês.
-        """
-        cmv_by_month = {m: 0.0 for m in range(1, 13)}
-
-        rows = (
-            db.query(
-                extract("month", Sale.created_at).label("month"),
-                func.sum(SaleItem.quantity * func.coalesce(Product.cost, 0)).label("total_cost"),
-            )
-            .join(Sale, Sale.id == SaleItem.sale_id)
-            .join(Product, Product.id == SaleItem.item_id)
-            .filter(
-                Sale.tenant_id == tenant_id,
-                Sale.status == "completed",
-                SaleItem.item_type == "product",
-                extract("year", Sale.created_at) == year,
-            )
-            .group_by("month")
-            .all()
-        )
-
-        for month_val, total in rows:
-            m = int(month_val)
-            cmv_by_month[m] = float(total or 0.0)
-
-        return cmv_by_month
+        """Calcula o CMV de produtos vendidos no ano (reaproveita a query unificada)."""
+        data = self.get_sales_and_cmv_aggregated_by_month(db, tenant_id, year)
+        return data["cmv_products"]
 
     def get_commissions_aggregated_by_month(
         self, db: Session, tenant_id: int, year: int
     ) -> Dict[int, float]:
         """
-        Calcula as comissões apuradas no ano a partir do módulo de comissões.
+        Calcula as comissões apuradas no ano a partir do módulo de comissões,
+        utilizando range de datas para index scan.
         """
         commissions_by_month = {m: 0.0 for m in range(1, 13)}
+        start_date = datetime(year, 1, 1, 0, 0, 0)
+        end_date = datetime(year + 1, 1, 1, 0, 0, 0)
 
         rows = (
             db.query(
@@ -677,7 +681,8 @@ class FinancialRepository:
             .filter(
                 CommissionEntry.tenant_id == tenant_id,
                 CommissionEntry.status.in_(["pending", "paid"]),
-                extract("year", CommissionEntry.created_at) == year,
+                CommissionEntry.created_at >= start_date,
+                CommissionEntry.created_at < end_date,
             )
             .group_by("month")
             .all()

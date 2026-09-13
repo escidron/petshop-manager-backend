@@ -38,9 +38,10 @@ class FinancialService:
         # 1. Garante que as contas padrão existam
         accounts = self.repo.seed_default_accounts_if_needed(db, tenant_id)
 
-        # 2. Busca dados automáticos do sistema
-        sales_data = self.repo.get_sales_aggregated_by_month(db, tenant_id, year)
-        cmv_data = self.repo.get_cmv_aggregated_by_month(db, tenant_id, year)
+        # 2. Busca dados automáticos do sistema (otimizado: vendas e CMV unificados em 1 query com index range scan)
+        sales_cmv_data = self.repo.get_sales_and_cmv_aggregated_by_month(db, tenant_id, year)
+        sales_data = sales_cmv_data
+        cmv_data = sales_cmv_data["cmv_products"]
         commissions_data = self.repo.get_commissions_aggregated_by_month(db, tenant_id, year)
 
         # 3. Busca lançamentos manuais
