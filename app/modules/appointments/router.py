@@ -184,3 +184,21 @@ def appointment_action(
         action=data.action,
         cancel_all_future=data.cancel_all_future,
     )
+
+
+@router.delete(
+    "/{appointment_id}/services/{service_id}",
+    response_model=AppointmentResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
+def remove_unpaid_service(
+    appointment_id: int,
+    service_id: int,
+    request: Request,
+    pet_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return AppointmentService().remove_unpaid_service(
+        db, tenant_id, appointment_id, service_id, pet_id=pet_id
+    )

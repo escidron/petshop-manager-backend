@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.modules.appointments.models import Appointment, AppointmentAction, AppointmentStatus
 
 from .repository import AppointmentRepository
-from .schemas import AppointmentCreate, AppointmentUpdate
+from .schemas import AppointmentCreate, AppointmentUpdate, AppointmentItemCreate
 from app.modules.pets.models import Pet
 from app.modules.clients.models import Client
 from app.modules.tenant_services.models import Service
@@ -87,6 +87,7 @@ class AppointmentService:
                 notes=data.notes,
             )
             appointment.recurrence_id = recurrence_id
+            appointment.recurrence_frequency = data.recurrence.frequency if data.recurrence else None
             
             if i == 0:
                 first_appointment = appointment
@@ -133,7 +134,7 @@ class AppointmentService:
             local_logger.error(f"Erro ao enviar notificação de agendamento por WhatsApp: {str(e)}")
 
         # Recarrega o primeiro agendamento com as relações prontas
-        return self.repo.get_with_relations(db, first_appointment.id)
+        return self._attach_recurrence_info(db, self.repo.get_with_relations(db, first_appointment.id))
 
     # ---------- GET ----------
     def get(
@@ -145,7 +146,7 @@ class AppointmentService:
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
         if not appointment:
             raise HTTPException(404, "Agendamento não encontrado")
-        return appointment
+        return self._attach_recurrence_info(db, appointment)
 
     def list_by_day(
         self,
@@ -153,7 +154,11 @@ class AppointmentService:
         tenant_id: int,
         day: date,
     ):
-        return self.repo.list_by_day(db, tenant_id, day)
+        appts = self.repo.list_by_day(db, tenant_id, day)
+        for appt in appts:
+            if appt.recurrence_id and not appt.recurrence_frequency:
+                appt.recurrence_frequency = "weekly"
+        return appts
 
     def list_by_client(
         self,
@@ -161,7 +166,11 @@ class AppointmentService:
         tenant_id: int,
         client_id: int,
     ):
-        return self.repo.list_by_client(db, tenant_id, client_id)
+        appts = self.repo.list_by_client(db, tenant_id, client_id)
+        for appt in appts:
+            if appt.recurrence_id and not appt.recurrence_frequency:
+                appt.recurrence_frequency = "weekly"
+        return appts
     
     def list_by_tenant(
         self,
@@ -170,7 +179,11 @@ class AppointmentService:
         start_date=None,
         end_date=None,
     ):
-        return self.repo.list_by_tenant(db, tenant_id, start_date=start_date, end_date=end_date)
+        appts = self.repo.list_by_tenant(db, tenant_id, start_date=start_date, end_date=end_date)
+        for appt in appts:
+            if appt.recurrence_id and not appt.recurrence_frequency:
+                appt.recurrence_frequency = "weekly"
+        return appts
 
     # ---------- UPDATE ----------
     def update(
@@ -223,56 +236,251 @@ class AppointmentService:
                     services=services,
                 )
 
-        if data.update_all_future and appointment.recurrence_id:
-            time_delta = (data.scheduled_at - old_scheduled_at) if data.scheduled_at is not None else None
-
-            future_appointments = (
-                db.query(Appointment)
-                .filter(
-                    Appointment.tenant_id == tenant_id,
-                    Appointment.recurrence_id == appointment.recurrence_id,
-                    Appointment.scheduled_at > old_scheduled_at,
-                    Appointment.id != appointment.id,
-                    Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
-                )
-                .order_by(Appointment.scheduled_at.asc())
-                .with_for_update(of=Appointment)
-                .all()
-            )
-
-            for future_appt in future_appointments:
-                if time_delta is not None:
-                    future_appt.scheduled_at = future_appt.scheduled_at + time_delta
-
-                if data.notes is not None:
-                    future_appt.notes = data.notes
-
-                if data.items is not None:
-                    existing_future_pet_ids = {it.pet_id for it in future_appt.items}
-                    self.repo.delete_items(db, future_appt)
-                    for item in data.items:
-                        self._validate_pet(
-                            db,
-                            tenant_id,
-                            future_appt.client_id,
-                            item.pet_id,
-                            allow_deceased=(item.pet_id in existing_future_pet_ids),
+        if not data.update_all_future:
+            # Se for alterar APENAS este, desvincula da série de recorrência para não afetar os outros
+            if appointment.recurrence_id:
+                appointment.recurrence_id = None
+                appointment.recurrence_frequency = None
+        else:
+            # Alterar este e TODOS os futuros
+            import uuid
+            if data.remove_recurrence:
+                # O usuário desmarcou a recorrência: remove recorrência deste e dos futuros
+                if appointment.recurrence_id:
+                    future_appointments = (
+                        db.query(Appointment)
+                        .filter(
+                            Appointment.tenant_id == tenant_id,
+                            Appointment.recurrence_id == appointment.recurrence_id,
+                            Appointment.scheduled_at > old_scheduled_at,
+                            Appointment.id != appointment.id,
                         )
-                        services = self._get_services(
-                            db,
-                            tenant_id,
-                            item.service_ids,
+                        .all()
+                    )
+                    for future_appt in future_appointments:
+                        if not future_appt.is_paid and future_appt.status in [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]:
+                            db.delete(future_appt)
+                        else:
+                            future_appt.recurrence_id = None
+                            future_appt.recurrence_frequency = None
+
+                appointment.recurrence_id = None
+                appointment.recurrence_frequency = None
+
+            elif data.recurrence is not None:
+                new_freq = data.recurrence.frequency
+                new_occurrences = data.recurrence.occurrences
+
+                is_new_series = not appointment.recurrence_id
+                old_freq = appointment.recurrence_frequency
+                if not old_freq and not is_new_series:
+                    self._attach_recurrence_info(db, appointment)
+                    old_freq = appointment.recurrence_frequency
+
+                freq_changed = (old_freq != new_freq)
+
+                if is_new_series:
+                    recurrence_id = str(uuid.uuid4())
+                    appointment.recurrence_id = recurrence_id
+                    appointment.recurrence_frequency = new_freq
+                else:
+                    recurrence_id = appointment.recurrence_id
+                    appointment.recurrence_frequency = new_freq
+
+                if is_new_series or freq_changed:
+                    # Deletar futuros agendamentos pendentes da série antiga se existirem
+                    if not is_new_series:
+                        old_future_appts = (
+                            db.query(Appointment)
+                            .filter(
+                                Appointment.tenant_id == tenant_id,
+                                Appointment.recurrence_id == recurrence_id,
+                                Appointment.scheduled_at > old_scheduled_at,
+                                Appointment.id != appointment.id,
+                            )
+                            .all()
                         )
-                        self.repo.create_item(
+                        for fa in old_future_appts:
+                            if not fa.is_paid and fa.status in [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]:
+                                db.delete(fa)
+                        db.flush()
+
+                    # Obter items para replicar nos futuros
+                    items_payload = data.items
+                    if items_payload is None:
+                        items_payload = [
+                            AppointmentItemCreate(
+                                pet_id=it.pet_id,
+                                service_ids=[svc.id for svc in it.services],
+                            )
+                            for it in appointment.items
+                        ]
+
+                    # Criar new_occurrences - 1 agendamentos futuros
+                    for i in range(1, new_occurrences):
+                        future_scheduled_at = self._calculate_next_scheduled_at(appointment.scheduled_at, new_freq, i)
+                        future_appt = self.repo.create(
                             db=db,
-                            appointment=future_appt,
-                            pet_id=item.pet_id,
-                            services=services,
+                            tenant_id=tenant_id,
+                            client_id=appointment.client_id,
+                            scheduled_at=future_scheduled_at,
+                            notes=appointment.notes,
                         )
+                        future_appt.recurrence_id = recurrence_id
+                        future_appt.recurrence_frequency = new_freq
+
+                        for item in items_payload:
+                            services = self._get_services(
+                                db,
+                                tenant_id,
+                                item.service_ids,
+                            )
+                            self.repo.create_item(
+                                db=db,
+                                appointment=future_appt,
+                                pet_id=item.pet_id,
+                                services=services,
+                            )
+                else:
+                    # Frequência não mudou: desloca e atualiza os existentes
+                    time_delta = (data.scheduled_at - old_scheduled_at) if data.scheduled_at is not None else None
+
+                    future_appointments = (
+                        db.query(Appointment)
+                        .filter(
+                            Appointment.tenant_id == tenant_id,
+                            Appointment.recurrence_id == appointment.recurrence_id,
+                            Appointment.scheduled_at > old_scheduled_at,
+                            Appointment.id != appointment.id,
+                            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
+                        )
+                        .order_by(Appointment.scheduled_at.asc())
+                        .with_for_update(of=Appointment)
+                        .all()
+                    )
+
+                    for future_appt in future_appointments:
+                        if time_delta is not None:
+                            future_appt.scheduled_at = future_appt.scheduled_at + time_delta
+                        if data.notes is not None:
+                            future_appt.notes = data.notes
+                        if data.items is not None:
+                            existing_future_pet_ids = {it.pet_id for it in future_appt.items}
+                            self.repo.delete_items(db, future_appt)
+                            for item in data.items:
+                                self._validate_pet(
+                                    db,
+                                    tenant_id,
+                                    future_appt.client_id,
+                                    item.pet_id,
+                                    allow_deceased=(item.pet_id in existing_future_pet_ids),
+                                )
+                                services = self._get_services(
+                                    db,
+                                    tenant_id,
+                                    item.service_ids,
+                                )
+                                self.repo.create_item(
+                                    db=db,
+                                    appointment=future_appt,
+                                    pet_id=item.pet_id,
+                                    services=services,
+                                )
+
+                    # Ajustar quantidade de ocorrências se mudou
+                    current_count = 1 + len(future_appointments)
+                    if new_occurrences > current_count:
+                        items_payload = data.items
+                        if items_payload is None:
+                            items_payload = [
+                                AppointmentItemCreate(
+                                    pet_id=it.pet_id,
+                                    service_ids=[svc.id for svc in it.services],
+                                )
+                                for it in appointment.items
+                            ]
+                        for i in range(current_count, new_occurrences):
+                            future_scheduled_at = self._calculate_next_scheduled_at(appointment.scheduled_at, new_freq, i)
+                            future_appt = self.repo.create(
+                                db=db,
+                                tenant_id=tenant_id,
+                                client_id=appointment.client_id,
+                                scheduled_at=future_scheduled_at,
+                                notes=appointment.notes,
+                            )
+                            future_appt.recurrence_id = recurrence_id
+                            future_appt.recurrence_frequency = new_freq
+
+                            for item in items_payload:
+                                services = self._get_services(
+                                    db,
+                                    tenant_id,
+                                    item.service_ids,
+                                )
+                                self.repo.create_item(
+                                    db=db,
+                                    appointment=future_appt,
+                                    pet_id=item.pet_id,
+                                    services=services,
+                                )
+                    elif new_occurrences < current_count:
+                        excess = current_count - new_occurrences
+                        to_delete = future_appointments[-excess:]
+                        for fa in to_delete:
+                            if not fa.is_paid and fa.status in [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]:
+                                db.delete(fa)
+
+            elif appointment.recurrence_id:
+                # Nenhum data.recurrence foi enviado, mas update_all_future foi marcado: replica horário/items
+                time_delta = (data.scheduled_at - old_scheduled_at) if data.scheduled_at is not None else None
+
+                future_appointments = (
+                    db.query(Appointment)
+                    .filter(
+                        Appointment.tenant_id == tenant_id,
+                        Appointment.recurrence_id == appointment.recurrence_id,
+                        Appointment.scheduled_at > old_scheduled_at,
+                        Appointment.id != appointment.id,
+                        Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
+                    )
+                    .order_by(Appointment.scheduled_at.asc())
+                    .with_for_update(of=Appointment)
+                    .all()
+                )
+
+                for future_appt in future_appointments:
+                    if time_delta is not None:
+                        future_appt.scheduled_at = future_appt.scheduled_at + time_delta
+
+                    if data.notes is not None:
+                        future_appt.notes = data.notes
+
+                    if data.items is not None:
+                        existing_future_pet_ids = {it.pet_id for it in future_appt.items}
+                        self.repo.delete_items(db, future_appt)
+                        for item in data.items:
+                            self._validate_pet(
+                                db,
+                                tenant_id,
+                                future_appt.client_id,
+                                item.pet_id,
+                                allow_deceased=(item.pet_id in existing_future_pet_ids),
+                            )
+                            services = self._get_services(
+                                db,
+                                tenant_id,
+                                item.service_ids,
+                            )
+                            self.repo.create_item(
+                                db=db,
+                                appointment=future_appt,
+                                pet_id=item.pet_id,
+                                services=services,
+                            )
 
         db.commit()
 
-        return self.repo.get_with_relations(db, appointment.id)
+        return self._attach_recurrence_info(db, self.repo.get_with_relations(db, appointment.id))
         
     def assign_employees(
         self,
@@ -295,6 +503,63 @@ class AppointmentService:
         self.repo.delete(db, appointment)
 
     # ---------- helpers ----------
+    def _calculate_next_scheduled_at(self, base_date, frequency: str, index: int):
+        from datetime import timedelta
+        if frequency == 'weekly':
+            return base_date + timedelta(days=7 * index)
+        elif frequency == 'biweekly':
+            return base_date + timedelta(days=14 * index)
+        elif frequency == 'monthly':
+            return base_date + timedelta(days=28 * index)
+        return base_date + timedelta(days=7 * index)
+
+    def _attach_recurrence_info(self, db: Session, appointment: Appointment | None) -> Appointment | None:
+        if not appointment or not appointment.recurrence_id:
+            if appointment:
+                appointment.recurrence = None
+            return appointment
+
+        frequency = appointment.recurrence_frequency
+        if not frequency:
+            # Fallback para deduzir frequência em agendamentos legados
+            series = (
+                db.query(Appointment.scheduled_at)
+                .filter(
+                    Appointment.tenant_id == appointment.tenant_id,
+                    Appointment.recurrence_id == appointment.recurrence_id,
+                )
+                .order_by(Appointment.scheduled_at.asc())
+                .limit(2)
+                .all()
+            )
+            if len(series) >= 2:
+                days = abs((series[1][0].date() - series[0][0].date()).days)
+                if 5 <= days <= 9:
+                    frequency = "weekly"
+                elif 12 <= days <= 16:
+                    frequency = "biweekly"
+                else:
+                    frequency = "monthly"
+            else:
+                frequency = "weekly"
+            appointment.recurrence_frequency = frequency
+
+        count = (
+            db.query(Appointment)
+            .filter(
+                Appointment.tenant_id == appointment.tenant_id,
+                Appointment.recurrence_id == appointment.recurrence_id,
+                Appointment.scheduled_at >= appointment.scheduled_at,
+                Appointment.status != AppointmentStatus.CANCELED,
+            )
+            .count()
+        )
+
+        appointment.recurrence = {
+            "frequency": frequency,
+            "occurrences": max(2, count),
+        }
+        return appointment
     def _validate_pet(
         self,
         db: Session,
@@ -580,4 +845,81 @@ class AppointmentService:
         end_date=None,
     ) -> list[date]:
         return self.repo.list_highlighted_days(db, tenant_id, start_date=start_date, end_date=end_date)
+
+    def remove_unpaid_service(
+        self,
+        db: Session,
+        tenant_id: int,
+        appointment_id: int,
+        service_id: int,
+        pet_id: int | None = None,
+    ):
+        """
+        Removes an unpaid extra service that was mistakenly added to an appointment.
+        Also synchronizes and removes the corresponding item from any open comanda in the POS.
+        """
+        from sqlalchemy import or_
+        from app.modules.appointments.models import AppointmentItemService
+        from app.modules.sales.models import Comanda, ComandaItem
+
+        appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Agendamento não encontrado.")
+
+        if appointment.is_paid:
+            raise HTTPException(status_code=400, detail="Não é possível remover serviço de um agendamento já pago no caixa.")
+
+        found = False
+        for item in list(appointment.items):
+            if pet_id and item.pet_id != pet_id:
+                continue
+
+            # Check if covered by package
+            if any(c.service_id == service_id for c in item.coverages):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Este serviço foi debitado de um pacote e não pode ser removido como avulso."
+                )
+
+            if any(s.id == service_id for s in item.services):
+                item.services = [s for s in item.services if s.id != service_id]
+                if len(item.services) == 0 and len(appointment.items) > 1:
+                    db.delete(item)
+
+                found = True
+
+        if not found:
+            raise HTTPException(status_code=404, detail="Serviço não encontrado neste agendamento.")
+
+        # Synchronize with open comanda
+        comandas = db.query(Comanda).filter(
+            Comanda.tenant_id == tenant_id,
+            Comanda.status == "open",
+            or_(
+                Comanda.appointment_id == appointment_id,
+                Comanda.client_id == appointment.client_id,
+            )
+        ).all()
+
+        for comanda in comandas:
+            matching_items = [
+                ci for ci in list(comanda.items)
+                if ci.item_type == "service"
+                and ci.item_id == service_id
+                and (ci.appointment_id == appointment_id or comanda.appointment_id == appointment_id)
+                and (not pet_id or not ci.pet_ids or pet_id in ci.pet_ids)
+            ]
+            for ci in matching_items:
+                if ci in comanda.items:
+                    comanda.items.remove(ci)
+                db.delete(ci)
+            db.flush()
+
+            remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
+            comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
+            if not comanda.items or len(comanda.items) == 0:
+                db.delete(comanda)
+
+        db.commit()
+        return self._attach_recurrence_info(db, self.repo.get_with_relations(db, appointment_id))
 

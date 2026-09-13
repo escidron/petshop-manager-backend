@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from typing import Literal, Any
 
@@ -19,12 +19,12 @@ class SaleItemBase(BaseModel):
     quantity: int = Field(gt=0)
     unit_price: float = Field(ge=0)
     subtotal: float = Field(ge=0)
+    employee_id: int | None = None
+    appointment_id: int | None = None
 
 class SaleItemCreate(SaleItemBase):
     pet_ids: list[int] | None = None
-    employee_id: int | None = None
     client_package_id_to_pay: int | None = None
-    appointment_id: int | None = None
 
 class SaleItemResponse(SaleItemBase):
     id: int
@@ -39,6 +39,7 @@ class SaleItemResponse(SaleItemBase):
 class PetBrief(BaseModel):
     id: int
     name: str
+    is_deceased: bool = False
 
     class Config:
         from_attributes = True
@@ -48,6 +49,13 @@ class ClientBrief(BaseModel):
     name: str
     phone: str | None = None
     pets: list[PetBrief] = []
+
+    @field_validator("pets", mode="before")
+    @classmethod
+    def filter_deceased(cls, v):
+        if isinstance(v, list):
+            return [p for p in v if not getattr(p, "is_deceased", False)]
+        return v
 
     class Config:
         from_attributes = True
