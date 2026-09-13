@@ -132,6 +132,7 @@ class OperationalResultRepository:
 
         rows_map: Dict[str, Dict[str, Any]] = {}
         service_id_to_key: Dict[int, str] = {}
+        service_id_to_name: Dict[int, str] = {}
 
         for s in tenant_services:
             size_val = s.size.value if hasattr(s.size, "value") else (str(s.size) if s.size else None)
@@ -143,26 +144,20 @@ class OperationalResultRepository:
             if size_val and size_val.lower() not in display_name.lower():
                 display_name = f"{display_name} ({size_val})"
 
-            # Se já existir código duplicado, diferencia
-            unique_code = code
-            counter = 1
-            while unique_code in rows_map:
-                counter += 1
-                unique_code = f"{code}{counter}"
+            service_id_to_key[s.id] = display_name
+            service_id_to_name[s.id] = display_name
 
-            row_key = f"srv_{s.id}"
-            service_id_to_key[s.id] = row_key
-
-            rows_map[row_key] = {
-                "id": s.id,
-                "code": unique_code,
-                "name": display_name,
-                "group_key": g_key,
-                "group_name": g_name,
-                "daily_counts": {d: 0 for d in range(1, num_days + 1)},
-                "total_count": 0,
-                "order_index": s.id,
-            }
+            if display_name not in rows_map:
+                rows_map[display_name] = {
+                    "id": s.id,
+                    "code": code,
+                    "name": display_name,
+                    "group_key": g_key,
+                    "group_name": g_name,
+                    "daily_counts": {d: 0 for d in range(1, num_days + 1)},
+                    "total_count": 0,
+                    "order_index": s.id,
+                }
 
         # 3. Buscar atendimentos de agendamento (status completed)
         sql_appointments = text("""
@@ -195,21 +190,29 @@ class OperationalResultRepository:
 
             if not row_key or row_key not in rows_map:
                 # Caso o serviço tenha sido executado mas não esteja ativo
+                size_val = str(r.service_size) if r.service_size else None
+                species_val = str(r.service_species) if r.service_species else None
                 code, g_key, g_name = self.generate_service_code_and_group(
-                    r.service_name, str(r.service_size) if r.service_size else None, str(r.service_species) if r.service_species else None
+                    r.service_name, size_val, species_val
                 )
-                row_key = f"srv_{srv_id}"
+                display_name = r.service_name.strip()
+                if size_val and size_val.lower() not in display_name.lower():
+                    display_name = f"{display_name} ({size_val})"
+
+                row_key = display_name
                 service_id_to_key[srv_id] = row_key
-                rows_map[row_key] = {
-                    "id": srv_id,
-                    "code": code,
-                    "name": r.service_name,
-                    "group_key": g_key,
-                    "group_name": g_name,
-                    "daily_counts": {d: 0 for d in range(1, num_days + 1)},
-                    "total_count": 0,
-                    "order_index": srv_id,
-                }
+                service_id_to_name[srv_id] = display_name
+                if row_key not in rows_map:
+                    rows_map[row_key] = {
+                        "id": srv_id,
+                        "code": code,
+                        "name": display_name,
+                        "group_key": g_key,
+                        "group_name": g_name,
+                        "daily_counts": {d: 0 for d in range(1, num_days + 1)},
+                        "total_count": 0,
+                        "order_index": srv_id,
+                    }
 
             rows_map[row_key]["daily_counts"][day_num] += 1
             rows_map[row_key]["total_count"] += 1
@@ -244,24 +247,34 @@ class OperationalResultRepository:
         for r in sale_rows:
             day_num = int(r.day_num)
             qty = int(r.quantity or 1)
-            srv_id = int(r.service_id or 0)
+            srv_id = int(r.item_id or 0)
             row_key = service_id_to_key.get(srv_id)
 
             if not row_key or row_key not in rows_map:
+                size_val = str(r.service_size) if r.service_size else None
+                species_val = str(r.service_species) if r.service_species else None
                 code, g_key, g_name = self.generate_service_code_and_group(
-                    r.service_name, str(r.service_size) if r.service_size else None, str(r.service_species) if r.service_species else None
+                    r.service_name, size_val, species_val
                 )
-                row_key = f"sale_srv_{srv_id or r.service_name}"
-                rows_map[row_key] = {
-                    "id": srv_id,
-                    "code": code,
-                    "name": r.service_name,
-                    "group_key": g_key,
-                    "group_name": g_name,
-                    "daily_counts": {d: 0 for d in range(1, num_days + 1)},
-                    "total_count": 0,
-                    "order_index": 999,
-                }
+                display_name = (r.service_name or "Serviço").strip()
+                if size_val and size_val.lower() not in display_name.lower():
+                    display_name = f"{display_name} ({size_val})"
+
+                row_key = display_name
+                if srv_id:
+                    service_id_to_key[srv_id] = row_key
+                    service_id_to_name[srv_id] = display_name
+                if row_key not in rows_map:
+                    rows_map[row_key] = {
+                        "id": srv_id,
+                        "code": code,
+                        "name": display_name,
+                        "group_key": g_key,
+                        "group_name": g_name,
+                        "daily_counts": {d: 0 for d in range(1, num_days + 1)},
+                        "total_count": 0,
+                        "order_index": 999,
+                    }
 
             rows_map[row_key]["daily_counts"][day_num] += qty
             rows_map[row_key]["total_count"] += qty
@@ -394,10 +407,13 @@ class OperationalResultRepository:
             "ticket_medio_operational": ticket_medio,
         }
 
-        # 9. Serviços Estratificados (para gráficos) ordenados alfabeticamente
-        sorted_rows = sorted(rows_map.values(), key=lambda x: x["name"].lower())
+        # 9. Serviços Estratificados (para gráficos) ordenados por volume decrescente (maior para menor)
+        sorted_stratified_rows = sorted(
+            rows_map.values(),
+            key=lambda x: (-x["total_count"], x["name"].lower())
+        )
         stratified = []
-        for r in sorted_rows:
+        for r in sorted_stratified_rows:
             pct = round((r["total_count"] / total_services * 100.0), 2) if total_services > 0 else 0.0
             stratified.append({
                 "code": r["code"],
@@ -408,7 +424,9 @@ class OperationalResultRepository:
             })
 
         # 10. Comparativo Anual
-        annual_comparison = self.get_annual_comparison(db, tenant_id, year)
+        annual_comparison = self.get_annual_comparison(
+            db, tenant_id, year, service_id_to_name=service_id_to_name
+        )
 
         return {
             "year": year,
@@ -424,19 +442,28 @@ class OperationalResultRepository:
         }
 
     def get_annual_comparison(
-        self, db: Session, tenant_id: int, current_year: int
+        self,
+        db: Session,
+        tenant_id: int,
+        current_year: int,
+        service_id_to_name: Dict[int, str] | None = None,
     ) -> Dict[str, Any]:
         """
-        Retorna os volumes de serviços mês a mês para o ano corrente e o ano anterior.
+        Retorna os volumes de serviços mês a mês para o ano corrente e o ano anterior,
+        tanto totalizados quanto estratificados por serviço.
         """
+        service_id_to_name = service_id_to_name or {}
         previous_year = current_year - 1
         monthly_curr = {m: 0 for m in range(1, 13)}
         monthly_prev = {m: 0 for m in range(1, 13)}
+        service_curr: Dict[str, Dict[int, int]] = {}
+        service_prev: Dict[str, Dict[int, int]] = {}
 
         sql_yearly = text("""
             SELECT 
                 EXTRACT(year FROM a.scheduled_at) AS yr,
                 EXTRACT(month FROM a.scheduled_at) AS mo,
+                ais.service_id,
                 COUNT(ais.service_id) AS service_count
             FROM appointments a
             JOIN appointment_items ai ON ai.appointment_id = a.id
@@ -444,7 +471,7 @@ class OperationalResultRepository:
             WHERE a.tenant_id = :tenant_id
               AND a.status = 'completed'
               AND EXTRACT(year FROM a.scheduled_at) IN (:curr_year, :prev_year)
-            GROUP BY yr, mo
+            GROUP BY yr, mo, ais.service_id
         """)
 
         rows = db.execute(
@@ -455,16 +482,27 @@ class OperationalResultRepository:
         for r in rows:
             yr = int(r.yr)
             mo = int(r.mo)
+            srv_id = int(r.service_id) if r.service_id else 0
             cnt = int(r.service_count or 0)
+            srv_name = service_id_to_name.get(srv_id, "Outros")
+
             if yr == current_year:
                 monthly_curr[mo] += cnt
+                if srv_name not in service_curr:
+                    service_curr[srv_name] = {m: 0 for m in range(1, 13)}
+                service_curr[srv_name][mo] += cnt
             elif yr == previous_year:
                 monthly_prev[mo] += cnt
+                if srv_name not in service_prev:
+                    service_prev[srv_name] = {m: 0 for m in range(1, 13)}
+                service_prev[srv_name][mo] += cnt
 
         sql_sales_yearly = text("""
             SELECT 
                 EXTRACT(year FROM s.created_at) AS yr,
                 EXTRACT(month FROM s.created_at) AS mo,
+                si.item_id,
+                si.name AS service_name,
                 SUM(si.quantity) AS service_count
             FROM sales s
             JOIN sale_items si ON si.sale_id = s.id
@@ -474,7 +512,7 @@ class OperationalResultRepository:
               AND s.appointment_id IS NULL
               AND si.appointment_id IS NULL
               AND EXTRACT(year FROM s.created_at) IN (:curr_year, :prev_year)
-            GROUP BY yr, mo
+            GROUP BY yr, mo, si.item_id, si.name
         """)
 
         sales_rows = db.execute(
@@ -485,15 +523,26 @@ class OperationalResultRepository:
         for r in sales_rows:
             yr = int(r.yr)
             mo = int(r.mo)
+            item_id = int(r.item_id) if r.item_id else 0
+            srv_name = service_id_to_name.get(item_id, r.service_name or "Outros")
             cnt = int(r.service_count or 0)
+
             if yr == current_year:
                 monthly_curr[mo] += cnt
+                if srv_name not in service_curr:
+                    service_curr[srv_name] = {m: 0 for m in range(1, 13)}
+                service_curr[srv_name][mo] += cnt
             elif yr == previous_year:
                 monthly_prev[mo] += cnt
+                if srv_name not in service_prev:
+                    service_prev[srv_name] = {m: 0 for m in range(1, 13)}
+                service_prev[srv_name][mo] += cnt
 
         return {
             "current_year": current_year,
             "previous_year": previous_year,
             "monthly_volume_current": monthly_curr,
             "monthly_volume_previous": monthly_prev,
+            "service_monthly_current": service_curr,
+            "service_monthly_previous": service_prev,
         }
