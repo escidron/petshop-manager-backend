@@ -222,6 +222,7 @@ class OperationalResultRepository:
             SELECT 
                 EXTRACT(day FROM s.created_at) AS day_num,
                 si.item_id AS service_id,
+                si.item_id AS item_id,
                 si.name AS service_name,
                 si.quantity AS quantity,
                 si.subtotal AS subtotal,
@@ -247,7 +248,7 @@ class OperationalResultRepository:
         for r in sale_rows:
             day_num = int(r.day_num)
             qty = int(r.quantity or 1)
-            srv_id = int(r.item_id or 0)
+            srv_id = int((getattr(r, "service_id", None) or getattr(r, "item_id", None)) or 0)
             row_key = service_id_to_key.get(srv_id)
 
             if not row_key or row_key not in rows_map:
@@ -407,7 +408,8 @@ class OperationalResultRepository:
             "ticket_medio_operational": ticket_medio,
         }
 
-        # 9. Serviços Estratificados (para gráficos) ordenados por volume decrescente (maior para menor)
+        # 9. Linhas da Matriz (ordenadas alfabeticamente) e Serviços Estratificados (ordenados por volume decrescente)
+        sorted_rows = sorted(rows_map.values(), key=lambda x: x["name"].lower())
         sorted_stratified_rows = sorted(
             rows_map.values(),
             key=lambda x: (-x["total_count"], x["name"].lower())
