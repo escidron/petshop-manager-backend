@@ -48,6 +48,8 @@ class OperationalAnnualComparison(BaseModel):
     previous_year: int
     monthly_volume_current: Dict[int, int] = Field(default_factory=dict)  # 1..12 -> volume
     monthly_volume_previous: Dict[int, int] = Field(default_factory=dict)  # 1..12 -> volume
+    service_monthly_current: Dict[str, Dict[int, int]] = Field(default_factory=dict)  # service_name -> 1..12 -> volume
+    service_monthly_previous: Dict[str, Dict[int, int]] = Field(default_factory=dict)  # service_name -> 1..12 -> volume
 
 
 class OperationalStratifiedItem(BaseModel):
