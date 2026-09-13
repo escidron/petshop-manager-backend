@@ -63,7 +63,7 @@ def seed_plans(db: Session):
         },
         # Planos Combinados (Plano Pro + WhatsApp pós-trial)
         {
-            "name": "PetControle Pro + 200 msgs",
+            "name": "Data Pet Pro + 200 msgs",
             "code": "combo_200",
             "price_cents": 13780,
             "currency": "BRL",
@@ -72,7 +72,7 @@ def seed_plans(db: Session):
             "is_active": True,
         },
         {
-            "name": "PetControle Pro + 500 msgs",
+            "name": "Data Pet Pro + 500 msgs",
             "code": "combo_500",
             "price_cents": 16980,
             "currency": "BRL",
@@ -81,7 +81,7 @@ def seed_plans(db: Session):
             "is_active": True,
         },
         {
-            "name": "PetControle Pro + 1.000 msgs",
+            "name": "Data Pet Pro + 1.000 msgs",
             "code": "combo_1000",
             "price_cents": 21980,
             "currency": "BRL",
@@ -90,7 +90,7 @@ def seed_plans(db: Session):
             "is_active": True,
         },
         {
-            "name": "PetControle Pro + 2.000 msgs",
+            "name": "Data Pet Pro + 2.000 msgs",
             "code": "combo_2000",
             "price_cents": 29980,
             "currency": "BRL",

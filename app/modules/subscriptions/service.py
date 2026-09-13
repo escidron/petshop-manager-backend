@@ -1612,7 +1612,7 @@ def checkout_package(
                 "payment_method": "credit_card",
                 "credit_card": {
                     "card_id": final_card_id,
-                    "statement_descriptor": "PETCONTROLE",
+                    "statement_descriptor": "DATAPET",
                     "installments": 1,
                 },
             },
