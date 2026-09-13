@@ -20,6 +20,7 @@ import app.modules.auth.models
 import app.modules.waiting_list.models
 import app.modules.whatsapp.models
 import app.modules.cash_register.models
+import app.modules.financial.models
 import sentry_sdk
 
 
