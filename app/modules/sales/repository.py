@@ -16,9 +16,11 @@ def _sale_eager_options():
     return [
         selectinload(Sale.items),
         selectinload(Sale.payments),
+        joinedload(Sale.pet),
         joinedload(Sale.client).selectinload(Client.pets),
         joinedload(Sale.appointment).joinedload(Appointment.client).selectinload(Client.pets),
         joinedload(Sale.appointment).selectinload(Appointment.items).selectinload(AppointmentItem.services),
+        joinedload(Sale.appointment).selectinload(Appointment.items).joinedload(AppointmentItem.pet),
     ]
 
 
@@ -197,6 +199,8 @@ class SalesRepository:
                 Comanda.status == "open",
             ).first()
 
+        removed_appointment_services: list[tuple[int, int, list[int] | None]] = []
+
         if not comanda:
             comanda = Comanda(
                 tenant_id=tenant_id,
@@ -210,6 +214,22 @@ class SalesRepository:
             db.add(comanda)
             db.flush()
         else:
+            # Check for any appointment services that were removed from the comanda
+            if comanda.items:
+                incoming_keys = {
+                    (
+                        getattr(item, "appointment_id", None) or comanda.appointment_id or data.appointment_id,
+                        item.item_id,
+                    )
+                    for item in data.items
+                    if item.item_type == "service"
+                }
+                for existing_item in comanda.items:
+                    apt_id = existing_item.appointment_id or comanda.appointment_id
+                    if existing_item.item_type == "service" and apt_id:
+                        if (apt_id, existing_item.item_id) not in incoming_keys:
+                            removed_appointment_services.append((apt_id, existing_item.item_id, existing_item.pet_ids))
+
             comanda.status = "open"
             comanda.client_id = data.client_id
             if data.appointment_id:
@@ -221,6 +241,15 @@ class SalesRepository:
             # Clear old items to rebuild
             comanda.items.clear()
             db.flush()
+
+        if removed_appointment_services:
+            self._sync_removed_services_from_appointments(db, tenant_id, removed_appointment_services)
+
+        if len(data.items) == 0:
+            if comanda and comanda.id:
+                db.delete(comanda)
+                db.commit()
+            return comanda
 
         for item in data.items:
             c_item = ComandaItem(
@@ -243,6 +272,47 @@ class SalesRepository:
         db.refresh(comanda)
         return comanda
 
+    def _sync_removed_services_from_appointments(
+        self,
+        db: Session,
+        tenant_id: int,
+        removed_items: list[tuple[int, int, list[int] | None]],
+    ):
+        """
+        When an uncovered service originating from an appointment is deleted from an open comanda,
+        sync the deletion to the appointment so it doesn't remain pending/unpaid.
+        """
+        from app.modules.appointments.models import Appointment, AppointmentItem, AppointmentItemService
+
+        for apt_id, service_id, pet_ids in removed_items:
+            if not apt_id:
+                continue
+            appointment = db.query(Appointment).options(
+                selectinload(Appointment.items).selectinload(AppointmentItem.services),
+                selectinload(Appointment.items).selectinload(AppointmentItem.coverages),
+            ).filter(
+                Appointment.id == apt_id,
+                Appointment.tenant_id == tenant_id,
+            ).first()
+
+            if not appointment or appointment.is_paid:
+                continue
+
+            for item in list(appointment.items):
+                if pet_ids and item.pet_id not in pet_ids:
+                    continue
+
+                # Never remove a service that was covered by a package
+                if any(c.service_id == service_id for c in item.coverages):
+                    continue
+
+                if any(s.id == service_id for s in item.services):
+                    item.services = [s for s in item.services if s.id != service_id]
+                    if len(item.services) == 0 and len(appointment.items) > 1:
+                        db.delete(item)
+
+            db.flush()
+
     def get_comanda(self, db: Session, tenant_id: int, comanda_id: int) -> Comanda | None:
         return db.query(Comanda).options(
             selectinload(Comanda.client).selectinload(Client.pets),
@@ -260,6 +330,7 @@ class SalesRepository:
             Comanda.client_id == client_id,
             Comanda.tenant_id == tenant_id,
             Comanda.status == "open",
+            Comanda.items.any(),
         ).order_by(desc(Comanda.updated_at)).first()
 
     def list_open_comandas(
@@ -276,6 +347,7 @@ class SalesRepository:
         ).join(Client, Comanda.client_id == Client.id).filter(
             Comanda.tenant_id == tenant_id,
             Comanda.status == "open",
+            Comanda.items.any(),
         )
 
         if search:
@@ -294,7 +366,15 @@ class SalesRepository:
     def delete_comanda(self, db: Session, tenant_id: int, comanda_id: int) -> bool:
         comanda = self.get_comanda(db, tenant_id, comanda_id)
         if comanda and comanda.status == "open":
+            removed_appointment_services: list[tuple[int, int, list[int] | None]] = []
+            for existing_item in comanda.items:
+                apt_id = existing_item.appointment_id or comanda.appointment_id
+                if existing_item.item_type == "service" and apt_id:
+                    removed_appointment_services.append((apt_id, existing_item.item_id, existing_item.pet_ids))
+
             db.delete(comanda)
+            if removed_appointment_services:
+                self._sync_removed_services_from_appointments(db, tenant_id, removed_appointment_services)
             db.commit()
             return True
         return False

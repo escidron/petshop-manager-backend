@@ -120,6 +120,11 @@ class Appointment(Base):
         index=True
     )
 
+    recurrence_frequency: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
     notes: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(

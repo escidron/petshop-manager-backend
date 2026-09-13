@@ -96,6 +96,11 @@ class AppointmentRecurrence(BaseModel):
     occurrences: int = Field(ge=2, le=52, description="Number of times to repeat")
 
 
+class AppointmentRecurrenceInfo(BaseModel):
+    frequency: str = Field(description="'weekly', 'biweekly', or 'monthly'")
+    occurrences: int = Field(description="Number of remaining occurrences in the series")
+
+
 class AppointmentCreate(BaseModel):
     client_id: int
     scheduled_at: datetime
@@ -113,6 +118,8 @@ class AppointmentUpdate(BaseModel):
     notes: str | None = None
     items: List[AppointmentItemCreate] | None = None
     update_all_future: bool = False
+    recurrence: AppointmentRecurrence | None = None
+    remove_recurrence: bool = False
 
 
 class AppointmentResponse(BaseModel):
@@ -127,6 +134,8 @@ class AppointmentResponse(BaseModel):
     is_fully_package_covered: bool = False
     warnings: List[str] = Field(default_factory=list)
     recurrence_id: str | None = None
+    recurrence_frequency: str | None = None
+    recurrence: AppointmentRecurrenceInfo | None = None
 
     created_at: datetime
 
