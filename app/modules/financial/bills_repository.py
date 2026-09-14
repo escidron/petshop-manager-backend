@@ -171,9 +171,17 @@ class FinancialBillsRepository:
                 else:
                     receivable_pending += amt
 
-        # Saldo previsto = (receitas pendentes + vencidas) - (despesas pendentes + vencidas)
-        net_balance_expected = (receivable_pending + receivable_overdue) - (payable_pending + payable_overdue)
+        # 1. Saldo projetado total do período = Total a Receber - Total a Pagar
+        net_balance_projected = total_receivable - total_payable
+
+        # 2. Saldo realizado no caixa = Já Recebido - Já Pago
         net_balance_realized = receivable_paid - payable_paid
+
+        # 3. Saldo pendente a realizar = A Receber Pendente - A Pagar Pendente
+        net_balance_pending = (receivable_pending + receivable_overdue) - (payable_pending + payable_overdue)
+
+        # Compatibilidade
+        net_balance_expected = net_balance_projected
 
         return FinancialBillsSummaryResponse(
             total_payable=round(total_payable, 2),
@@ -186,8 +194,10 @@ class FinancialBillsRepository:
             receivable_pending=round(receivable_pending, 2),
             receivable_overdue=round(receivable_overdue, 2),
             receivable_overdue_count=receivable_overdue_count,
-            net_balance_expected=round(net_balance_expected, 2),
+            net_balance_projected=round(net_balance_projected, 2),
             net_balance_realized=round(net_balance_realized, 2),
+            net_balance_pending=round(net_balance_pending, 2),
+            net_balance_expected=round(net_balance_expected, 2),
         )
 
     def get_bill(self, db: Session, tenant_id: int, bill_id: int) -> Optional[FinancialBill]:

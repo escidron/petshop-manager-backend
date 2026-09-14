@@ -94,8 +94,10 @@ class FinancialBillsSummaryResponse(BaseModel):
     receivable_overdue: float = 0.0
     receivable_overdue_count: int = 0
 
-    net_balance_expected: float = 0.0
+    net_balance_projected: float = 0.0
     net_balance_realized: float = 0.0
+    net_balance_pending: float = 0.0
+    net_balance_expected: float = 0.0
 
 
 class FinancialBillListResponse(BaseModel):
