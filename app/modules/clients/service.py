@@ -341,8 +341,22 @@ class ClientService:
             import asyncio
             from app.modules.address.service import AddressService
 
+            street_col = headers.index("cliente_logradouro") if "cliente_logradouro" in headers else None
+            bairro_col = headers.index("cliente_bairro") if "cliente_bairro" in headers else None
+            city_col = headers.index("cliente_cidade") if "cliente_cidade" in headers else None
+            state_col = headers.index("cliente_estado") if "cliente_estado" in headers else None
+
             unique_ceps: set[str] = set()
             for row_values in non_empty_rows:
+                # Se a linha já tiver endereço completo, não precisa consultar ViaCEP
+                has_street = bool(row_values[street_col]) if street_col is not None and street_col < len(row_values) else False
+                has_bairro = bool(row_values[bairro_col]) if bairro_col is not None and bairro_col < len(row_values) else False
+                has_city = bool(row_values[city_col]) if city_col is not None and city_col < len(row_values) else False
+                has_state = bool(row_values[state_col]) if state_col is not None and state_col < len(row_values) else False
+
+                if has_street and has_bairro and has_city and has_state:
+                    continue
+
                 raw_cep = row_values[cep_col_idx] if cep_col_idx < len(row_values) else None
                 cep_digits = clean_num(raw_cep)
                 if cep_digits:
@@ -351,16 +365,20 @@ class ClientService:
                     if len(cep_digits) == 8:
                         unique_ceps.add(cep_digits)
 
-            async def _fetch_cep(cep: str):
-                try:
-                    return cep, await AddressService.fetch_by_cep(cep)
-                except Exception:
-                    return cep, None
+            if unique_ceps:
+                sem = asyncio.Semaphore(10)
 
-            fetched = await asyncio.gather(*[_fetch_cep(c) for c in unique_ceps])
-            for cep_key, addr_data in fetched:
-                if addr_data:
-                    cep_cache[cep_key] = addr_data
+                async def _fetch_cep(cep: str):
+                    async with sem:
+                        try:
+                            return cep, await asyncio.wait_for(AddressService.fetch_by_cep(cep), timeout=3.0)
+                        except Exception:
+                            return cep, None
+
+                fetched = await asyncio.gather(*[_fetch_cep(c) for c in unique_ceps])
+                for cep_key, addr_data in fetched:
+                    if addr_data:
+                        cep_cache[cep_key] = addr_data
 
         # ------------------------------------------------------------------ #
         #  OPTIMISATION 2: Load existing clients/pets into memory (1 query)   #
@@ -666,12 +684,12 @@ class ClientService:
             )
             update_job(
                 job_id,
-                status="done",
+                status="done" if not (result.get("errors") and not result.get("created") and not result.get("updated")) else "error",
                 progress=100,
-                created=result["created"],
-                updated=result["updated"],
+                created=result.get("created", result.get("imported", 0)),
+                updated=result.get("updated", 0),
                 total=result.get("total", 0),
-                errors=result["errors"],
+                errors=result.get("errors", []),
             )
         except Exception as e:
             update_job(job_id, status="error", errors=[str(e)])

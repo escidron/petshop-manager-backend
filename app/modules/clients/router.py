@@ -1,3 +1,5 @@
+import asyncio
+import io
 from datetime import date
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, File, UploadFile, Form, Query
@@ -14,7 +16,7 @@ from .schemas import (
     ClientSummaryResponse,
 )
 from .service import ClientService
-from .import_jobs import create_job, get_job
+from .import_jobs import create_job, get_job, update_job
 
 router = APIRouter(prefix="/clients", tags=["Clients"], dependencies=[Depends(get_current_tenant)])
 
@@ -140,6 +142,8 @@ async def import_clients(
             loop.run_until_complete(
                 service.import_clients_from_excel_background(job_id, tenant_id, file_content)
             )
+        except Exception as e:
+            update_job(job_id, status="error", errors=[str(e)])
         finally:
             loop.close()
 
@@ -293,6 +297,9 @@ async def import_migration_files(
             loop.run_until_complete(
                 service.import_clients_from_excel_background(job_id, tenant_id, converted_bytes)
             )
+        except Exception as e:
+            from .import_jobs import update_job
+            update_job(job_id, status="error", errors=[str(e)])
         finally:
             loop.close()
 
