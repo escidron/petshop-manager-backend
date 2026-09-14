@@ -192,11 +192,20 @@ class AppointmentService:
         tenant_id: int,
         appointment_id: int,
         data: AppointmentUpdate,
+        user_role: str | None = None,
+        is_admin: bool = False,
     ) -> Appointment:
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id, for_update=True)
         if not appointment:
             raise HTTPException(404, "Agendamento não encontrado")
         old_scheduled_at = appointment.scheduled_at
+
+        is_completed = (appointment.status == AppointmentStatus.COMPLETED)
+        if is_completed and user_role != "owner" and not is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Apenas o proprietário (Owner) ou administradores podem editar agendamentos já finalizados.",
+            )
 
         # 🔹 Atualizar campos simples
         if data.scheduled_at is not None:
@@ -207,6 +216,33 @@ class AppointmentService:
 
         # 🔹 Se vier items → reconstruir
         if data.items is not None:
+            old_completed_snapshot = None
+            if is_completed:
+                old_completed_snapshot = {
+                    "items": [
+                        {
+                            "pet_id": it.pet_id,
+                            "services": [
+                                {
+                                    "id": s.id,
+                                    "name": s.name,
+                                    "price_cents": s.price_cents,
+                                    "employee_id": next(
+                                        (ais.employee_id for ais in it.item_services if ais.service_id == s.id),
+                                        None,
+                                    ),
+                                    "coverage": next(
+                                        (c for c in it.coverages if c.service_id == s.id),
+                                        None,
+                                    ),
+                                }
+                                for s in it.services
+                            ],
+                        }
+                        for it in appointment.items
+                    ]
+                }
+
             existing_pet_ids = {it.pet_id for it in appointment.items}
 
             # Remove todos os items antigos
@@ -234,6 +270,18 @@ class AppointmentService:
                     appointment=appointment,
                     pet_id=item.pet_id,
                     services=services,
+                )
+
+            db.flush()
+            db.expire(appointment, ["items"])
+
+            # Se for um agendamento finalizado, executa a sincronização profunda de pacotes, vendas, extratos e comissões
+            if is_completed and old_completed_snapshot:
+                self._sync_completed_appointment(
+                    db,
+                    tenant_id,
+                    appointment,
+                    old_completed_snapshot,
                 )
 
         if not data.update_all_future:
@@ -490,7 +538,52 @@ class AppointmentService:
         assignments: list,
     ):
         appointment = self.get(db, tenant_id, appointment_id)
-        return self.repo.assign_employees(db, appointment.id, assignments)
+        result = self.repo.assign_employees(db, appointment.id, assignments)
+
+        # Se o agendamento já estiver finalizado, sincroniza os SaleItems e as comissões
+        if appointment.status == AppointmentStatus.COMPLETED:
+            from app.modules.sales.models import Sale, SaleItem
+            from app.modules.commissions.models import CommissionEntry
+
+            for assignment in assignments:
+                sale_items = (
+                    db.query(SaleItem)
+                    .join(Sale)
+                    .filter(
+                        Sale.tenant_id == tenant_id,
+                        Sale.status == "completed",
+                        SaleItem.item_type == "service",
+                        SaleItem.item_id == assignment.service_id,
+                        (SaleItem.appointment_id == appointment.id) | (Sale.appointment_id == appointment.id),
+                    )
+                    .all()
+                )
+                for si in sale_items:
+                    si.employee_id = assignment.employee_id
+                    db.query(CommissionEntry).filter(
+                        CommissionEntry.sale_item_id == si.id
+                    ).delete(synchronize_session=False)
+
+                    if assignment.employee_id:
+                        try:
+                            subtotal_price = Decimal(str(si.unit_price)) if si.subtotal == 0 else Decimal(str(si.subtotal))
+                            self.commission_service.generate_entry(
+                                db=db,
+                                tenant_id=tenant_id,
+                                sale_id=si.sale_id,
+                                sale_item_id=si.id,
+                                employee_id=assignment.employee_id,
+                                service_id=assignment.service_id,
+                                item_type="service",
+                                subtotal=subtotal_price,
+                                ref_date=appointment.scheduled_at.date(),
+                                appointment_item_id=assignment.appointment_item_id,
+                            )
+                        except Exception:
+                            pass
+            db.commit()
+
+        return result
 
     # ---------- DELETE ----------
     def delete(
@@ -503,6 +596,328 @@ class AppointmentService:
         self.repo.delete(db, appointment)
 
     # ---------- helpers ----------
+    def _sync_completed_appointment(
+        self,
+        db: Session,
+        tenant_id: int,
+        appointment: Appointment,
+        snapshot: dict,
+    ):
+        from app.modules.client_packages.models import ClientPackageCredit, ClientPackageUsage
+        from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
+        from app.modules.commissions.models import CommissionEntry
+        from app.modules.appointments.models import AppointmentItemService
+
+        db.flush()
+        db.expire(appointment)
+        appointment_full = self.repo.get_with_relations(db, appointment.id)
+
+        # 1. Mapeamento dos serviços antigos: (pet_id, service_id) -> info
+        old_services_map: dict[tuple[int, int], dict] = {}
+        for it in snapshot.get("items", []):
+            pet_id = it["pet_id"]
+            for s in it["services"]:
+                old_services_map[(pet_id, s["id"])] = s
+
+        # 2. Mapeamento dos novos items recém-criados: (pet_id, service_id) -> (item, service)
+        new_items_by_pair: dict[tuple[int, int], tuple[any, any]] = {}
+        for it in appointment_full.items:
+            for s in it.services:
+                new_items_by_pair[(it.pet_id, s.id)] = (it, s)
+
+        # 3. Preservar atribuições de funcionários se o serviço já existia e tinha funcionário
+        for (pet_id, s_id), (new_it, new_s) in new_items_by_pair.items():
+            if (pet_id, s_id) in old_services_map:
+                old_emp_id = old_services_map[(pet_id, s_id)].get("employee_id")
+                if old_emp_id:
+                    db.query(AppointmentItemService).filter(
+                        AppointmentItemService.appointment_item_id == new_it.id,
+                        AppointmentItemService.service_id == s_id,
+                    ).update({"employee_id": old_emp_id}, synchronize_session=False)
+
+        db.flush()
+        appointment_full = self.repo.get_with_relations(db, appointment.id)
+
+        item_emp_maps = {
+            item.id: {ais.service_id: ais.employee_id for ais in item.item_services}
+            for item in appointment_full.items
+        }
+
+        # 4. PACOTES: Devolver créditos de serviços que foram removidos
+        for (pet_id, s_id), old_info in old_services_map.items():
+            if (pet_id, s_id) not in new_items_by_pair:
+                cov = old_info.get("coverage")
+                if cov and cov.client_package_credit_id:
+                    credit = db.query(ClientPackageCredit).filter(
+                        ClientPackageCredit.id == cov.client_package_credit_id
+                    ).first()
+                    if credit:
+                        credit.used_qty = max(0, credit.used_qty - 1)
+                        usage = ClientPackageUsage(
+                            tenant_id=tenant_id,
+                            client_package_id=credit.client_package_id,
+                            credit_id=credit.id,
+                            change_qty=-1,
+                            notes=f"Estorno por edição do agendamento #{appointment.id}",
+                        )
+                        db.add(usage)
+                        client_pkg = credit.client_package
+                        if client_pkg and not client_pkg.is_active:
+                            client_pkg.is_active = True
+                            db.add(client_pkg)
+
+        # 5. PACOTES: Manter ou consumir créditos para os novos pares
+        new_covered_pairs: set[tuple[int, int]] = set()
+        for (pet_id, s_id), (it, s) in new_items_by_pair.items():
+            old_info = old_services_map.get((pet_id, s_id))
+            cov = old_info.get("coverage") if old_info else None
+
+            if cov and cov.client_package_credit_id:
+                # Mantém a cobertura existente
+                self.repo.create_coverage(
+                    db,
+                    appointment_item_id=it.id,
+                    service_id=s.id,
+                    client_package_credit_id=cov.client_package_credit_id,
+                )
+                new_covered_pairs.add((it.id, s.id))
+            else:
+                # Novo serviço adicionado: verifica se há crédito de pacote ativo
+                credit = self.credit_repo.find_active_credit(db, tenant_id, pet_id, s.id)
+                if credit:
+                    notes = f"Consumido via edição do agendamento #{appointment.id}"
+                    self.credit_repo.consume_credit(db, credit, notes=notes)
+                    self.repo.create_coverage(
+                        db,
+                        appointment_item_id=it.id,
+                        service_id=s.id,
+                        client_package_credit_id=credit.id,
+                    )
+                    new_covered_pairs.add((it.id, s.id))
+
+        db.flush()
+
+        # 6. Sincronizar Package Sale (R$ 0)
+        covered_services = [
+            (it, s)
+            for it in appointment_full.items
+            for s in it.services
+            if (it.id, s.id) in new_covered_pairs
+        ]
+
+        package_sale = db.query(Sale).filter(
+            Sale.tenant_id == tenant_id,
+            Sale.appointment_id == appointment.id,
+            Sale.payment_method == "package",
+        ).first()
+
+        if covered_services:
+            if not package_sale:
+                package_sale = Sale(
+                    tenant_id=tenant_id,
+                    client_id=appointment_full.client_id,
+                    appointment_id=appointment_full.id,
+                    total_amount=Decimal("0"),
+                    payment_method="package",
+                    status="completed",
+                )
+                db.add(package_sale)
+                db.flush()
+
+            # Limpa sale items antigos do package sale
+            for old_si in list(package_sale.items):
+                db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
+                package_sale.items.remove(old_si)
+                db.delete(old_si)
+            db.flush()
+
+            for it, s in covered_services:
+                emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                real_price = Decimal(s.price_cents) / Decimal("100")
+                sale_item = SaleItem(
+                    sale_id=package_sale.id,
+                    item_type="service",
+                    item_id=s.id,
+                    name=s.name,
+                    quantity=1,
+                    unit_price=real_price,
+                    subtotal=Decimal("0"),
+                    employee_id=emp_id,
+                    appointment_id=appointment_full.id,
+                )
+                db.add(sale_item)
+                db.flush()
+
+                if emp_id:
+                    try:
+                        self.commission_service.generate_entry(
+                            db=db,
+                            tenant_id=tenant_id,
+                            sale_id=package_sale.id,
+                            sale_item_id=sale_item.id,
+                            employee_id=emp_id,
+                            service_id=s.id,
+                            item_type="service",
+                            subtotal=real_price,
+                            ref_date=appointment_full.scheduled_at.date(),
+                            appointment_item_id=it.id,
+                        )
+                    except Exception:
+                        pass
+        elif package_sale:
+            for old_si in list(package_sale.items):
+                db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
+            db.delete(package_sale)
+
+        # 7. Serviços Avulsos / Vendas / Extratos
+        uncovered_services = [
+            (it, s)
+            for it in appointment_full.items
+            for s in it.services
+            if (it.id, s.id) not in new_covered_pairs
+        ]
+
+        pos_sale = db.query(Sale).filter(
+            Sale.tenant_id == tenant_id,
+            Sale.payment_method != "package",
+            Sale.status == "completed",
+            (Sale.appointment_id == appointment.id) | (
+                Sale.items.any(SaleItem.appointment_id == appointment.id)
+            )
+        ).first()
+
+        if pos_sale:
+            # Agendamento já pago: atualiza a venda para manter os extratos e DRE corretos
+            for si in list(pos_sale.items):
+                if si.appointment_id == appointment.id or (si.appointment_id is None and pos_sale.appointment_id == appointment.id and si.item_type == "service"):
+                    db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == si.id).delete(synchronize_session=False)
+                    pos_sale.items.remove(si)
+                    db.delete(si)
+            db.flush()
+
+            for it, s in uncovered_services:
+                emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                price = Decimal(s.price_cents) / Decimal("100")
+                sale_item = SaleItem(
+                    sale_id=pos_sale.id,
+                    item_type="service",
+                    item_id=s.id,
+                    name=s.name,
+                    quantity=1,
+                    unit_price=price,
+                    subtotal=price,
+                    employee_id=emp_id,
+                    appointment_id=appointment_full.id,
+                )
+                db.add(sale_item)
+                if "items" in pos_sale.__dict__:
+                    pos_sale.items.append(sale_item)
+                db.flush()
+
+                if emp_id:
+                    try:
+                        self.commission_service.generate_entry(
+                            db=db,
+                            tenant_id=tenant_id,
+                            sale_id=pos_sale.id,
+                            sale_item_id=sale_item.id,
+                            employee_id=emp_id,
+                            service_id=s.id,
+                            item_type="service",
+                            subtotal=price,
+                            ref_date=appointment_full.scheduled_at.date(),
+                            appointment_item_id=it.id,
+                        )
+                    except Exception:
+                        pass
+
+            db.flush()
+            current_sale_items = db.query(SaleItem).filter(SaleItem.sale_id == pos_sale.id).all()
+            new_subtotal = sum(Decimal(str(si.subtotal)) for si in current_sale_items)
+            pos_sale.total_amount = float(max(Decimal("0"), new_subtotal - Decimal(str(pos_sale.discount_amount))))
+            if pos_sale.payments and len(pos_sale.payments) == 1:
+                pos_sale.payments[0].amount = pos_sale.total_amount
+            elif pos_sale.payments:
+                current_payments_sum = sum(Decimal(str(p.amount)) for p in pos_sale.payments)
+                diff = Decimal(str(pos_sale.total_amount)) - current_payments_sum
+                if diff != Decimal("0"):
+                    pos_sale.payments[0].amount = float(Decimal(str(pos_sale.payments[0].amount)) + diff)
+        else:
+            # Agendamento ainda não pago: sincroniza a comanda aberta se houver
+            from sqlalchemy import or_
+            open_comandas = db.query(Comanda).filter(
+                Comanda.tenant_id == tenant_id,
+                Comanda.status == "open",
+                or_(
+                    Comanda.appointment_id == appointment.id,
+                    Comanda.client_id == appointment.client_id,
+                )
+            ).all()
+
+            for comanda in open_comandas:
+                for ci in list(comanda.items):
+                    if ci.appointment_id == appointment.id or (ci.appointment_id is None and comanda.appointment_id == appointment.id and ci.item_type == "service"):
+                        comanda.items.remove(ci)
+                        db.delete(ci)
+                db.flush()
+
+                if uncovered_services:
+                    for it, s in uncovered_services:
+                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                        price = float(Decimal(s.price_cents) / Decimal("100"))
+                        c_item = ComandaItem(
+                            comanda_id=comanda.id,
+                            item_type="service",
+                            item_id=s.id,
+                            name=s.name,
+                            quantity=1,
+                            unit_price=price,
+                            subtotal=price,
+                            employee_id=emp_id,
+                            pet_ids=[it.pet_id],
+                            unit="UN",
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(c_item)
+
+                db.flush()
+                remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
+                comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
+                if not comanda.items:
+                    db.delete(comanda)
+
+            if uncovered_services and not open_comandas:
+                extra_total = sum(Decimal(s.price_cents) / Decimal("100") for _, s in uncovered_services)
+                comanda = Comanda(
+                    tenant_id=tenant_id,
+                    client_id=appointment_full.client_id,
+                    appointment_id=appointment_full.id,
+                    status="open",
+                    total_amount=float(extra_total),
+                    discount_amount=0.0,
+                )
+                db.add(comanda)
+                db.flush()
+                for it, s in uncovered_services:
+                    emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                    price = float(Decimal(s.price_cents) / Decimal("100"))
+                    c_item = ComandaItem(
+                        comanda_id=comanda.id,
+                        item_type="service",
+                        item_id=s.id,
+                        name=s.name,
+                        quantity=1,
+                        unit_price=price,
+                        subtotal=price,
+                        employee_id=emp_id,
+                        pet_ids=[it.pet_id],
+                        unit="UN",
+                        appointment_id=appointment_full.id,
+                    )
+                    db.add(c_item)
+
+        db.commit()
+
     def _calculate_next_scheduled_at(self, base_date, frequency: str, index: int):
         from datetime import timedelta
         if frequency == 'weekly':
