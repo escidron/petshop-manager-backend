@@ -1,4 +1,5 @@
-from datetime import datetime, date
+from datetime import datetime, date, time, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -35,6 +36,24 @@ PAYMENT_METHOD_LABELS = {
     "package": "Pacotes",
 }
 
+BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
+
+
+def get_brazil_now() -> datetime:
+    return datetime.now(BRAZIL_TZ)
+
+
+def get_brazil_today() -> date:
+    return get_brazil_now().date()
+
+
+def to_brazil_datetime(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BRAZIL_TZ)
+
 
 class CashRegisterService:
     def __init__(self):
@@ -49,8 +68,9 @@ class CashRegisterService:
     def _auto_close_session(self, db: Session, session: CashSession) -> CashSession:
         current_balance = self._get_current_balance(db, session)
         session.status = "closed"
-        # Stamp at 23:59:59 of the date the session was opened
-        close_timestamp = datetime.combine(session.opened_at.date(), datetime.max.time().replace(microsecond=0))
+        # Stamp at 23:59:59 of the local date the session was opened
+        opened_local = to_brazil_datetime(session.opened_at) or get_brazil_now()
+        close_timestamp = datetime.combine(opened_local.date(), time(23, 59, 59), tzinfo=BRAZIL_TZ)
         session.closed_at = close_timestamp
         session.expected_closing_amount = current_balance
         session.actual_closing_amount = current_balance
@@ -180,9 +200,9 @@ class CashRegisterService:
 
         # Check if active session was opened on a previous day and should be auto-closed
         if active_session:
-            now = datetime.now()
-            # If opened before today's date, auto-close it
-            if active_session.opened_at.date() < now.date():
+            opened_local_date = to_brazil_datetime(active_session.opened_at).date()
+            # If opened before today's date (in Brazil timezone), auto-close it
+            if opened_local_date < get_brazil_today():
                 self._auto_close_session(db, active_session)
                 active_session = None
 
@@ -215,8 +235,9 @@ class CashRegisterService:
         
         active_session = self.repository.get_active_session(db, tenant_id, register_id)
         if active_session:
-            # If from previous date, auto close it
-            if active_session.opened_at.date() < datetime.now().date():
+            opened_local_date = to_brazil_datetime(active_session.opened_at).date()
+            # If from previous date (in Brazil timezone), auto close it
+            if opened_local_date < get_brazil_today():
                 self._auto_close_session(db, active_session)
             else:
                 raise HTTPException(
@@ -228,7 +249,7 @@ class CashRegisterService:
             tenant_id=tenant_id,
             cash_register_id=register_id,
             status="open",
-            opened_at=datetime.now(),
+            opened_at=get_brazil_now(),
             opened_by_user_id=user_id,
             initial_amount=data.initial_amount,
             closing_notes=data.notes,
@@ -257,9 +278,11 @@ class CashRegisterService:
             register_id = register.id
 
         active_session = self.repository.get_active_session(db, tenant_id, register_id)
-        if active_session and active_session.opened_at.date() < datetime.now().date():
-            self._auto_close_session(db, active_session)
-            active_session = None
+        if active_session:
+            opened_local_date = to_brazil_datetime(active_session.opened_at).date()
+            if opened_local_date < get_brazil_today():
+                self._auto_close_session(db, active_session)
+                active_session = None
 
         if not active_session:
             # Caixa está fechado: ajustar o saldo da gaveta (última sessão fechada) sem abrir o caixa
@@ -290,10 +313,10 @@ class CashRegisterService:
                     tenant_id=tenant_id,
                     cash_register_id=register_id,
                     status="closed",
-                    opened_at=datetime.now(),
+                    opened_at=get_brazil_now(),
                     opened_by_user_id=user_id,
                     initial_amount=0.0,
-                    closed_at=datetime.now(),
+                    closed_at=get_brazil_now(),
                     closed_by_user_id=user_id,
                     expected_closing_amount=0.0,
                     actual_closing_amount=data.amount,
@@ -337,9 +360,11 @@ class CashRegisterService:
             register_id = register.id
 
         active_session = self.repository.get_active_session(db, tenant_id, register_id)
-        if active_session and active_session.opened_at.date() < datetime.now().date():
-            self._auto_close_session(db, active_session)
-            active_session = None
+        if active_session:
+            opened_local_date = to_brazil_datetime(active_session.opened_at).date()
+            if opened_local_date < get_brazil_today():
+                self._auto_close_session(db, active_session)
+                active_session = None
 
         if not active_session:
             # Caixa está fechado: retirar valor da gaveta (última sessão fechada) sem abrir o caixa
@@ -411,7 +436,7 @@ class CashRegisterService:
         difference = round(data.actual_closing_amount - expected_balance, 2)
 
         active_session.status = "closed"
-        active_session.closed_at = datetime.now()
+        active_session.closed_at = get_brazil_now()
         active_session.closed_by_user_id = user_id
         active_session.expected_closing_amount = expected_balance
         active_session.actual_closing_amount = data.actual_closing_amount
@@ -428,10 +453,10 @@ class CashRegisterService:
             balance_after=data.actual_closing_amount,
             destination_or_origin="Fechamento de Caixa",
             description=f"Fechamento Manual ({diff_text}). {data.closing_notes or ''}".strip(),
+            created_at=get_brazil_now(),
         )
         self.repository.create_movement(db, closing_movement)
         updated_session = self.repository.update_session(db, active_session)
-
         return self.build_session_detail(db, tenant_id, updated_session)
 
     def list_sessions(
