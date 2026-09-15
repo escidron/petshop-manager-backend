@@ -44,7 +44,10 @@ class FinancialService:
         cmv_data = sales_cmv_data["cmv_products"]
         commissions_data = self.repo.get_commissions_aggregated_by_month(db, tenant_id, year)
 
-        # 3. Busca lançamentos manuais
+        # 3. Busca contas pagas do Contas a Pagar/Receber (Regime de Caixa)
+        paid_bills_data = self.repo.get_paid_bills_aggregated_by_category_and_month(db, tenant_id, year)
+
+        # 4. Busca lançamentos manuais
         manual_entries = self.repo.get_entries_for_year(db, tenant_id, year)
         entries_map: Dict[int, Dict[int, float]] = {}
         for e in manual_entries:
@@ -52,7 +55,7 @@ class FinancialService:
                 entries_map[e.account_id] = {}
             entries_map[e.account_id][e.competence_month] = float(e.amount or 0.0)
 
-        # 4. Agrupa contas por grupo
+        # 5. Agrupa contas por grupo
         groups_config = [
             ("gross_revenue", "(+) RECEITA BRUTA DE VENDAS", "TOTAL RECEITA BRUTA"),
             ("cmv", "(-) CUSTO MERCADORIA E SERVIÇO VENDIDO (CMV / CSP)", "TOTAL CMV / CSP"),
@@ -67,7 +70,7 @@ class FinancialService:
             if acc.is_active and acc.group_type in accounts_by_group:
                 accounts_by_group[acc.group_type].append(acc)
 
-        # 5. Constrói linhas de cada conta
+        # 6. Constrói linhas de cada conta
         group_rows_map: Dict[str, List[DRERowData]] = {g[0]: [] for g in groups_config}
         group_monthly_totals: Dict[str, Dict[int, float]] = {
             g[0]: {m: 0.0 for m in range(1, 13)} for g in groups_config
@@ -78,10 +81,7 @@ class FinancialService:
                 monthly_amounts: Dict[int, float] = {}
 
                 for m in range(1, 13):
-                    # Se tiver lançamento manual explícito, tem prioridade
-                    if acc.id in entries_map and m in entries_map[acc.id]:
-                        val = entries_map[acc.id][m]
-                    elif acc.is_system and acc.system_source:
+                    if acc.is_system and acc.system_source:
                         if acc.system_source == "sales_products":
                             val = sales_data["sales_products"].get(m, 0.0)
                         elif acc.system_source == "sales_services":
@@ -93,7 +93,10 @@ class FinancialService:
                         else:
                             val = 0.0
                     else:
-                        val = 0.0
+                        # Contas normais: Contas pagas (Regime de Caixa) + Ajustes manuais
+                        bills_val = paid_bills_data.get(acc.id, {}).get(m, 0.0)
+                        manual_val = entries_map.get(acc.id, {}).get(m, 0.0)
+                        val = bills_val + manual_val
 
                     monthly_amounts[m] = round(val, 2)
                     group_monthly_totals[group_type][m] += val

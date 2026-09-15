@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_, desc, asc, case
@@ -377,3 +377,85 @@ class FinancialBillsRepository:
             item.status = self._apply_overdue_status(item, today)
 
         return items
+
+    def get_due_alerts(self, db: Session, tenant_id: int) -> List[dict]:
+        """
+        Retorna alertas de contas a pagar pendentes que vencem hoje, amanhã ou já estão vencidas.
+        """
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+
+        bills = (
+            db.query(FinancialBill)
+            .options(
+                joinedload(FinancialBill.category),
+                joinedload(FinancialBill.supplier),
+            )
+            .filter(
+                FinancialBill.tenant_id == tenant_id,
+                FinancialBill.bill_type == "payable",
+                FinancialBill.status == "pending",
+                FinancialBill.due_date <= tomorrow,
+            )
+            .order_by(asc(FinancialBill.due_date), desc(FinancialBill.amount))
+            .limit(50)
+            .all()
+        )
+
+        alerts = []
+        for bill in bills:
+            days_diff = (bill.due_date - today).days
+            if days_diff < 0:
+                urgency = "overdue"
+            elif days_diff == 0:
+                urgency = "today"
+            else:
+                urgency = "tomorrow"
+
+            alerts.append({
+                "id": bill.id,
+                "description": bill.description,
+                "amount": float(bill.amount or 0.0),
+                "due_date": bill.due_date,
+                "urgency": urgency,
+                "days_diff": days_diff,
+                "supplier_name": bill.supplier.name if bill.supplier else None,
+                "category_name": bill.category.name if bill.category else None,
+                "document_number": bill.document_number,
+                "barcode": bill.barcode,
+            })
+        return alerts
+
+    def get_bill_installments(self, db: Session, tenant_id: int, bill_id: int) -> List[FinancialBill]:
+        """
+        Retorna todas as parcelas pertencentes à mesma compra/título da conta informada.
+        """
+        today = date.today()
+        target = (
+            db.query(FinancialBill)
+            .filter(FinancialBill.id == bill_id, FinancialBill.tenant_id == tenant_id)
+            .first()
+        )
+        if not target:
+            return []
+
+        parent_id = target.parent_bill_id or target.id
+        bills = (
+            db.query(FinancialBill)
+            .options(
+                joinedload(FinancialBill.category),
+                joinedload(FinancialBill.supplier),
+                joinedload(FinancialBill.client),
+            )
+            .filter(
+                FinancialBill.tenant_id == tenant_id,
+                or_(FinancialBill.id == parent_id, FinancialBill.parent_bill_id == parent_id),
+            )
+            .order_by(asc(FinancialBill.installment_number), asc(FinancialBill.due_date))
+            .all()
+        )
+        for b in bills:
+            b.status = self._apply_overdue_status(b, today)
+        return bills
+
+

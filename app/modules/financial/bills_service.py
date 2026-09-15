@@ -15,6 +15,8 @@ from app.modules.financial.bills_schemas import (
     FinancialBillResponse,
     FinancialBillsSummaryResponse,
     FinancialBillListResponse,
+    BillAlertItem,
+    BillAlertsResponse,
 )
 from app.modules.financial.bills_repository import FinancialBillsRepository
 
@@ -236,6 +238,27 @@ class FinancialBillsService:
 
     def delete_bill(self, db: Session, tenant_id: int, bill_id: int) -> bool:
         return self.repo.delete_bill(db, tenant_id=tenant_id, bill_id=bill_id)
+
+    def get_due_alerts(self, db: Session, tenant_id: int) -> BillAlertsResponse:
+        raw_alerts = self.repo.get_due_alerts(db, tenant_id=tenant_id)
+        alert_items = [BillAlertItem(**a) for a in raw_alerts]
+
+        today_count = sum(1 for a in alert_items if a.urgency == "today")
+        tomorrow_count = sum(1 for a in alert_items if a.urgency == "tomorrow")
+        overdue_count = sum(1 for a in alert_items if a.urgency == "overdue")
+        total_count = len(alert_items)
+
+        return BillAlertsResponse(
+            total_count=total_count,
+            today_count=today_count,
+            tomorrow_count=tomorrow_count,
+            overdue_count=overdue_count,
+            alerts=alert_items,
+        )
+
+    def get_bill_installments(self, db: Session, tenant_id: int, bill_id: int) -> List[FinancialBillResponse]:
+        bills = self.repo.get_bill_installments(db, tenant_id=tenant_id, bill_id=bill_id)
+        return [self._to_response(b) for b in bills]
 
     def export_bills_excel(
         self,

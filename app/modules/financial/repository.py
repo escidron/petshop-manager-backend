@@ -4,9 +4,11 @@ from typing import Optional, List, Dict, Tuple, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, and_, desc, or_, text
 
-from app.modules.financial.models import DREAccount, DREEntry, EmployeePayrollProfile
+from app.modules.financial.models import DREAccount, DREEntry, EmployeePayrollProfile, FinancialBill
 from app.modules.financial.schemas import DREAccountCreate, DREAccountUpdate
 from app.modules.employees.models import Employee
+from app.modules.suppliers.models import Supplier
+from app.modules.clients.models import Client
 from app.modules.sales.models import Sale, SaleItem
 from app.modules.products.models import Product
 from app.modules.commissions.models import CommissionEntry
@@ -435,6 +437,43 @@ class FinancialRepository:
             )
             .all()
         )
+
+    def get_paid_bills_aggregated_by_category_and_month(
+        self, db: Session, tenant_id: int, year: int
+    ) -> Dict[int, Dict[int, float]]:
+        """
+        Agrega o valor total de contas pagas (status='paid') por category_id e mês do pagamento no ano informado.
+        Regime de Caixa: data baseada no payment_date (ou due_date se payment_date for nulo).
+        """
+        effective_date = func.coalesce(FinancialBill.payment_date, FinancialBill.due_date)
+
+        rows = (
+            db.query(
+                FinancialBill.category_id,
+                extract("month", effective_date).label("month"),
+                func.sum(
+                    func.coalesce(
+                        func.nullif(FinancialBill.paid_amount, 0),
+                        FinancialBill.amount,
+                    )
+                ).label("total_amount"),
+            )
+            .filter(
+                FinancialBill.tenant_id == tenant_id,
+                FinancialBill.status == "paid",
+                FinancialBill.category_id.isnot(None),
+                extract("year", effective_date) == year,
+            )
+            .group_by(FinancialBill.category_id, extract("month", effective_date))
+            .all()
+        )
+
+        result: Dict[int, Dict[int, float]] = {}
+        for cat_id, month, total in rows:
+            if cat_id not in result:
+                result[cat_id] = {}
+            result[cat_id][int(month)] = float(total or 0.0)
+        return result
 
     def upsert_entry(
         self,
