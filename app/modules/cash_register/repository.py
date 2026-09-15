@@ -2,10 +2,13 @@ from datetime import datetime, date
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import List, Optional
+from zoneinfo import ZoneInfo
+from datetime import datetime, time
 
 from .models import CashRegister, CashSession, CashMovement, CashDestinationAccount
 from app.modules.sales.models import Sale
 
+tz = ZoneInfo("America/Sao_Paulo")
 
 class CashRegisterRepository:
     def get_or_create_default_register(self, db: Session, tenant_id: int) -> CashRegister:
@@ -223,9 +226,12 @@ class CashRegisterRepository:
 
         if cash_register_id:
             query = query.filter(CashSession.cash_register_id == cash_register_id)
+
         if start_date:
-            query = query.filter(func.date(CashSession.opened_at) >= start_date)
+            start_dt = datetime.combine(start_date, time.min).replace(tzinfo=tz)
+            query = query.filter(CashSession.opened_at >= start_dt)
         if end_date:
-            query = query.filter(func.date(CashSession.opened_at) <= end_date)
+            end_dt = datetime.combine(end_date, time.max).replace(tzinfo=tz)
+            query = query.filter(CashSession.opened_at <= end_dt)
 
         return query.order_by(CashSession.opened_at.desc()).offset(skip).limit(limit).all()

@@ -132,8 +132,12 @@ def update_appointment(
     db: Session = Depends(get_db),
 ):
     tenant_id = request.state.tenant_user.tenant_id
+    user_role = getattr(request.state.tenant_user, "role", None)
+    user_obj = getattr(request.state.tenant_user, "user", None)
+    is_admin = bool(user_obj and getattr(user_obj, "role", None) == "admin")
+
     return AppointmentService().update(
-        db, tenant_id, appointment_id, data
+        db, tenant_id, appointment_id, data, user_role=user_role, is_admin=is_admin
     )
 
 

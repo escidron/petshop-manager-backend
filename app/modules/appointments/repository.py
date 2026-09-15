@@ -67,6 +67,8 @@ class AppointmentRepository:
         )
 
         db.add(item)
+        if "items" in appointment.__dict__:
+            appointment.items.append(item)
         return item
 
     def get_by_id(
@@ -188,14 +190,16 @@ class AppointmentRepository:
         db: Session,
         appointment: Appointment,
     ):
-        for item in appointment.items:
+        for item in list(appointment.items):
             db.delete(item)
+        if "items" in appointment.__dict__:
+            appointment.items.clear()
 
         try:
             db.flush()
         except StaleDataError:
-            # Se itens ou serviços associados já foram removidos por outra transação concorrente,
-            # sincroniza o estado da coleção na sessão sem derrubar a requisição
+            pass
+        finally:
             db.expire(appointment, ["items"])
 
     def assign_employees(

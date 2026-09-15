@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy import (
     String,
     Boolean,
@@ -6,6 +6,8 @@ from sqlalchemy import (
     Numeric,
     Integer,
     DateTime,
+    Date,
+    Text,
     func,
     Index,
     UniqueConstraint,
@@ -243,4 +245,148 @@ class EmployeePayrollProfile(Base):
 
     tenant = relationship("Tenant")
     employee = relationship("Employee")
+
+
+class FinancialBill(Base):
+    __tablename__ = "financial_bills"
+    __table_args__ = (
+        Index("ix_financial_bills_tenant_type_status", "tenant_id", "bill_type", "status"),
+        Index("ix_financial_bills_tenant_due_date", "tenant_id", "due_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    bill_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )  # "payable" ou "receivable"
+
+    description: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )
+
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dre_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    supplier_id: Mapped[int | None] = mapped_column(
+        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    client_id: Mapped[int | None] = mapped_column(
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    sale_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sales.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    amount: Mapped[float] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+
+    paid_amount: Mapped[float] = mapped_column(
+        Numeric(12, 2), default=0.0, nullable=False
+    )
+
+    discount_amount: Mapped[float] = mapped_column(
+        Numeric(12, 2), default=0.0, nullable=False
+    )
+
+    fine_or_interest_amount: Mapped[float] = mapped_column(
+        Numeric(12, 2), default=0.0, nullable=False
+    )
+
+    issue_date: Mapped[date] = mapped_column(
+        Date, default=func.current_date(), nullable=False
+    )
+
+    due_date: Mapped[date] = mapped_column(
+        Date, nullable=False, index=True
+    )
+
+    payment_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending", nullable=False, index=True
+    )  # "pending", "paid", "overdue", "canceled"
+
+    payment_method: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # pix, bank_slip, credit_card, debit_card, bank_transfer, money, other
+
+    document_number: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+
+    barcode: Mapped[str | None] = mapped_column(
+        String(150), nullable=True
+    )
+
+    installment_number: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False
+    )
+
+    total_installments: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False
+    )
+
+    parent_bill_id: Mapped[int | None] = mapped_column(
+        ForeignKey("financial_bills.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    destination_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cash_destination_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    notes: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    tenant = relationship("Tenant")
+    category = relationship("DREAccount")
+    supplier = relationship("Supplier")
+    client = relationship("Client")
+    sale = relationship("Sale")
+    destination_account = relationship("CashDestinationAccount")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    parent_bill = relationship("FinancialBill", remote_side=[id])
+
 

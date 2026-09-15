@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Request, Query, HTTPException, status
 from fastapi.responses import Response
@@ -24,7 +24,16 @@ from app.modules.financial.payroll_schemas import (
     PayrollSyncToDRERequest,
     PayrollSyncResponse,
 )
+from app.modules.financial.bills_schemas import (
+    FinancialBillCreate,
+    FinancialBillUpdate,
+    FinancialBillSettle,
+    FinancialBillResponse,
+    FinancialBillsSummaryResponse,
+    FinancialBillListResponse,
+)
 from app.modules.financial.service import FinancialService
+from app.modules.financial.bills_service import FinancialBillsService
 
 router = APIRouter(
     prefix="/financial/dre",
@@ -335,4 +344,216 @@ def sync_payroll_to_dre(
         return service.sync_payroll_to_dre(db, tenant_id=tenant_id, request=data, user_id=user_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# ── ROUTER DE CONTAS A PAGAR E RECEBER ─────────────────────────────────────────
+bills_router = APIRouter(
+    prefix="/financial/bills",
+    tags=["Financial Bills"],
+    dependencies=[Depends(require_owner)],
+)
+
+
+@bills_router.get("", response_model=FinancialBillListResponse)
+def get_bills(
+    request: Request,
+    bill_type: Optional[str] = Query(None, description="payable ou receivable"),
+    status: Optional[str] = Query(None, description="pending, paid, overdue, canceled"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    category_id: Optional[int] = Query(None),
+    supplier_id: Optional[int] = Query(None),
+    client_id: Optional[int] = Query(None),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    sort_by: str = Query("due_date"),
+    sort_dir: str = Query("asc"),
+    db: Session = Depends(get_db),
+):
+    """
+    Lista contas a pagar e receber com filtros avançados e paginação.
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    return service.get_bills(
+        db=db,
+        tenant_id=tenant_id,
+        bill_type=bill_type,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+        category_id=category_id,
+        supplier_id=supplier_id,
+        client_id=client_id,
+        search=search,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+
+
+@bills_router.get("/summary", response_model=FinancialBillsSummaryResponse)
+def get_bills_summary(
+    request: Request,
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    category_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Retorna métricas consolidadas (a pagar, a receber, saldos e vencidos) no período.
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    return service.get_summary(
+        db=db,
+        tenant_id=tenant_id,
+        start_date=start_date,
+        end_date=end_date,
+        category_id=category_id,
+    )
+
+
+@bills_router.post("", response_model=List[FinancialBillResponse], status_code=status.HTTP_201_CREATED)
+def create_bill(
+    request: Request,
+    payload: FinancialBillCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Cria uma nova conta a pagar ou receber (individual ou parcelada).
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    user_id = getattr(request.state.tenant_user, "user_id", None)
+    service = FinancialBillsService()
+    try:
+        return service.create_bill(db=db, tenant_id=tenant_id, data=payload, user_id=user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@bills_router.get("/export")
+def export_bills_excel(
+    request: Request,
+    bill_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    category_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Exporta a listagem de contas filtradas em planilha Excel (.xlsx).
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    file_bytes = service.export_bills_excel(
+        db=db,
+        tenant_id=tenant_id,
+        bill_type=bill_type,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+        category_id=category_id,
+    )
+    filename = f"Contas_Pagar_Receber_{date.today().strftime('%Y%m%d')}.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    return Response(
+        content=file_bytes.getvalue(),
+        headers=headers,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@bills_router.get("/{bill_id}", response_model=FinancialBillResponse)
+def get_bill(
+    request: Request,
+    bill_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Retorna os detalhes de uma conta específica.
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    bill = service.get_bill(db=db, tenant_id=tenant_id, bill_id=bill_id)
+    if not bill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada")
+    return bill
+
+
+@bills_router.put("/{bill_id}", response_model=FinancialBillResponse)
+def update_bill(
+    request: Request,
+    bill_id: int,
+    payload: FinancialBillUpdate,
+    db: Session = Depends(get_db),
+):
+    """
+    Atualiza as informações de uma conta.
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    bill = service.update_bill(db=db, tenant_id=tenant_id, bill_id=bill_id, data=payload)
+    if not bill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada")
+    return bill
+
+
+@bills_router.post("/{bill_id}/settle", response_model=FinancialBillResponse)
+def settle_bill(
+    request: Request,
+    bill_id: int,
+    payload: FinancialBillSettle,
+    db: Session = Depends(get_db),
+):
+    """
+    Dá baixa / liquida uma conta (marcar como paga ou recebida).
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    bill = service.settle_bill(db=db, tenant_id=tenant_id, bill_id=bill_id, data=payload)
+    if not bill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada")
+    return bill
+
+
+@bills_router.post("/{bill_id}/cancel", response_model=FinancialBillResponse)
+def cancel_bill(
+    request: Request,
+    bill_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Cancela uma conta financeira.
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    bill = service.cancel_bill(db=db, tenant_id=tenant_id, bill_id=bill_id)
+    if not bill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada")
+    return bill
+
+
+@bills_router.delete("/{bill_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_bill(
+    request: Request,
+    bill_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Remove definitivamente uma conta financeira.
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    success = service.delete_bill(db=db, tenant_id=tenant_id, bill_id=bill_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada")
+    return None
+
 
