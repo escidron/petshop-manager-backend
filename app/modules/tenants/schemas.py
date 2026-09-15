@@ -38,6 +38,7 @@ class TenantUpdate(BaseModel):
     allow_discount: Optional[bool] = None
     max_discount_percentage: Optional[float] = None
     feature_flags: Optional[dict] = None
+    preferences: Optional[dict] = None
     cep: Optional[str] = Field(None, max_length=10)
     street: Optional[str] = Field(None, max_length=150)
     number: Optional[str] = Field(None, max_length=20)
@@ -71,6 +72,7 @@ class TenantResponse(BaseModel):
     allow_discount: bool
     max_discount_percentage: float
     feature_flags: dict = Field(default_factory=dict)
+    preferences: dict = Field(default_factory=dict)
     cep: Optional[str] = None
     street: Optional[str] = None
     number: Optional[str] = None

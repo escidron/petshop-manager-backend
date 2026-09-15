@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from app.modules.tenants.models import Tenant, TenantType
 from app.modules.tenants.schemas import TenantCreate, TenantUpdate
 from app.modules.users.models import TenantUser
@@ -27,7 +28,13 @@ class TenantRepository:
         data: TenantUpdate,
     ) -> Tenant:
         for field, value in data.model_dump(exclude_unset=True).items():
-            setattr(tenant, field, value)
+            if field == "preferences" and isinstance(value, dict):
+                current_pref = dict(tenant.preferences or {})
+                current_pref.update(value)
+                tenant.preferences = current_pref
+                flag_modified(tenant, "preferences")
+            else:
+                setattr(tenant, field, value)
 
         db.commit()
         db.refresh(tenant)
