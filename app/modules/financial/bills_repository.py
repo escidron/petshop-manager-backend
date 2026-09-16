@@ -150,7 +150,7 @@ class FinancialBillsRepository:
         for b in bills:
             amt = float(b.amount or 0.0)
             paid = float(b.paid_amount or 0.0)
-            is_overdue = b.status == "pending" and b.due_date < today
+            is_overdue = b.status == "overdue" or (b.status == "pending" and b.due_date < today)
 
             if b.bill_type == "payable":
                 total_payable += amt
