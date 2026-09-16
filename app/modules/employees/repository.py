@@ -15,6 +15,33 @@ class EmployeeRepository:
         db.add(employee)
         db.commit()
         db.refresh(employee)
+
+        if data.admission_date or data.resignation_date:
+            try:
+                from app.modules.financial.models import EmployeePayrollProfile
+                profile = (
+                    db.query(EmployeePayrollProfile)
+                    .filter(
+                        EmployeePayrollProfile.tenant_id == tenant_id,
+                        EmployeePayrollProfile.employee_id == employee.id,
+                    )
+                    .first()
+                )
+                if not profile:
+                    profile = EmployeePayrollProfile(
+                        tenant_id=tenant_id,
+                        employee_id=employee.id,
+                        admission_date=data.admission_date,
+                        resignation_date=data.resignation_date,
+                    )
+                    db.add(profile)
+                else:
+                    profile.admission_date = data.admission_date
+                    profile.resignation_date = data.resignation_date
+                db.commit()
+            except Exception:
+                pass
+
         return employee
 
     def get_by_id(self, db: Session, tenant_id: int, employee_id: int) -> Employee | None:
@@ -51,10 +78,40 @@ class EmployeeRepository:
         return employees
 
     def update(self, db: Session, employee: Employee, data: EmployeeUpdate) -> Employee:
-        for field, value in data.model_dump(exclude_unset=True).items():
+        update_dict = data.model_dump(exclude_unset=True)
+        for field, value in update_dict.items():
             setattr(employee, field, value)
         db.commit()
         db.refresh(employee)
+
+        if "admission_date" in update_dict or "resignation_date" in update_dict:
+            try:
+                from app.modules.financial.models import EmployeePayrollProfile
+                profile = (
+                    db.query(EmployeePayrollProfile)
+                    .filter(
+                        EmployeePayrollProfile.tenant_id == employee.tenant_id,
+                        EmployeePayrollProfile.employee_id == employee.id,
+                    )
+                    .first()
+                )
+                if not profile:
+                    profile = EmployeePayrollProfile(
+                        tenant_id=employee.tenant_id,
+                        employee_id=employee.id,
+                        admission_date=update_dict.get("admission_date", employee.admission_date),
+                        resignation_date=update_dict.get("resignation_date", employee.resignation_date),
+                    )
+                    db.add(profile)
+                else:
+                    if "admission_date" in update_dict:
+                        profile.admission_date = update_dict["admission_date"]
+                    if "resignation_date" in update_dict:
+                        profile.resignation_date = update_dict["resignation_date"]
+                db.commit()
+            except Exception:
+                pass
+
         return employee
 
     def delete(self, db: Session, employee: Employee) -> None:

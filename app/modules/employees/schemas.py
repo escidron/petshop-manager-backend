@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Literal
 from pydantic import BaseModel, EmailStr
 
@@ -11,6 +11,8 @@ class EmployeeBase(BaseModel):
     role: EmployeeRole = "other"
     phone: str
     email: Optional[EmailStr] = None
+    admission_date: Optional[date] = None
+    resignation_date: Optional[date] = None
     is_active: bool = True
 
 
@@ -23,6 +25,8 @@ class EmployeeUpdate(BaseModel):
     role: Optional[EmployeeRole] = None
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
+    admission_date: Optional[date] = None
+    resignation_date: Optional[date] = None
     is_active: Optional[bool] = None
 
 

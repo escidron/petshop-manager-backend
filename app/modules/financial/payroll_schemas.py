@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,9 @@ class PayrollProfileBase(BaseModel):
     custom_benefits: Optional[List[CustomBenefitItem]] = None
 
     notes: Optional[str] = None
+    # Vigência
+    admission_date: Optional[date] = None
+    resignation_date: Optional[date] = None
     is_active: bool = True
 
 
@@ -43,6 +47,8 @@ class PayrollProfileUpdate(BaseModel):
     custom_benefits: Optional[List[CustomBenefitItem]] = None
 
     notes: Optional[str] = None
+    admission_date: Optional[date] = None
+    resignation_date: Optional[date] = None
     is_active: Optional[bool] = None
 
 
