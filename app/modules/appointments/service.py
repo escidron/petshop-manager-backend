@@ -1,6 +1,8 @@
 from datetime import date
 from decimal import Decimal
+from typing import Optional
 from fastapi import HTTPException
+from sqlalchemy import or_, and_, func
 from sqlalchemy.orm import Session
 
 from app.modules.appointments.models import Appointment, AppointmentAction, AppointmentStatus
@@ -705,77 +707,19 @@ class AppointmentService:
             if (it.id, s.id) in new_covered_pairs
         ]
 
-        package_sale = db.query(Sale).filter(
-            Sale.tenant_id == tenant_id,
-            Sale.appointment_id == appointment.id,
-            Sale.payment_method == "package",
-        ).first()
-
-        if covered_services:
-            if not package_sale:
-                package_sale = Sale(
-                    tenant_id=tenant_id,
-                    client_id=appointment_full.client_id,
-                    appointment_id=appointment_full.id,
-                    total_amount=Decimal("0"),
-                    payment_method="package",
-                    status="completed",
-                )
-                db.add(package_sale)
-                db.flush()
-
-            # Limpa sale items antigos do package sale
-            for old_si in list(package_sale.items):
-                db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
-                package_sale.items.remove(old_si)
-                db.delete(old_si)
-            db.flush()
-
-            for it, s in covered_services:
-                emp_id = item_emp_maps.get(it.id, {}).get(s.id)
-                real_price = Decimal(s.price_cents) / Decimal("100")
-                sale_item = SaleItem(
-                    sale_id=package_sale.id,
-                    item_type="service",
-                    item_id=s.id,
-                    name=s.name,
-                    quantity=1,
-                    unit_price=real_price,
-                    subtotal=Decimal("0"),
-                    employee_id=emp_id,
-                    appointment_id=appointment_full.id,
-                )
-                db.add(sale_item)
-                db.flush()
-
-                if emp_id:
-                    try:
-                        self.commission_service.generate_entry(
-                            db=db,
-                            tenant_id=tenant_id,
-                            sale_id=package_sale.id,
-                            sale_item_id=sale_item.id,
-                            employee_id=emp_id,
-                            service_id=s.id,
-                            item_type="service",
-                            subtotal=real_price,
-                            ref_date=appointment_full.scheduled_at.date(),
-                            appointment_item_id=it.id,
-                        )
-                    except Exception:
-                        pass
-        elif package_sale:
-            for old_si in list(package_sale.items):
-                db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
-            db.delete(package_sale)
-
-        # 7. Serviços Avulsos / Vendas / Extratos
+        # 6. Identifica vendas e comandas existentes
         uncovered_services = [
             (it, s)
             for it in appointment_full.items
             for s in it.services
             if (it.id, s.id) not in new_covered_pairs
         ]
+
+        package_sale = db.query(Sale).filter(
+            Sale.tenant_id == tenant_id,
+            Sale.appointment_id == appointment.id,
+            Sale.payment_method == "package",
+        ).first()
 
         pos_sale = db.query(Sale).filter(
             Sale.tenant_id == tenant_id,
@@ -787,7 +731,14 @@ class AppointmentService:
         ).first()
 
         if pos_sale:
-            # Agendamento já pago: atualiza a venda para manter os extratos e DRE corretos
+            # Se já há venda paga do PDV, remove qualquer package_sale avulsa duplicada
+            if package_sale:
+                for old_si in list(package_sale.items):
+                    db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
+                db.delete(package_sale)
+                db.flush()
+
+            # Remove itens de serviço do agendamento da pos_sale para recriá-los sincronizados
             for si in list(pos_sale.items):
                 if si.appointment_id == appointment.id or (si.appointment_id is None and pos_sale.appointment_id == appointment.id and si.item_type == "service"):
                     db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == si.id).delete(synchronize_session=False)
@@ -795,6 +746,44 @@ class AppointmentService:
                     db.delete(si)
             db.flush()
 
+            # Adiciona serviços cobertos por pacote com subtotal 0,00 na pos_sale
+            for it, s in covered_services:
+                emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                real_price = Decimal(s.price_cents) / Decimal("100")
+                sale_item = SaleItem(
+                    sale_id=pos_sale.id,
+                    item_type="service",
+                    item_id=s.id,
+                    name=f"{s.name} (via pacote)",
+                    quantity=1,
+                    unit_price=real_price,
+                    subtotal=Decimal("0"),
+                    employee_id=emp_id,
+                    appointment_id=appointment_full.id,
+                )
+                db.add(sale_item)
+                if "items" in pos_sale.__dict__:
+                    pos_sale.items.append(sale_item)
+                db.flush()
+
+                if emp_id:
+                    try:
+                        self.commission_service.generate_entry(
+                            db=db,
+                            tenant_id=tenant_id,
+                            sale_id=pos_sale.id,
+                            sale_item_id=sale_item.id,
+                            employee_id=emp_id,
+                            service_id=s.id,
+                            item_type="service",
+                            subtotal=real_price,
+                            ref_date=appointment_full.scheduled_at.date(),
+                            appointment_item_id=it.id,
+                        )
+                    except Exception:
+                        pass
+
+            # Adiciona serviços avulsos na pos_sale
             for it, s in uncovered_services:
                 emp_id = item_emp_maps.get(it.id, {}).get(s.id)
                 price = Decimal(s.price_cents) / Decimal("100")
@@ -843,7 +832,7 @@ class AppointmentService:
                 if diff != Decimal("0"):
                     pos_sale.payments[0].amount = float(Decimal(str(pos_sale.payments[0].amount)) + diff)
         else:
-            # Agendamento ainda não pago: sincroniza a comanda aberta se houver
+            # Agendamento ainda não pago via PDV
             from sqlalchemy import or_
             open_comandas = db.query(Comanda).filter(
                 Comanda.tenant_id == tenant_id,
@@ -854,14 +843,39 @@ class AppointmentService:
                 )
             ).all()
 
-            for comanda in open_comandas:
-                for ci in list(comanda.items):
-                    if ci.appointment_id == appointment.id or (ci.appointment_id is None and comanda.appointment_id == appointment.id and ci.item_type == "service"):
-                        comanda.items.remove(ci)
-                        db.delete(ci)
-                db.flush()
+            if uncovered_services or open_comandas:
+                # Há comanda ou itens a pagar: remove package_sale para que tudo vá para o Caixa
+                if package_sale:
+                    for old_si in list(package_sale.items):
+                        db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
+                    db.delete(package_sale)
+                    db.flush()
 
-                if uncovered_services:
+                for comanda in open_comandas:
+                    for ci in list(comanda.items):
+                        if ci.appointment_id == appointment.id or (ci.appointment_id is None and comanda.appointment_id == appointment.id and ci.item_type == "service"):
+                            comanda.items.remove(ci)
+                            db.delete(ci)
+                    db.flush()
+
+                    for it, s in covered_services:
+                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                        real_price = float(Decimal(s.price_cents) / Decimal("100"))
+                        c_item = ComandaItem(
+                            comanda_id=comanda.id,
+                            item_type="service",
+                            item_id=s.id,
+                            name=f"{s.name} (via pacote)",
+                            quantity=1,
+                            unit_price=real_price,
+                            subtotal=0.0,
+                            employee_id=emp_id,
+                            pet_ids=[it.pet_id],
+                            unit="UN",
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(c_item)
+
                     for it, s in uncovered_services:
                         emp_id = item_emp_maps.get(it.id, {}).get(s.id)
                         price = float(Decimal(s.price_cents) / Decimal("100"))
@@ -880,41 +894,118 @@ class AppointmentService:
                         )
                         db.add(c_item)
 
-                db.flush()
-                remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
-                comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
-                if not comanda.items:
-                    db.delete(comanda)
+                    db.flush()
+                    remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
+                    comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
+                    if not comanda.items:
+                        db.delete(comanda)
 
-            if uncovered_services and not open_comandas:
-                extra_total = sum(Decimal(s.price_cents) / Decimal("100") for _, s in uncovered_services)
-                comanda = Comanda(
-                    tenant_id=tenant_id,
-                    client_id=appointment_full.client_id,
-                    appointment_id=appointment_full.id,
-                    status="open",
-                    total_amount=float(extra_total),
-                    discount_amount=0.0,
-                )
-                db.add(comanda)
+                if uncovered_services and not open_comandas:
+                    extra_total = sum(Decimal(s.price_cents) / Decimal("100") for _, s in uncovered_services)
+                    comanda = Comanda(
+                        tenant_id=tenant_id,
+                        client_id=appointment_full.client_id,
+                        appointment_id=appointment_full.id,
+                        status="open",
+                        total_amount=float(extra_total),
+                        discount_amount=0.0,
+                    )
+                    db.add(comanda)
+                    db.flush()
+
+                    for it, s in covered_services:
+                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                        real_price = float(Decimal(s.price_cents) / Decimal("100"))
+                        c_item = ComandaItem(
+                            comanda_id=comanda.id,
+                            item_type="service",
+                            item_id=s.id,
+                            name=f"{s.name} (via pacote)",
+                            quantity=1,
+                            unit_price=real_price,
+                            subtotal=0.0,
+                            employee_id=emp_id,
+                            pet_ids=[it.pet_id],
+                            unit="UN",
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(c_item)
+
+                    for it, s in uncovered_services:
+                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                        price = float(Decimal(s.price_cents) / Decimal("100"))
+                        c_item = ComandaItem(
+                            comanda_id=comanda.id,
+                            item_type="service",
+                            item_id=s.id,
+                            name=s.name,
+                            quantity=1,
+                            unit_price=price,
+                            subtotal=price,
+                            employee_id=emp_id,
+                            pet_ids=[it.pet_id],
+                            unit="UN",
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(c_item)
+
+            elif covered_services:
+                # 100% pacote sem extras nem comanda
+                if not package_sale:
+                    package_sale = Sale(
+                        tenant_id=tenant_id,
+                        client_id=appointment_full.client_id,
+                        appointment_id=appointment_full.id,
+                        total_amount=Decimal("0"),
+                        payment_method="package",
+                        status="completed",
+                    )
+                    db.add(package_sale)
+                    db.flush()
+
+                for old_si in list(package_sale.items):
+                    db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
+                    package_sale.items.remove(old_si)
+                    db.delete(old_si)
                 db.flush()
-                for it, s in uncovered_services:
+
+                for it, s in covered_services:
                     emp_id = item_emp_maps.get(it.id, {}).get(s.id)
-                    price = float(Decimal(s.price_cents) / Decimal("100"))
-                    c_item = ComandaItem(
-                        comanda_id=comanda.id,
+                    real_price = Decimal(s.price_cents) / Decimal("100")
+                    sale_item = SaleItem(
+                        sale_id=package_sale.id,
                         item_type="service",
                         item_id=s.id,
                         name=s.name,
                         quantity=1,
-                        unit_price=price,
-                        subtotal=price,
+                        unit_price=real_price,
+                        subtotal=Decimal("0"),
                         employee_id=emp_id,
-                        pet_ids=[it.pet_id],
-                        unit="UN",
                         appointment_id=appointment_full.id,
                     )
-                    db.add(c_item)
+                    db.add(sale_item)
+                    db.flush()
+
+                    if emp_id:
+                        try:
+                            self.commission_service.generate_entry(
+                                db=db,
+                                tenant_id=tenant_id,
+                                sale_id=package_sale.id,
+                                sale_item_id=sale_item.id,
+                                employee_id=emp_id,
+                                service_id=s.id,
+                                item_type="service",
+                                subtotal=real_price,
+                                ref_date=appointment_full.scheduled_at.date(),
+                                appointment_item_id=it.id,
+                            )
+                        except Exception:
+                            pass
+            elif package_sale:
+                for old_si in list(package_sale.items):
+                    db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
+                db.delete(package_sale)
 
         db.commit()
 
@@ -1112,105 +1203,138 @@ class AppointmentService:
                 if (item.id, service.id) in covered_pairs
             ]
 
-            # Cria venda R$ 0 para que o agendamento fique como pago (is_paid=True)
-            # e para que o relatório de comissões tenha referência
-            if covered_services:
-                from app.modules.sales.models import Sale, SaleItem  # lazy: evita importação circular
-                package_sale = Sale(
-                    tenant_id=tenant_id,
-                    client_id=appointment_full.client_id,
-                    appointment_id=appointment_full.id,
-                    total_amount=Decimal("0"),
-                    payment_method="package",
-                    status="completed",
-                )
-                db.add(package_sale)
-                db.flush()
-
-                for item, service in covered_services:
-                    employee_id = item_emp_maps[item.id].get(service.id)
-                    real_price = Decimal(service.price_cents) / Decimal("100")
-                    sale_item = SaleItem(
-                        sale_id=package_sale.id,
-                        item_type="service",
-                        item_id=service.id,
-                        name=service.name,
-                        quantity=1,
-                        unit_price=real_price,
-                        subtotal=Decimal("0"),
-                        employee_id=employee_id,
-                    )
-                    db.add(sale_item)
-                    db.flush()
-
-                    if employee_id:
-                        try:
-                            self.commission_service.generate_entry(
-                                db=db,
-                                tenant_id=tenant_id,
-                                sale_id=package_sale.id,
-                                sale_item_id=sale_item.id,
-                                employee_id=employee_id,
-                                service_id=service.id,
-                                item_type="service",
-                                subtotal=real_price,
-                                ref_date=appointment_full.scheduled_at.date(),
-                                appointment_item_id=item.id,
-                            )
-                        except Exception:
-                            pass
-
-            # Coleta TODOS os serviços NÃO cobertos por pacote (precisam de pagamento)
+            # Coleta serviços não cobertos por pacote
             uncovered_services = [
                 (item, service)
                 for item in appointment_full.items
                 for service in item.services
                 if (item.id, service.id) not in covered_pairs
             ]
-            if uncovered_services:
-                from app.modules.sales.models import Comanda, ComandaItem
+
+            from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
+
+            # Verifica se o agendamento já possui uma venda de PDV concluída
+            pos_sale = db.query(Sale).filter(
+                Sale.tenant_id == tenant_id,
+                Sale.payment_method != "package",
+                Sale.status == "completed",
+                (Sale.appointment_id == appointment.id) | (
+                    Sale.items.any(SaleItem.appointment_id == appointment.id)
+                )
+            ).first()
+
+            if not pos_sale:
                 existing_comanda = db.query(Comanda).filter(
                     Comanda.client_id == appointment_full.client_id,
                     Comanda.tenant_id == tenant_id,
                     Comanda.status == "open",
                 ).first()
 
-                extra_total = sum(Decimal(service.price_cents) / Decimal("100") for _, service in uncovered_services)
+                # Se há serviços não cobertos (ou comanda aberta), tudo vai para a comanda unificada
+                if uncovered_services or existing_comanda:
+                    extra_total = sum(Decimal(service.price_cents) / Decimal("100") for _, service in uncovered_services)
 
-                if not existing_comanda:
-                    comanda = Comanda(
+                    if not existing_comanda:
+                        comanda = Comanda(
+                            tenant_id=tenant_id,
+                            client_id=appointment_full.client_id,
+                            appointment_id=appointment_full.id,
+                            status="open",
+                            total_amount=float(extra_total),
+                            discount_amount=0.0,
+                        )
+                        db.add(comanda)
+                        db.flush()
+                    else:
+                        comanda = existing_comanda
+                        comanda.total_amount = float(Decimal(str(comanda.total_amount)) + extra_total)
+                        if not comanda.appointment_id:
+                            comanda.appointment_id = appointment_full.id
+
+                    # Inclui serviços cobertos por pacote na comanda com subtotal 0,00
+                    for item, service in covered_services:
+                        emp_id = item_emp_maps[item.id].get(service.id)
+                        real_price = float(Decimal(service.price_cents) / Decimal("100"))
+                        c_item = ComandaItem(
+                            comanda_id=comanda.id,
+                            item_type="service",
+                            item_id=service.id,
+                            name=f"{service.name} (via pacote)",
+                            quantity=1,
+                            unit_price=real_price,
+                            subtotal=0.0,
+                            employee_id=emp_id,
+                            pet_ids=[item.pet_id],
+                            unit="UN",
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(c_item)
+
+                    # Inclui serviços não cobertos por pacote com preço normal
+                    for item, service in uncovered_services:
+                        emp_id = item_emp_maps[item.id].get(service.id)
+                        price = float(Decimal(service.price_cents) / Decimal("100"))
+                        c_item = ComandaItem(
+                            comanda_id=comanda.id,
+                            item_type="service",
+                            item_id=service.id,
+                            name=service.name,
+                            quantity=1,
+                            unit_price=price,
+                            subtotal=price,
+                            employee_id=emp_id,
+                            pet_ids=[item.pet_id],
+                            unit="UN",
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(c_item)
+
+                elif covered_services:
+                    # Agendamento 100% pacote sem extras nem comanda: conclui direto com package_sale
+                    package_sale = Sale(
                         tenant_id=tenant_id,
                         client_id=appointment_full.client_id,
                         appointment_id=appointment_full.id,
-                        status="open",
-                        total_amount=float(extra_total),
-                        discount_amount=0.0,
+                        total_amount=Decimal("0"),
+                        payment_method="package",
+                        status="completed",
                     )
-                    db.add(comanda)
+                    db.add(package_sale)
                     db.flush()
-                else:
-                    comanda = existing_comanda
-                    comanda.total_amount = float(Decimal(str(comanda.total_amount)) + extra_total)
-                    if not comanda.appointment_id:
-                        comanda.appointment_id = appointment_full.id
 
-                for item, service in uncovered_services:
-                    emp_id = item_emp_maps[item.id].get(service.id)
-                    price = float(Decimal(service.price_cents) / Decimal("100"))
-                    c_item = ComandaItem(
-                        comanda_id=comanda.id,
-                        item_type="service",
-                        item_id=service.id,
-                        name=service.name,
-                        quantity=1,
-                        unit_price=price,
-                        subtotal=price,
-                        employee_id=emp_id,
-                        pet_ids=[item.pet_id],
-                        unit="UN",
-                        appointment_id=appointment_full.id,
-                    )
-                    db.add(c_item)
+                    for item, service in covered_services:
+                        employee_id = item_emp_maps[item.id].get(service.id)
+                        real_price = Decimal(service.price_cents) / Decimal("100")
+                        sale_item = SaleItem(
+                            sale_id=package_sale.id,
+                            item_type="service",
+                            item_id=service.id,
+                            name=service.name,
+                            quantity=1,
+                            unit_price=real_price,
+                            subtotal=Decimal("0"),
+                            employee_id=employee_id,
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(sale_item)
+                        db.flush()
+
+                        if employee_id:
+                            try:
+                                self.commission_service.generate_entry(
+                                    db=db,
+                                    tenant_id=tenant_id,
+                                    sale_id=package_sale.id,
+                                    sale_item_id=sale_item.id,
+                                    employee_id=employee_id,
+                                    service_id=service.id,
+                                    item_type="service",
+                                    subtotal=real_price,
+                                    ref_date=appointment_full.scheduled_at.date(),
+                                    appointment_item_id=item.id,
+                                )
+                            except Exception:
+                                pass
 
             db.commit()
 
@@ -1335,6 +1459,260 @@ class AppointmentService:
             if not comanda.items or len(comanda.items) == 0:
                 db.delete(comanda)
 
+        # Verificar se o agendamento deve ser cancelado automaticamente
+        from sqlalchemy import func
+        from app.modules.appointments.models import AppointmentPackageCoverage
+        from app.modules.sales.models import Sale, SaleItem
+
+        total_remaining_services = sum(len(it.services) for it in appointment.items)
+        if total_remaining_services == 0:
+            appointment.status = AppointmentStatus.CANCELED
+            appointment.notes = (appointment.notes or "") + "\n[Cancelado automaticamente: todos os serviços foram removidos]"
+            db.add(appointment)
+        else:
+            item_ids = [item.id for item in appointment.items]
+            active_coverages = (
+                db.query(AppointmentPackageCoverage)
+                .filter(AppointmentPackageCoverage.appointment_item_id.in_(item_ids))
+                .count()
+            )
+            active_sale_items = (
+                db.query(SaleItem)
+                .join(Sale, Sale.id == SaleItem.sale_id)
+                .filter(
+                    Sale.tenant_id == tenant_id,
+                    Sale.status != "canceled",
+                    func.coalesce(SaleItem.status, "active") != "canceled",
+                    or_(
+                        SaleItem.appointment_id == appointment.id,
+                        (Sale.appointment_id == appointment.id) & (SaleItem.item_type == "service"),
+                    ),
+                )
+                .count()
+            )
+            active_comanda_items = (
+                db.query(ComandaItem)
+                .join(Comanda, Comanda.id == ComandaItem.comanda_id)
+                .filter(
+                    Comanda.tenant_id == tenant_id,
+                    Comanda.status == "open",
+                    or_(
+                        ComandaItem.appointment_id == appointment.id,
+                        Comanda.appointment_id == appointment.id,
+                    ),
+                )
+                .count()
+            )
+            if active_coverages == 0 and active_sale_items == 0 and active_comanda_items == 0:
+                appointment.status = AppointmentStatus.CANCELED
+                appointment.notes = (appointment.notes or "") + "\n[Cancelado automaticamente: todos os serviços vinculados foram cancelados/removidos]"
+                db.add(appointment)
+
         db.commit()
         return self._attach_recurrence_info(db, self.repo.get_with_relations(db, appointment_id))
+
+    def cancel_completed_appointment(
+        self,
+        db: Session,
+        tenant_id: int,
+        appointment_id: int,
+        reason: Optional[str] = None,
+    ):
+        appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Agendamento não encontrado.")
+
+        # 1. Obter relações completas
+        appointment_full = self.repo.get_with_relations(db, appointment.id)
+        item_ids = [item.id for item in appointment_full.items] if appointment_full.items else []
+
+        # 2. Localizar e cancelar todas as vendas (Sales) associadas
+        from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
+        from app.modules.sales.service import SalesService
+        from app.modules.commissions.models import CommissionEntry
+        from app.modules.client_packages.models import ClientPackageCredit, ClientPackageUsage
+        from app.modules.appointments.models import AppointmentPackageCoverage
+
+        sales_service = SalesService()
+
+        # Vendas diretas vinculadas ao appointment_id
+        direct_sales = (
+            db.query(Sale)
+            .filter(
+                Sale.tenant_id == tenant_id,
+                Sale.appointment_id == appointment.id,
+                Sale.status != "canceled",
+            )
+            .all()
+        )
+
+        # Vendas vinculadas via SaleItem
+        item_sales = (
+            db.query(Sale)
+            .join(SaleItem, SaleItem.sale_id == Sale.id)
+            .filter(
+                Sale.tenant_id == tenant_id,
+                SaleItem.appointment_id == appointment.id,
+                Sale.status != "canceled",
+            )
+            .all()
+        )
+
+        # Vendas vinculadas via Comanda
+        comanda_sales = (
+            db.query(Sale)
+            .join(Comanda, Comanda.id == Sale.comanda_id)
+            .filter(
+                Sale.tenant_id == tenant_id,
+                Comanda.appointment_id == appointment.id,
+                Sale.status != "canceled",
+            )
+            .all()
+        )
+
+        all_sales = {s.id: s for s in (direct_sales + item_sales + comanda_sales)}.values()
+        canceled_sale_ids = []
+        for sale in all_sales:
+            try:
+                # Verificar se a venda contém itens que pertencem a este agendamento (apenas serviços vinculados)
+                appt_items = [
+                    i for i in sale.items
+                    if i.item_type == "service" and (
+                        i.appointment_id == appointment.id or sale.appointment_id == appointment.id
+                    )
+                ]
+                other_items = [
+                    i for i in sale.items
+                    if i not in appt_items and getattr(i, "status", "active") != "canceled"
+                ]
+
+                if other_items:
+                    # VENDA MISTA: Cancela cirurgicamente APENAS os itens do agendamento, mantendo produtos e estoque intactos!
+                    for item in appt_items:
+                        if getattr(item, "status", "active") != "canceled":
+                            sales_service.cancel_sale_item(
+                                db=db,
+                                tenant_id=tenant_id,
+                                sale_id=sale.id,
+                                item_id=item.id,
+                                reason=f"Cancelamento do agendamento #{appointment.id}" + (f": {reason}" if reason else ""),
+                            )
+                else:
+                    # VENDA EXCLUSIVA: Todos os itens eram deste agendamento, cancela a venda inteira
+                    sales_service.cancel_sale(
+                        db=db,
+                        tenant_id=tenant_id,
+                        sale_id=sale.id,
+                        reason=f"Cancelamento do agendamento #{appointment.id}" + (f": {reason}" if reason else ""),
+                    )
+                    canceled_sale_ids.append(sale.id)
+            except Exception:
+                pass
+
+        # 3. Limpar/cancelar registros de comissão relacionados ao agendamento ou às vendas canceladas
+        try:
+            conditions = []
+            if item_ids:
+                conditions.append(CommissionEntry.appointment_item_id.in_(item_ids))
+            if canceled_sale_ids:
+                conditions.append(CommissionEntry.sale_id.in_(canceled_sale_ids))
+
+            if conditions:
+                db.query(CommissionEntry).filter(
+                    CommissionEntry.tenant_id == tenant_id,
+                    or_(*conditions),
+                ).delete(synchronize_session=False)
+        except Exception:
+            pass
+
+        # 4. Reverter créditos de pacotes consumidos (AppointmentPackageCoverage)
+        if item_ids:
+            coverages = (
+                db.query(AppointmentPackageCoverage)
+                .filter(AppointmentPackageCoverage.appointment_item_id.in_(item_ids))
+                .all()
+            )
+
+            for cov in coverages:
+                if cov.client_package_credit_id:
+                    credit = (
+                        db.query(ClientPackageCredit)
+                        .filter(ClientPackageCredit.id == cov.client_package_credit_id)
+                        .first()
+                    )
+                    if credit:
+                        credit.used_qty = max(0, credit.used_qty - 1)
+                        db.add(credit)
+
+                        client_pkg = credit.client_package
+                        if client_pkg and not client_pkg.is_active:
+                            client_pkg.is_active = True
+                            db.add(client_pkg)
+
+                        # Registrar log de estorno no extrato de pacotes
+                        if client_pkg:
+                            usage = ClientPackageUsage(
+                                tenant_id=tenant_id,
+                                client_package_id=client_pkg.id,
+                                credit_id=credit.id,
+                                change_qty=-1,
+                                notes=f"Estorno por cancelamento do agendamento #{appointment.id}",
+                            )
+                            db.add(usage)
+
+                db.delete(cov)
+
+        # 5. Limpar itens de comanda aberta vinculados a este agendamento (preservando produtos e outros itens)
+        comandas = (
+            db.query(Comanda)
+            .filter(
+                Comanda.tenant_id == tenant_id,
+                Comanda.status == "open",
+                or_(
+                    Comanda.appointment_id == appointment.id,
+                    Comanda.client_id == appointment.client_id,
+                ),
+            )
+            .all()
+        )
+
+        for comanda in comandas:
+            matching_items = [
+                ci
+                for ci in list(comanda.items)
+                if ci.appointment_id == appointment.id or (
+                    ci.item_type == "service" and comanda.appointment_id == appointment.id
+                )
+            ]
+            for ci in matching_items:
+                if ci in comanda.items:
+                    comanda.items.remove(ci)
+                db.delete(ci)
+            db.flush()
+
+            # Se a comanda era vinculada a este agendamento, desvincula se não houver mais serviços dele
+            if comanda.appointment_id == appointment.id:
+                other_appt_id = next((ci.appointment_id for ci in comanda.items if ci.appointment_id), None)
+                comanda.appointment_id = other_appt_id
+
+            remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
+            comanda.total_amount = max(
+                0.0,
+                float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount or 0))),
+            )
+            if not comanda.items or len(comanda.items) == 0:
+                db.delete(comanda)
+            else:
+                db.add(comanda)
+
+        # 6. Atualizar status do agendamento para cancelado
+        appointment.status = AppointmentStatus.CANCELED
+        if reason and reason.strip():
+            cancel_note = f"\n[Cancelado após finalização]: {reason.strip()}"
+            appointment.notes = (appointment.notes or "") + cancel_note
+
+        db.commit()
+
+        return self._attach_recurrence_info(db, self.repo.get_with_relations(db, appointment.id))
+
 

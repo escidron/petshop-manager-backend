@@ -237,7 +237,7 @@ class OperationalResultRepository:
                 srv.size AS service_size,
                 srv.species AS service_species
             FROM sales s
-            JOIN sale_items si ON si.sale_id = s.id
+            JOIN sale_items si ON si.sale_id = s.id AND COALESCE(si.status, 'active') != 'canceled'
             LEFT JOIN services srv ON srv.id = si.item_id AND si.item_type = 'service'
             WHERE s.tenant_id = :tenant_id
               AND s.status = 'completed'
@@ -340,6 +340,7 @@ class OperationalResultRepository:
                     SUM(CASE WHEN si.item_type = 'service' THEN si.subtotal ELSE 0 END) AS service_subtotal
                 FROM sale_items si
                 JOIN month_sales ms ON ms.id = si.sale_id
+                WHERE COALESCE(si.status, 'active') != 'canceled'
                 GROUP BY si.sale_id
                 HAVING SUM(CASE WHEN si.item_type = 'service' THEN si.subtotal ELSE 0 END) > 0
             )
@@ -525,7 +526,7 @@ class OperationalResultRepository:
                 si.name AS service_name,
                 SUM(si.quantity) AS service_count
             FROM sales s
-            JOIN sale_items si ON si.sale_id = s.id
+            JOIN sale_items si ON si.sale_id = s.id AND COALESCE(si.status, 'active') != 'canceled'
             WHERE s.tenant_id = :tenant_id
               AND s.status = 'completed'
               AND si.item_type = 'service'

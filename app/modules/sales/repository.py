@@ -66,7 +66,7 @@ class SalesRepository:
                 unit_price=item.unit_price,
                 subtotal=item.subtotal,
                 employee_id=item.employee_id,
-                appointment_id=item.appointment_id,
+                appointment_id=item.appointment_id if item.item_type == "service" else None,
             )
             db.add(db_item)
 
@@ -123,6 +123,7 @@ class SalesRepository:
             db_sale.comanda_id = target_comanda.id
         elif target_comanda:
             target_comanda.status = "completed"
+            db_sale.comanda_id = target_comanda.id
             db.add(target_comanda)
 
         db.commit()
@@ -264,7 +265,7 @@ class SalesRepository:
                 pet_ids=item.pet_ids,
                 client_package_id_to_pay=item.client_package_id_to_pay,
                 unit=item.unit or "UN",
-                appointment_id=getattr(item, "appointment_id", None) or comanda.appointment_id,
+                appointment_id=(getattr(item, "appointment_id", None) or comanda.appointment_id) if item.item_type == "service" else None,
             )
             db.add(c_item)
 

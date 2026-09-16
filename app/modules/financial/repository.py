@@ -645,7 +645,7 @@ class FinancialRepository:
                     COALESCE(SUM(CASE WHEN si.item_type IN ('service', 'package') THEN si.subtotal ELSE 0 END), 0) AS s_gross,
                     COALESCE(SUM(CASE WHEN si.item_type = 'product' THEN si.quantity * COALESCE(p.cost, 0) ELSE 0 END), 0) AS p_cmv
                 FROM sales s
-                LEFT JOIN sale_items si ON si.sale_id = s.id
+                LEFT JOIN sale_items si ON si.sale_id = s.id AND COALESCE(si.status, 'active') != 'canceled'
                 LEFT JOIN products p ON p.id = si.item_id AND si.item_type = 'product'
                 WHERE s.tenant_id = :tenant_id
                   AND s.status = 'completed'

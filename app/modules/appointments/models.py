@@ -152,12 +152,19 @@ class Appointment(Base):
 
     @property
     def is_paid(self) -> bool:
-        """Checks if there's any completed POS sale linked to this appointment directly or via sale items."""
-        if self.sales and any(sale.status == "completed" and sale.payment_method != "package" for sale in self.sales):
-            return True
+        """Checks if there's any active completed POS sale linked to this appointment directly or via sale items."""
+        if self.sales:
+            for sale in self.sales:
+                if sale.status == "completed" and sale.payment_method != "package":
+                    service_items = [i for i in getattr(sale, "items", []) if getattr(i, "item_type", "") == "service"]
+                    if not service_items or any(getattr(i, "status", "active") != "canceled" for i in service_items):
+                        return True
         if hasattr(self, "sale_items") and self.sale_items:
             return any(
-                item.sale and item.sale.status == "completed" and item.sale.payment_method != "package"
+                item.sale
+                and item.sale.status == "completed"
+                and item.sale.payment_method != "package"
+                and getattr(item, "status", "active") != "canceled"
                 for item in self.sale_items
             )
         return False

@@ -21,6 +21,8 @@ from .schemas import (
     POSClientDetailsResponse,
     ComandaSaveRequest,
     ComandaResponse,
+    SaleCancelRequest,
+    SaleItemCancelRequest,
 )
 from .service import SalesService
 from app.modules.commissions.schemas import AssignEmployeeRequest
@@ -138,10 +140,30 @@ def get_sale(sale_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/{sale_id}/cancel", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])
-def cancel_sale(sale_id: int, request: Request, db: Session = Depends(get_db)):
+def cancel_sale(
+    sale_id: int,
+    request: Request,
+    data: Optional[SaleCancelRequest] = None,
+    db: Session = Depends(get_db),
+):
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
-    return service.cancel_sale(db, tenant_id, sale_id)
+    reason = data.reason if data else None
+    return service.cancel_sale(db, tenant_id, sale_id, reason=reason)
+
+
+@router.post("/{sale_id}/items/{item_id}/cancel", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])
+def cancel_sale_item(
+    sale_id: int,
+    item_id: int,
+    request: Request,
+    data: Optional[SaleItemCancelRequest] = None,
+    db: Session = Depends(get_db),
+):
+    service = SalesService()
+    tenant_id = request.state.tenant_user.tenant_id
+    reason = data.reason if data else None
+    return service.cancel_sale_item(db, tenant_id, sale_id, item_id, reason=reason)
 
 
 @router.patch("/{sale_id}/items/{item_id}/employee", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])

@@ -11,6 +11,7 @@ from .schemas import (
     AppointmentUpdate,
     AppointmentResponse,
     AppointmentEmployeeAssignmentRequest,
+    CancelCompletedAppointmentRequest,
 )
 from .service import AppointmentService
 
@@ -205,4 +206,24 @@ def remove_unpaid_service(
     tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().remove_unpaid_service(
         db, tenant_id, appointment_id, service_id, pet_id=pet_id
+    )
+
+
+@router.post(
+    "/{appointment_id}/cancel-completed",
+    response_model=AppointmentResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
+def cancel_completed_appointment(
+    appointment_id: int,
+    data: CancelCompletedAppointmentRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return AppointmentService().cancel_completed_appointment(
+        db=db,
+        tenant_id=tenant_id,
+        appointment_id=appointment_id,
+        reason=data.reason,
     )

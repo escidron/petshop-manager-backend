@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
-from typing import List
+from typing import List, Optional
 
 from app.modules.appointments.models import (
     AppointmentAction,
@@ -56,7 +56,9 @@ class AppointmentItemResponse(BaseModel):
         # Se ainda não foi finalizado/coberto, verifica se o pet possui créditos ativos de pacote para o serviço
         available_package_service_ids = set()
         pet = getattr(data, "pet", None)
-        if pet and not covered_ids:
+        appointment = getattr(data, "appointment", None)
+        appt_status = getattr(appointment, "status", None) if appointment else None
+        if pet and not covered_ids and appt_status not in [AppointmentStatus.COMPLETED, AppointmentStatus.CANCELED, "completed", "canceled"]:
             client_pkgs = getattr(pet, "client_packages", []) or []
             from datetime import timezone
             now = datetime.now(timezone.utc)
@@ -172,3 +174,7 @@ class ServiceEmployeeAssignment(BaseModel):
 
 class AppointmentEmployeeAssignmentRequest(BaseModel):
     assignments: List[ServiceEmployeeAssignment]
+
+
+class CancelCompletedAppointmentRequest(BaseModel):
+    reason: Optional[str] = None
