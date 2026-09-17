@@ -178,3 +178,9 @@ class AppointmentEmployeeAssignmentRequest(BaseModel):
 
 class CancelCompletedAppointmentRequest(BaseModel):
     reason: Optional[str] = None
+
+
+class AddAppointmentServiceRequest(BaseModel):
+    pet_id: int
+    service_id: int
+    employee_id: Optional[int] = None
