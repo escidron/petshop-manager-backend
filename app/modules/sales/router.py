@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import date
-from fastapi import APIRouter, Depends, Request, Query
+from fastapi import APIRouter, Depends, Request, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -146,6 +146,14 @@ def cancel_sale(
     data: Optional[SaleCancelRequest] = None,
     db: Session = Depends(get_db),
 ):
+    tenant_user = getattr(request.state, "tenant_user", None)
+    user = getattr(request.state, "user", None)
+    role = getattr(tenant_user, "role", None) or getattr(user, "role", None)
+    if role not in ("owner", "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas proprietários ou administradores podem cancelar vendas."
+        )
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
     reason = data.reason if data else None
@@ -160,6 +168,14 @@ def cancel_sale_item(
     data: Optional[SaleItemCancelRequest] = None,
     db: Session = Depends(get_db),
 ):
+    tenant_user = getattr(request.state, "tenant_user", None)
+    user = getattr(request.state, "user", None)
+    role = getattr(tenant_user, "role", None) or getattr(user, "role", None)
+    if role not in ("owner", "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas proprietários ou administradores podem cancelar ou devolver itens de venda."
+        )
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
     reason = data.reason if data else None
