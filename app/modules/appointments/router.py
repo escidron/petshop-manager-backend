@@ -12,6 +12,7 @@ from .schemas import (
     AppointmentResponse,
     AppointmentEmployeeAssignmentRequest,
     CancelCompletedAppointmentRequest,
+    AddAppointmentServiceRequest,
 )
 from .service import AppointmentService
 
@@ -188,6 +189,23 @@ def appointment_action(
         appointment_id=appointment_id,
         action=data.action,
         cancel_all_future=data.cancel_all_future,
+    )
+
+
+@router.post(
+    "/{appointment_id}/services",
+    response_model=AppointmentResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
+def add_service_to_appointment(
+    appointment_id: int,
+    data: AddAppointmentServiceRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return AppointmentService().add_service(
+        db, tenant_id, appointment_id, data
     )
 
 

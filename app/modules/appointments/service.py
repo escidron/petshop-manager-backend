@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.modules.appointments.models import Appointment, AppointmentAction, AppointmentStatus
 
 from .repository import AppointmentRepository
-from .schemas import AppointmentCreate, AppointmentUpdate, AppointmentItemCreate
+from .schemas import AppointmentCreate, AppointmentUpdate, AppointmentItemCreate, AddAppointmentServiceRequest
 from app.modules.pets.models import Pet
 from app.modules.clients.models import Client
 from app.modules.tenant_services.models import Service
@@ -36,6 +36,7 @@ class AppointmentService:
         },
         AppointmentStatus.IN_PROGRESS: {
             AppointmentAction.COMPLETE: AppointmentStatus.COMPLETED,
+            AppointmentAction.CANCEL: AppointmentStatus.CANCELED,
         },
     }
     # ---------- CREATE ----------
@@ -247,6 +248,13 @@ class AppointmentService:
 
             existing_pet_ids = {it.pet_id for it in appointment.items}
 
+            # Preserva profissionais atribuídos aos serviços existentes
+            existing_emp_map: dict[tuple[int, int], int | None] = {}
+            for it in appointment.items:
+                for ais in getattr(it, "item_services", []):
+                    if ais.employee_id:
+                        existing_emp_map[(it.pet_id, ais.service_id)] = ais.employee_id
+
             # Remove todos os items antigos
             self.repo.delete_items(db, appointment)
 
@@ -267,12 +275,23 @@ class AppointmentService:
                     item.service_ids,
                 )
 
-                self.repo.create_item(
+                created_item = self.repo.create_item(
                     db=db,
                     appointment=appointment,
                     pet_id=item.pet_id,
                     services=services,
                 )
+
+                # Restaura funcionário já atribuído se este pet e serviço já tinham profissional
+                if existing_emp_map:
+                    from app.modules.appointments.models import AppointmentItemService
+                    for s in services:
+                        old_emp_id = existing_emp_map.get((item.pet_id, s.id))
+                        if old_emp_id:
+                            db.query(AppointmentItemService).filter(
+                                AppointmentItemService.appointment_item_id == created_item.id,
+                                AppointmentItemService.service_id == s.id,
+                            ).update({"employee_id": old_emp_id}, synchronize_session=False)
 
             db.flush()
             db.expire(appointment, ["items"])
@@ -1384,6 +1403,95 @@ class AppointmentService:
         end_date=None,
     ) -> list[date]:
         return self.repo.list_highlighted_days(db, tenant_id, start_date=start_date, end_date=end_date)
+
+    def add_service(
+        self,
+        db: Session,
+        tenant_id: int,
+        appointment_id: int,
+        data: AddAppointmentServiceRequest,
+    ) -> Appointment:
+        appointment = self.repo.get_by_id(db, tenant_id, appointment_id, for_update=True)
+        if not appointment:
+            raise HTTPException(404, "Agendamento não encontrado")
+
+        if appointment.is_paid:
+            raise HTTPException(400, "Não é possível adicionar serviço a um agendamento já pago no caixa.")
+
+        if appointment.status in [AppointmentStatus.CANCELED, AppointmentStatus.NO_SHOW]:
+            raise HTTPException(400, "Não é possível adicionar serviço a um agendamento cancelado ou com não comparecimento.")
+
+        # 1. Validar serviço
+        service = db.query(Service).filter(
+            Service.id == data.service_id,
+            Service.tenant_id == tenant_id,
+            Service.is_active == True,
+        ).first()
+        if not service:
+            raise HTTPException(404, "Serviço não encontrado ou inativo")
+
+        # 2. Localizar ou criar item para o pet
+        target_item = next((it for it in appointment.items if it.pet_id == data.pet_id), None)
+        if not target_item:
+            existing_pet_ids = {it.pet_id for it in appointment.items}
+            self._validate_pet(
+                db,
+                tenant_id,
+                appointment.client_id,
+                data.pet_id,
+                allow_deceased=(data.pet_id in existing_pet_ids),
+            )
+            target_item = self.repo.create_item(
+                db=db,
+                appointment=appointment,
+                pet_id=data.pet_id,
+                services=[service],
+            )
+            db.flush()
+        else:
+            if not any(s.id == service.id for s in target_item.services):
+                target_item.services.append(service)
+                db.flush()
+
+        # 3. Vincular funcionário se fornecido
+        if data.employee_id:
+            from app.modules.appointments.models import AppointmentItemService
+            db.query(AppointmentItemService).filter(
+                AppointmentItemService.appointment_item_id == target_item.id,
+                AppointmentItemService.service_id == service.id,
+            ).update({"employee_id": data.employee_id}, synchronize_session=False)
+
+        # 4. Se o agendamento já estava COMPLETED, sincroniza com comanda aberta se houver
+        if appointment.status == AppointmentStatus.COMPLETED:
+            from app.modules.sales.models import Comanda, ComandaItem
+            comanda = db.query(Comanda).filter(
+                Comanda.tenant_id == tenant_id,
+                Comanda.status == "open",
+                or_(
+                    Comanda.appointment_id == appointment.id,
+                    Comanda.client_id == appointment.client_id,
+                )
+            ).first()
+            if comanda:
+                real_price = float(Decimal(service.price_cents) / Decimal("100"))
+                c_item = ComandaItem(
+                    comanda_id=comanda.id,
+                    item_type="service",
+                    item_id=service.id,
+                    name=service.name,
+                    quantity=1,
+                    unit_price=real_price,
+                    subtotal=real_price,
+                    employee_id=data.employee_id,
+                    pet_ids=[data.pet_id],
+                    unit="UN",
+                    appointment_id=appointment.id,
+                )
+                db.add(c_item)
+                comanda.total_amount = max(0.0, float(Decimal(str(comanda.total_amount)) + Decimal(str(real_price))))
+
+        db.commit()
+        return self._attach_recurrence_info(db, self.repo.get_with_relations(db, appointment.id))
 
     def remove_unpaid_service(
         self,
