@@ -3,10 +3,10 @@ from decimal import Decimal
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from typing import List, Tuple, Optional
+from typing import List
 
-from .models import Sale, Comanda
-from .schemas import SaleCreate, SaleUpdateStatus, ComandaSaveRequest
+from .models import Sale, SaleItem, Comanda, ComandaItem
+from .schemas import SaleCreate, ComandaSaveRequest
 from .repository import SalesRepository
 from app.modules.products.service import ProductService
 from app.modules.appointments.service import AppointmentService
