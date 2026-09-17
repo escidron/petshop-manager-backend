@@ -103,11 +103,12 @@ class OperationalResultRepository:
         Busca todos os serviços do tenant e os atendimentos realizados no mês.
         """
         num_days = calendar.monthrange(year, month)[1]
-        start_date = datetime(year, month, 1, 0, 0, 0)
+        from app.utils.timezone import BRAZIL_TZ
+        start_date = datetime(year, month, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
         if month == 12:
-            end_date = datetime(year + 1, 1, 1, 0, 0, 0)
+            end_date = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
         else:
-            end_date = datetime(year, month + 1, 1, 0, 0, 0)
+            end_date = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
 
         # 0. Carrega configuração de funcionamento do tenant (working_hours)
         tenant_working_hours = (
@@ -471,8 +472,9 @@ class OperationalResultRepository:
         """
         service_id_to_name = service_id_to_name or {}
         previous_year = current_year - 1
-        start_date = datetime(previous_year, 1, 1, 0, 0, 0)
-        end_date = datetime(current_year + 1, 1, 1, 0, 0, 0)
+        from app.utils.timezone import BRAZIL_TZ
+        start_date = datetime(previous_year, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
+        end_date = datetime(current_year + 1, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
 
         monthly_curr = {m: 0 for m in range(1, 13)}
         monthly_prev = {m: 0 for m in range(1, 13)}

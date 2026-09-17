@@ -64,8 +64,11 @@ class ClientRepository:
         end_date: date | None = None,
     ) -> int:
         q = db.query(func.count(Client.id)).filter(Client.tenant_id == tenant_id)
-        if start_date:
-            q = q.filter(Client.created_at >= datetime.combine(start_date, time.min))
-        if end_date:
-            q = q.filter(Client.created_at <= datetime.combine(end_date, time.max))
+        if start_date or end_date:
+            from app.utils.timezone import get_date_range_bounds_brazil
+            start_dt, end_dt = get_date_range_bounds_brazil(start_date, end_date)
+            if start_dt:
+                q = q.filter(Client.created_at >= start_dt)
+            if end_dt:
+                q = q.filter(Client.created_at <= end_dt)
         return q.scalar() or 0

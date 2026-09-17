@@ -151,15 +151,19 @@ class SalesRepository:
         end_date: date | None = None,
         client_id: int | None = None,
     ) -> list[Sale]:
+        from app.utils.timezone import get_date_range_bounds_brazil
+
         q = (
             db.query(Sale)
             .options(*_sale_eager_options())
             .filter(Sale.tenant_id == tenant_id)
         )
-        if start_date:
-            q = q.filter(Sale.created_at >= datetime.combine(start_date, time.min))
-        if end_date:
-            q = q.filter(Sale.created_at <= datetime.combine(end_date, time.max))
+        if start_date or end_date:
+            start_dt, end_dt = get_date_range_bounds_brazil(start_date, end_date)
+            if start_dt:
+                q = q.filter(Sale.created_at >= start_dt)
+            if end_dt:
+                q = q.filter(Sale.created_at <= end_dt)
         if client_id:
             q = q.filter(Sale.client_id == client_id)
         return q.order_by(desc(Sale.created_at)).offset(skip).limit(limit).all()

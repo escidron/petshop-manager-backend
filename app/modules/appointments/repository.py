@@ -97,9 +97,8 @@ class AppointmentRepository:
         tenant_id: int,
         day: date,
     ) -> list[Appointment]:
-        # Usa range em vez de func.date() para aproveitar o índice em scheduled_at
-        start = datetime.combine(day, time.min)
-        end = datetime.combine(day, time.max)
+        from app.utils.timezone import get_day_bounds_brazil
+        start, end = get_day_bounds_brazil(day)
         return (
             db.query(Appointment)
             .options(*_eager_options())
@@ -156,10 +155,13 @@ class AppointmentRepository:
             .options(*_eager_options())
             .filter(Appointment.tenant_id == tenant_id)
         )
-        if start_date:
-            q = q.filter(Appointment.scheduled_at >= datetime.combine(start_date, time.min))
-        if end_date:
-            q = q.filter(Appointment.scheduled_at <= datetime.combine(end_date, time.max))
+        if start_date or end_date:
+            from app.utils.timezone import get_date_range_bounds_brazil
+            start_dt, end_dt = get_date_range_bounds_brazil(start_date, end_date)
+            if start_dt:
+                q = q.filter(Appointment.scheduled_at >= start_dt)
+            if end_dt:
+                q = q.filter(Appointment.scheduled_at <= end_dt)
         return q.order_by(Appointment.scheduled_at.desc()).all()
 
     def update(
@@ -341,10 +343,13 @@ class AppointmentRepository:
             db.query(cast(Appointment.scheduled_at, Date))
             .filter(Appointment.tenant_id == tenant_id)
         )
-        if start_date:
-            q = q.filter(Appointment.scheduled_at >= datetime.combine(start_date, time.min))
-        if end_date:
-            q = q.filter(Appointment.scheduled_at <= datetime.combine(end_date, time.max))
+        if start_date or end_date:
+            from app.utils.timezone import get_date_range_bounds_brazil
+            start_dt, end_dt = get_date_range_bounds_brazil(start_date, end_date)
+            if start_dt:
+                q = q.filter(Appointment.scheduled_at >= start_dt)
+            if end_dt:
+                q = q.filter(Appointment.scheduled_at <= end_dt)
         
         results = q.distinct().order_by(cast(Appointment.scheduled_at, Date)).all()
         return [r[0] for r in results if r[0] is not None]

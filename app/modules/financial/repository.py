@@ -631,15 +631,16 @@ class FinancialRepository:
             "cmv_products": {m: 0.0 for m in range(1, 13)},
         }
 
-        start_date = datetime(year, 1, 1, 0, 0, 0)
-        end_date = datetime(year + 1, 1, 1, 0, 0, 0)
+        from app.utils.timezone import BRAZIL_TZ
+        start_date = datetime(year, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
+        end_date = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
 
         # Query consolidada rateando o valor recebido e apurando CMV em 1 única passagem
         sql = text("""
             WITH sale_breakdown AS (
                 SELECT 
                     s.id AS sale_id,
-                    EXTRACT(month FROM s.created_at) AS month,
+                    EXTRACT(month FROM (s.created_at AT TIME ZONE 'America/Sao_Paulo')) AS month,
                     s.total_amount,
                     COALESCE(SUM(CASE WHEN si.item_type = 'product' THEN si.subtotal ELSE 0 END), 0) AS p_gross,
                     COALESCE(SUM(CASE WHEN si.item_type IN ('service', 'package') THEN si.subtotal ELSE 0 END), 0) AS s_gross,
@@ -709,12 +710,13 @@ class FinancialRepository:
         utilizando range de datas para index scan.
         """
         commissions_by_month = {m: 0.0 for m in range(1, 13)}
-        start_date = datetime(year, 1, 1, 0, 0, 0)
-        end_date = datetime(year + 1, 1, 1, 0, 0, 0)
+        from app.utils.timezone import BRAZIL_TZ
+        start_date = datetime(year, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
+        end_date = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
 
         rows = (
             db.query(
-                extract("month", CommissionEntry.created_at).label("month"),
+                extract("month", func.timezone('America/Sao_Paulo', CommissionEntry.created_at)).label("month"),
                 func.sum(CommissionEntry.commission_amount).label("total_commissions"),
             )
             .filter(
