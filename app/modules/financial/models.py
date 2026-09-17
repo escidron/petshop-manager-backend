@@ -226,6 +226,14 @@ class EmployeePayrollProfile(Base):
         String(255), nullable=True
     )
 
+    # Vigência / Período do Colaborador (Controle para DRE)
+    admission_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )  # Data de Admissão / Início da Vigência
+    resignation_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )  # Data de Desligamento / Fim da Vigência (opcional)
+
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )

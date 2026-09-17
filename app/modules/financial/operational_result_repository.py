@@ -103,11 +103,12 @@ class OperationalResultRepository:
         Busca todos os serviços do tenant e os atendimentos realizados no mês.
         """
         num_days = calendar.monthrange(year, month)[1]
-        start_date = datetime(year, month, 1, 0, 0, 0)
+        from app.utils.timezone import BRAZIL_TZ
+        start_date = datetime(year, month, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
         if month == 12:
-            end_date = datetime(year + 1, 1, 1, 0, 0, 0)
+            end_date = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
         else:
-            end_date = datetime(year, month + 1, 1, 0, 0, 0)
+            end_date = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
 
         # 0. Carrega configuração de funcionamento do tenant (working_hours)
         tenant_working_hours = (
@@ -237,7 +238,7 @@ class OperationalResultRepository:
                 srv.size AS service_size,
                 srv.species AS service_species
             FROM sales s
-            JOIN sale_items si ON si.sale_id = s.id
+            JOIN sale_items si ON si.sale_id = s.id AND COALESCE(si.status, 'active') != 'canceled'
             LEFT JOIN services srv ON srv.id = si.item_id AND si.item_type = 'service'
             WHERE s.tenant_id = :tenant_id
               AND s.status = 'completed'
@@ -340,6 +341,7 @@ class OperationalResultRepository:
                     SUM(CASE WHEN si.item_type = 'service' THEN si.subtotal ELSE 0 END) AS service_subtotal
                 FROM sale_items si
                 JOIN month_sales ms ON ms.id = si.sale_id
+                WHERE COALESCE(si.status, 'active') != 'canceled'
                 GROUP BY si.sale_id
                 HAVING SUM(CASE WHEN si.item_type = 'service' THEN si.subtotal ELSE 0 END) > 0
             )
@@ -470,8 +472,9 @@ class OperationalResultRepository:
         """
         service_id_to_name = service_id_to_name or {}
         previous_year = current_year - 1
-        start_date = datetime(previous_year, 1, 1, 0, 0, 0)
-        end_date = datetime(current_year + 1, 1, 1, 0, 0, 0)
+        from app.utils.timezone import BRAZIL_TZ
+        start_date = datetime(previous_year, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
+        end_date = datetime(current_year + 1, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
 
         monthly_curr = {m: 0 for m in range(1, 13)}
         monthly_prev = {m: 0 for m in range(1, 13)}
@@ -525,7 +528,7 @@ class OperationalResultRepository:
                 si.name AS service_name,
                 SUM(si.quantity) AS service_count
             FROM sales s
-            JOIN sale_items si ON si.sale_id = s.id
+            JOIN sale_items si ON si.sale_id = s.id AND COALESCE(si.status, 'active') != 'canceled'
             WHERE s.tenant_id = :tenant_id
               AND s.status = 'completed'
               AND si.item_type = 'service'

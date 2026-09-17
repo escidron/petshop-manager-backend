@@ -149,12 +149,13 @@ class CommissionEntryRepository:
             q = q.filter(CommissionEntry.employee_id == employee_id)
         if status:
             q = q.filter(CommissionEntry.status == status)
-        if from_date:
-            from datetime import datetime, time
-            q = q.filter(CommissionEntry.created_at >= datetime.combine(from_date, time.min))
-        if to_date:
-            from datetime import datetime, time
-            q = q.filter(CommissionEntry.created_at <= datetime.combine(to_date, time.max))
+        if from_date or to_date:
+            from app.utils.timezone import get_date_range_bounds_brazil
+            start_dt, end_dt = get_date_range_bounds_brazil(from_date, to_date)
+            if start_dt:
+                q = q.filter(CommissionEntry.created_at >= start_dt)
+            if end_dt:
+                q = q.filter(CommissionEntry.created_at <= end_dt)
         return q.order_by(CommissionEntry.created_at.desc()).all()
 
     def get_by_ids(self, db: Session, tenant_id: int, entry_ids: list[int]) -> list[CommissionEntry]:

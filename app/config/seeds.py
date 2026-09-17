@@ -12,7 +12,7 @@ def seed_plans(db: Session):
             "price_cents": 0,
             "currency": "BRL",
             "billing_cycle": "monthly",
-            "trial_days": 180,
+            "trial_days": 30,
             "is_active": True,
         },
         {

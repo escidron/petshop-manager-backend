@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
-from sqlalchemy import String, Boolean, ForeignKey, DateTime, func
+from sqlalchemy import String, Boolean, ForeignKey, DateTime, Date, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import Enum as SAEnum
 
@@ -39,6 +39,10 @@ class Employee(Base):
     phone: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     email: Mapped[str | None] = mapped_column(String(255))
     schedule_token: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True)
+
+    # Vigência / Período de Atividade
+    admission_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    resignation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

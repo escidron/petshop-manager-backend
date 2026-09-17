@@ -186,7 +186,7 @@ def create_checkout(
                 status_code=400,
                 detail="Este estabelecimento já possui ou utilizou o período de gratuidade.",
             )
-        trial_ends_at = datetime.now(timezone.utc) + timedelta(days=plan.trial_days or 180)
+        trial_ends_at = datetime.now(timezone.utc) + timedelta(days=plan.trial_days or 30)
         _repo.create(
             db=db,
             tenant_id=tenant.id,

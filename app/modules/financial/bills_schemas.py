@@ -106,3 +106,25 @@ class FinancialBillListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class BillAlertItem(BaseModel):
+    id: int
+    description: str
+    amount: float
+    due_date: date
+    urgency: str  # "today" | "tomorrow" | "overdue"
+    days_diff: int  # 0 para hoje, 1 para amanhã, < 0 para atrasadas
+    supplier_name: Optional[str] = None
+    category_name: Optional[str] = None
+    document_number: Optional[str] = None
+    barcode: Optional[str] = None
+
+
+class BillAlertsResponse(BaseModel):
+    total_count: int
+    today_count: int
+    tomorrow_count: int
+    overdue_count: int
+    alerts: List[BillAlertItem]
+

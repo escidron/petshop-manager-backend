@@ -31,6 +31,7 @@ from app.modules.financial.bills_schemas import (
     FinancialBillResponse,
     FinancialBillsSummaryResponse,
     FinancialBillListResponse,
+    BillAlertsResponse,
 )
 from app.modules.financial.service import FinancialService
 from app.modules.financial.bills_service import FinancialBillsService
@@ -416,6 +417,20 @@ def get_bills_summary(
     )
 
 
+@bills_router.get("/due-alerts", response_model=BillAlertsResponse)
+def get_due_alerts(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Retorna alertas de contas a pagar que vencem hoje (alerta vermelho), amanhã (alerta laranja) ou atrasadas.
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    return service.get_due_alerts(db=db, tenant_id=tenant_id)
+
+
+
 @bills_router.post("", response_model=List[FinancialBillResponse], status_code=status.HTTP_201_CREATED)
 def create_bill(
     request: Request,
@@ -485,6 +500,20 @@ def get_bill(
     if not bill:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada")
     return bill
+
+
+@bills_router.get("/{bill_id}/installments", response_model=List[FinancialBillResponse])
+def get_bill_installments(
+    request: Request,
+    bill_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Retorna todas as parcelas pertencentes à mesma compra/título da conta informada.
+    """
+    tenant_id = request.state.tenant_user.tenant_id
+    service = FinancialBillsService()
+    return service.get_bill_installments(db=db, tenant_id=tenant_id, bill_id=bill_id)
 
 
 @bills_router.put("/{bill_id}", response_model=FinancialBillResponse)

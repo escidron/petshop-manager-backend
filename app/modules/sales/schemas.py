@@ -21,6 +21,9 @@ class SaleItemBase(BaseModel):
     subtotal: float = Field(ge=0)
     employee_id: int | None = None
     appointment_id: int | None = None
+    status: Literal["active", "canceled"] = "active"
+    cancel_reason: str | None = None
+    canceled_at: datetime | None = None
 
 class SaleItemCreate(SaleItemBase):
     pet_ids: list[int] | None = None
@@ -34,6 +37,12 @@ class SaleItemResponse(SaleItemBase):
 
     class Config:
         from_attributes = True
+
+class SaleCancelRequest(BaseModel):
+    reason: str | None = None
+
+class SaleItemCancelRequest(BaseModel):
+    reason: str | None = None
 
 # Nested helpers
 class PetBrief(BaseModel):
@@ -162,6 +171,8 @@ class SaleBase(BaseModel):
     discount_amount: float = Field(default=0.0, ge=0)
     payment_method: Literal["pix", "credit_card", "debit_card", "money", "other", "package", "multiple"]
     status: Literal["completed", "canceled"] = "completed"
+    cancel_reason: str | None = None
+    canceled_at: datetime | None = None
 
 class SaleCreate(SaleBase):
     items: list[SaleItemCreate]

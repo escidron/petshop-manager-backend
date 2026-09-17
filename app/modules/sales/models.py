@@ -78,6 +78,14 @@ class Sale(Base):
         String(20), default="completed", nullable=False
     )  # completed, canceled
 
+    cancel_reason: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+
+    canceled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # ⏱ Auditoria
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -144,6 +152,18 @@ class SaleItem(Base):
         ForeignKey("appointments.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20), default="active", server_default="active", nullable=False
+    )  # "active" ou "canceled"
+
+    cancel_reason: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+
+    canceled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     sale = relationship("Sale", back_populates="items")

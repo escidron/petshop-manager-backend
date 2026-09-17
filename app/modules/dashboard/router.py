@@ -38,8 +38,9 @@ def get_dashboard_startup(
     packages = PackageService().list_packages(db, tenant_id)
     waiting_list = WaitingListService().get_all(db, tenant_id, status=WaitingListStatus.PENDING)
     
-    start_target = datetime.combine(target_date, time.min)
-    end_target = datetime.combine(target_date, time.max)
+    from app.utils.timezone import get_day_bounds_brazil
+
+    start_target, end_target = get_day_bounds_brazil(target_date)
     daily_revenue_val = db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(
         Sale.tenant_id == tenant_id,
         Sale.status == "completed",

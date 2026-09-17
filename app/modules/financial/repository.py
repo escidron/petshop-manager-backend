@@ -4,9 +4,11 @@ from typing import Optional, List, Dict, Tuple, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, and_, desc, or_, text
 
-from app.modules.financial.models import DREAccount, DREEntry, EmployeePayrollProfile
+from app.modules.financial.models import DREAccount, DREEntry, EmployeePayrollProfile, FinancialBill
 from app.modules.financial.schemas import DREAccountCreate, DREAccountUpdate
 from app.modules.employees.models import Employee
+from app.modules.suppliers.models import Supplier
+from app.modules.clients.models import Client
 from app.modules.sales.models import Sale, SaleItem
 from app.modules.products.models import Product
 from app.modules.commissions.models import CommissionEntry
@@ -436,6 +438,43 @@ class FinancialRepository:
             .all()
         )
 
+    def get_paid_bills_aggregated_by_category_and_month(
+        self, db: Session, tenant_id: int, year: int
+    ) -> Dict[int, Dict[int, float]]:
+        """
+        Agrega o valor total de contas pagas (status='paid') por category_id e mês do pagamento no ano informado.
+        Regime de Caixa: data baseada no payment_date (ou due_date se payment_date for nulo).
+        """
+        effective_date = func.coalesce(FinancialBill.payment_date, FinancialBill.due_date)
+
+        rows = (
+            db.query(
+                FinancialBill.category_id,
+                extract("month", effective_date).label("month"),
+                func.sum(
+                    func.coalesce(
+                        func.nullif(FinancialBill.paid_amount, 0),
+                        FinancialBill.amount,
+                    )
+                ).label("total_amount"),
+            )
+            .filter(
+                FinancialBill.tenant_id == tenant_id,
+                FinancialBill.status == "paid",
+                FinancialBill.category_id.isnot(None),
+                extract("year", effective_date) == year,
+            )
+            .group_by(FinancialBill.category_id, extract("month", effective_date))
+            .all()
+        )
+
+        result: Dict[int, Dict[int, float]] = {}
+        for cat_id, month, total in rows:
+            if cat_id not in result:
+                result[cat_id] = {}
+            result[cat_id][int(month)] = float(total or 0.0)
+        return result
+
     def upsert_entry(
         self,
         db: Session,
@@ -592,21 +631,22 @@ class FinancialRepository:
             "cmv_products": {m: 0.0 for m in range(1, 13)},
         }
 
-        start_date = datetime(year, 1, 1, 0, 0, 0)
-        end_date = datetime(year + 1, 1, 1, 0, 0, 0)
+        from app.utils.timezone import BRAZIL_TZ
+        start_date = datetime(year, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
+        end_date = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
 
         # Query consolidada rateando o valor recebido e apurando CMV em 1 única passagem
         sql = text("""
             WITH sale_breakdown AS (
                 SELECT 
                     s.id AS sale_id,
-                    EXTRACT(month FROM s.created_at) AS month,
+                    EXTRACT(month FROM (s.created_at AT TIME ZONE 'America/Sao_Paulo')) AS month,
                     s.total_amount,
                     COALESCE(SUM(CASE WHEN si.item_type = 'product' THEN si.subtotal ELSE 0 END), 0) AS p_gross,
                     COALESCE(SUM(CASE WHEN si.item_type IN ('service', 'package') THEN si.subtotal ELSE 0 END), 0) AS s_gross,
                     COALESCE(SUM(CASE WHEN si.item_type = 'product' THEN si.quantity * COALESCE(p.cost, 0) ELSE 0 END), 0) AS p_cmv
                 FROM sales s
-                LEFT JOIN sale_items si ON si.sale_id = s.id
+                LEFT JOIN sale_items si ON si.sale_id = s.id AND COALESCE(si.status, 'active') != 'canceled'
                 LEFT JOIN products p ON p.id = si.item_id AND si.item_type = 'product'
                 WHERE s.tenant_id = :tenant_id
                   AND s.status = 'completed'
@@ -670,12 +710,13 @@ class FinancialRepository:
         utilizando range de datas para index scan.
         """
         commissions_by_month = {m: 0.0 for m in range(1, 13)}
-        start_date = datetime(year, 1, 1, 0, 0, 0)
-        end_date = datetime(year + 1, 1, 1, 0, 0, 0)
+        from app.utils.timezone import BRAZIL_TZ
+        start_date = datetime(year, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
+        end_date = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=BRAZIL_TZ)
 
         rows = (
             db.query(
-                extract("month", CommissionEntry.created_at).label("month"),
+                extract("month", func.timezone('America/Sao_Paulo', CommissionEntry.created_at)).label("month"),
                 func.sum(CommissionEntry.commission_amount).label("total_commissions"),
             )
             .filter(
@@ -856,6 +897,8 @@ class FinancialRepository:
                 "other_benefits_description": p.other_benefits_description if p else None,
                 "custom_benefits": p.custom_benefits if p else None,
                 "notes": p.notes if p else None,
+                "admission_date": (p.admission_date if p and p.admission_date else emp.admission_date),
+                "resignation_date": (p.resignation_date if p and p.resignation_date else emp.resignation_date),
                 "is_active": p.is_active if p else True,
                 "total_salaries_and_provisions": salaries_and_provisions,
                 "total_inss": round(inss, 2),
@@ -885,8 +928,16 @@ class FinancialRepository:
             db.add(profile)
 
         for key, value in data.items():
-            if hasattr(profile, key) and value is not None:
+            if hasattr(profile, key):
                 setattr(profile, key, value)
+
+        # Sync to Employee
+        emp = db.query(Employee).filter(Employee.id == employee_id, Employee.tenant_id == tenant_id).first()
+        if emp:
+            if "admission_date" in data:
+                emp.admission_date = data["admission_date"]
+            if "resignation_date" in data:
+                emp.resignation_date = data["resignation_date"]
 
         db.commit()
         db.refresh(profile)
@@ -901,17 +952,14 @@ class FinancialRepository:
         account_mapping: Optional[Dict[str, int]] = None,
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        import calendar
+
         profiles_data = self.get_payroll_profiles(db, tenant_id)
         active_profiles = [p for p in profiles_data if p["is_active"] and p["employee_is_active"]]
 
-        tot_salaries = round(sum(p["total_salaries_and_provisions"] for p in active_profiles), 2)
-        tot_charges = round(sum(p["total_inss"] + p["total_fgts"] for p in active_profiles), 2)
-        tot_benefits = round(sum(p["total_benefits"] for p in active_profiles), 2)
-
-        if tot_salaries <= 0 and tot_charges <= 0 and tot_benefits <= 0:
+        if not active_profiles:
             raise ValueError(
-                "Nenhum valor de salário ou benefício foi encontrado para lançar no DRE. "
-                "Informe e salve o salário de pelo menos um colaborador antes de sincronizar."
+                "Nenhum colaborador ativo com salário cadastrado foi encontrado para sincronizar com o DRE."
             )
 
         accounts = self.get_accounts(db, tenant_id, active_only=True)
@@ -940,17 +988,70 @@ class FinancialRepository:
         )
         benefits_acc = resolve_acc("benefits", "payroll_benefits", "benefício")
 
-        items_to_sync = []
-        if salaries_acc:
-            items_to_sync.append((salaries_acc.id, tot_salaries, "Salários & Provisões (Salário Base + 13º + Férias)"))
-        if charges_acc:
-            items_to_sync.append((charges_acc.id, tot_charges, "Encargos Trabalhistas (INSS + FGTS)"))
-        if benefits_acc:
-            items_to_sync.append((benefits_acc.id, tot_benefits, "Benefícios a Funcionários (VT + VA + VR + Saúde + Outros)"))
+        if not salaries_acc and not charges_acc and not benefits_acc:
+            raise ValueError("Nenhuma conta de folha de pagamento foi encontrada no DRE.")
 
         entries_count = 0
-        for acc_id, amount, note in items_to_sync:
-            for m in months:
+        tot_synced_salaries = 0.0
+        tot_synced_charges = 0.0
+        tot_synced_benefits = 0.0
+
+        for m in months:
+            _, total_days_in_month = calendar.monthrange(year, m)
+            first_day_of_month = date(year, m, 1)
+            last_day_of_month = date(year, m, total_days_in_month)
+
+            month_salaries = 0.0
+            month_charges = 0.0
+            month_benefits = 0.0
+
+            for p in active_profiles:
+                adm: Optional[date] = p.get("admission_date")
+                res: Optional[date] = p.get("resignation_date")
+
+                # Se a data de admissão for após este mês, 0 dias trabalhados
+                if adm and adm > last_day_of_month:
+                    continue
+
+                # Se a data de saída/desligamento for antes deste mês, 0 dias trabalhados
+                if res and res < first_day_of_month:
+                    continue
+
+                # Determina o período efetivo trabalhado dentro deste mês
+                eff_start = max(first_day_of_month, adm) if adm else first_day_of_month
+                eff_end = min(last_day_of_month, res) if res else last_day_of_month
+
+                if eff_start > eff_end:
+                    continue
+
+                worked_days = (eff_end - eff_start).days + 1
+                ratio = max(0.0, min(1.0, worked_days / total_days_in_month))
+
+                p_salaries = p.get("total_salaries_and_provisions", 0.0) or 0.0
+                p_charges = (p.get("total_inss", 0.0) or 0.0) + (p.get("total_fgts", 0.0) or 0.0)
+                p_benefits = p.get("total_benefits", 0.0) or 0.0
+
+                month_salaries += round(p_salaries * ratio, 2)
+                month_charges += round(p_charges * ratio, 2)
+                month_benefits += round(p_benefits * ratio, 2)
+
+            month_salaries = round(month_salaries, 2)
+            month_charges = round(month_charges, 2)
+            month_benefits = round(month_benefits, 2)
+
+            tot_synced_salaries += month_salaries
+            tot_synced_charges += month_charges
+            tot_synced_benefits += month_benefits
+
+            items_to_sync = []
+            if salaries_acc:
+                items_to_sync.append((salaries_acc.id, month_salaries, "Salários & Provisões (Salário Base + 13º + Férias)"))
+            if charges_acc:
+                items_to_sync.append((charges_acc.id, month_charges, "Encargos Trabalhistas (INSS + FGTS)"))
+            if benefits_acc:
+                items_to_sync.append((benefits_acc.id, month_benefits, "Benefícios a Funcionários (VT + VA + VR + Saúde + Outros)"))
+
+            for acc_id, amount, note in items_to_sync:
                 entry = (
                     db.query(DREEntry)
                     .filter(
@@ -980,16 +1081,20 @@ class FinancialRepository:
 
         db.commit()
 
+        avg_salaries = round(tot_synced_salaries / len(months), 2) if months else 0.0
+        avg_charges = round(tot_synced_charges / len(months), 2) if months else 0.0
+        avg_benefits = round(tot_synced_benefits / len(months), 2) if months else 0.0
+
         return {
             "success": True,
-            "message": f"Folha de pagamento lançada com sucesso no DRE de {year} para {len(months)} meses.",
+            "message": f"Folha de pagamento lançada com sucesso no DRE de {year} para {len(months)} meses com cálculo proporcional de vigência.",
             "year": year,
             "months_updated": months,
             "entries_created_or_updated": entries_count,
             "accounts_used": {
-                "salaries": {"account_id": salaries_acc.id, "name": salaries_acc.name, "amount": tot_salaries} if salaries_acc else None,
-                "charges": {"account_id": charges_acc.id, "name": charges_acc.name, "amount": tot_charges} if charges_acc else None,
-                "benefits": {"account_id": benefits_acc.id, "name": benefits_acc.name, "amount": tot_benefits} if benefits_acc else None,
+                "salaries": {"account_id": salaries_acc.id, "name": salaries_acc.name, "amount": avg_salaries} if salaries_acc else None,
+                "charges": {"account_id": charges_acc.id, "name": charges_acc.name, "amount": avg_charges} if charges_acc else None,
+                "benefits": {"account_id": benefits_acc.id, "name": benefits_acc.name, "amount": avg_benefits} if benefits_acc else None,
             },
         }
 

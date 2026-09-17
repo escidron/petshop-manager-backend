@@ -66,7 +66,7 @@ class SalesRepository:
                 unit_price=item.unit_price,
                 subtotal=item.subtotal,
                 employee_id=item.employee_id,
-                appointment_id=item.appointment_id,
+                appointment_id=item.appointment_id if item.item_type == "service" else None,
             )
             db.add(db_item)
 
@@ -123,6 +123,7 @@ class SalesRepository:
             db_sale.comanda_id = target_comanda.id
         elif target_comanda:
             target_comanda.status = "completed"
+            db_sale.comanda_id = target_comanda.id
             db.add(target_comanda)
 
         db.commit()
@@ -150,15 +151,19 @@ class SalesRepository:
         end_date: date | None = None,
         client_id: int | None = None,
     ) -> list[Sale]:
+        from app.utils.timezone import get_date_range_bounds_brazil
+
         q = (
             db.query(Sale)
             .options(*_sale_eager_options())
             .filter(Sale.tenant_id == tenant_id)
         )
-        if start_date:
-            q = q.filter(Sale.created_at >= datetime.combine(start_date, time.min))
-        if end_date:
-            q = q.filter(Sale.created_at <= datetime.combine(end_date, time.max))
+        if start_date or end_date:
+            start_dt, end_dt = get_date_range_bounds_brazil(start_date, end_date)
+            if start_dt:
+                q = q.filter(Sale.created_at >= start_dt)
+            if end_dt:
+                q = q.filter(Sale.created_at <= end_dt)
         if client_id:
             q = q.filter(Sale.client_id == client_id)
         return q.order_by(desc(Sale.created_at)).offset(skip).limit(limit).all()
@@ -264,7 +269,7 @@ class SalesRepository:
                 pet_ids=item.pet_ids,
                 client_package_id_to_pay=item.client_package_id_to_pay,
                 unit=item.unit or "UN",
-                appointment_id=getattr(item, "appointment_id", None) or comanda.appointment_id,
+                appointment_id=(getattr(item, "appointment_id", None) or comanda.appointment_id) if item.item_type == "service" else None,
             )
             db.add(c_item)
 
