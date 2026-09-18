@@ -97,7 +97,8 @@ class TenantService:
 
             # 6️⃣ Criar Subscription
             if plan.trial_days > 0:
-                trial_end = now + timedelta(days=plan.trial_days)
+                from app.modules.subscriptions.service import _add_month_preserving_billing_day
+                trial_end = _add_month_preserving_billing_day(now, now.day)
                 print(f"[DEBUG CREATE_TENANT] Creating trialing subscription ending at {trial_end}")
                 sub = self.subscription_repository.create(
                     db=db,
@@ -113,14 +114,14 @@ class TenantService:
                     billing_day=now.day,
                 )
             else:
-                period_end = now + timedelta(days=30)
-                print(f"[DEBUG CREATE_TENANT] Creating incomplete subscription ending at {period_end}")
+                print(f"[DEBUG CREATE_TENANT] Creating incomplete subscription with pending initial payment")
                 sub = self.subscription_repository.create(
                     db=db,
                     tenant_id=tenant.id,
                     plan_id=plan.id,
                     status="incomplete",
-                    current_period_end=period_end,
+                    current_period_end=now,
+                    trial_ends_at=None,
                     whatsapp_package_id=pkg_id,
                     whatsapp_package_status=pkg_status,
                     whatsapp_messages_limit=pkg_limit,

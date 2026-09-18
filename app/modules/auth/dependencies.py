@@ -101,12 +101,38 @@ def get_current_tenant(
     
     subscription_repo = SubscriptionRepository()
     subscription = subscription_repo.get_active_by_tenant(db, tenant_id)
-    if subscription and subscription.status in ("active", "pending") and subscription.current_period_end:
+    if subscription and subscription.current_period_end:
         period_end = subscription.current_period_end
+        now_utc = datetime.now(timezone.utc)
         if period_end.tzinfo is None:
             period_end = period_end.replace(tzinfo=timezone.utc)
-        if period_end < datetime.now(timezone.utc):
+        if period_end < now_utc:
             subscription = subscription_repo.update(db, subscription, {"status": "past_due"})
+        elif subscription.status in ("incomplete", "pending") and period_end > now_utc:
+            # Playbook §1.1/§3: Se o período contratado está pago e no futuro,
+            # o status comercial é ACTIVE (nunca 'incomplete' que é termo interno de gateway)
+            subscription = subscription_repo.update(db, subscription, {"status": "active"})
+
+    if subscription and subscription.status not in ("canceled",):
+        trial_end = subscription.trial_ends_at
+        now_utc = datetime.now(timezone.utc)
+        if trial_end:
+            if trial_end.tzinfo is None:
+                trial_end = trial_end.replace(tzinfo=timezone.utc)
+            if trial_end > now_utc and subscription.status != "trialing":
+                subscription = subscription_repo.update(db, subscription, {"status": "trialing"})
+            elif trial_end <= now_utc and subscription.status == "trialing":
+                # Playbook §9: Se o trial terminou mas current_period_end > trial_end,
+                # significa que o período seguinte já foi pago adiantado via PIX.
+                # Promove automaticamente para 'active' e encerra o trial.
+                period_end = subscription.current_period_end
+                if period_end and period_end.tzinfo is None:
+                    period_end = period_end.replace(tzinfo=timezone.utc)
+                if period_end and period_end > trial_end:
+                    subscription = subscription_repo.update(db, subscription, {
+                        "status": "active",
+                        "trial_ends_at": None,
+                    })
 
     if subscription:
         from app.modules.subscriptions.service import is_subscription_eligible_for_refund
