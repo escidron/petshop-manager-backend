@@ -39,6 +39,64 @@ class AppointmentItemService(Base):
         ForeignKey("employees.id", ondelete="SET NULL"),
         nullable=True,
     )
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="active",
+        server_default="active",
+        nullable=False,
+    )
+    removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    removed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    removal_reason: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    removed_by_user = relationship("app.modules.users.models.User", foreign_keys=[removed_by_user_id])
+
+
+class AppointmentAuditLog(Base):
+    """Registra histórico de auditoria de alterações em agendamentos."""
+    __tablename__ = "appointment_audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    appointment_id: Mapped[int] = mapped_column(
+        ForeignKey("appointments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    appointment_item_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    service_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    service_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    pet_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pet_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    appointment = relationship("Appointment", back_populates="audit_logs")
+    user = relationship("app.modules.users.models.User")
+
 
 
 class AppointmentPackageCoverage(Base):
@@ -148,6 +206,13 @@ class Appointment(Base):
         "app.modules.sales.models.SaleItem",
         back_populates="appointment",
         lazy="select",
+    )
+
+    audit_logs = relationship(
+        "AppointmentAuditLog",
+        back_populates="appointment",
+        cascade="all, delete-orphan",
+        order_by="AppointmentAuditLog.created_at.desc()",
     )
 
     @property

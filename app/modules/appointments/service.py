@@ -1500,14 +1500,18 @@ class AppointmentService:
         appointment_id: int,
         service_id: int,
         pet_id: int | None = None,
+        user_id: int | None = None,
     ):
         """
-        Removes an unpaid extra service that was mistakenly added to an appointment.
-        Also synchronizes and removes the corresponding item from any open comanda in the POS.
+        Removes an unpaid extra service from an appointment.
+        For completed appointments, marks as 'removed' (unbilled) and preserves history/clinical record.
+        For non-completed appointments, removes the service from the scheduled item.
+        Always records an audit log and synchronizes with any open comanda in the POS.
         """
-        from sqlalchemy import or_
-        from app.modules.appointments.models import AppointmentItemService
-        from app.modules.sales.models import Comanda, ComandaItem
+        from datetime import datetime, timezone
+        from sqlalchemy import or_, func
+        from app.modules.appointments.models import AppointmentItemService, AppointmentAuditLog, AppointmentPackageCoverage
+        from app.modules.sales.models import Comanda, ComandaItem, Sale, SaleItem
 
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
         if not appointment:
@@ -1516,7 +1520,10 @@ class AppointmentService:
         if appointment.is_paid:
             raise HTTPException(status_code=400, detail="Não é possível remover serviço de um agendamento já pago no caixa.")
 
+        now = datetime.now(timezone.utc)
         found = False
+        is_completed = (appointment.status == AppointmentStatus.COMPLETED)
+
         for item in list(appointment.items):
             if pet_id and item.pet_id != pet_id:
                 continue
@@ -1528,10 +1535,67 @@ class AppointmentService:
                     detail="Este serviço foi debitado de um pacote e não pode ser removido como avulso."
                 )
 
-            if any(s.id == service_id for s in item.services):
-                item.services = [s for s in item.services if s.id != service_id]
-                if len(item.services) == 0 and len(appointment.items) > 1:
-                    db.delete(item)
+            service_obj = next((s for s in item.services if s.id == service_id), None)
+            if service_obj:
+                service_name = service_obj.name
+                service_price = getattr(service_obj, "price_cents", None)
+
+                if is_completed:
+                    # Soft removal: keep in appointment history, mark as unbilled
+                    ais = db.query(AppointmentItemService).filter(
+                        AppointmentItemService.appointment_item_id == item.id,
+                        AppointmentItemService.service_id == service_id,
+                    ).first()
+
+                    if ais:
+                        ais.status = "removed"
+                        ais.removed_at = now
+                        ais.removed_by_user_id = user_id
+                        ais.removal_reason = "Removido manualmente no agendamento finalizado"
+                        db.add(ais)
+                    else:
+                        ais = AppointmentItemService(
+                            appointment_item_id=item.id,
+                            service_id=service_id,
+                            status="removed",
+                            removed_at=now,
+                            removed_by_user_id=user_id,
+                            removal_reason="Removido manualmente no agendamento finalizado",
+                        )
+                        db.add(ais)
+
+                    log = AppointmentAuditLog(
+                        tenant_id=tenant_id,
+                        appointment_id=appointment.id,
+                        appointment_item_id=item.id,
+                        service_id=service_id,
+                        service_name=service_name,
+                        pet_id=item.pet_id,
+                        pet_name=item.pet.name if item.pet else None,
+                        user_id=user_id,
+                        action="service_removed",
+                        notes=f"Serviço '{service_name}' marcado como Não Cobrado no agendamento finalizado",
+                    )
+                    db.add(log)
+                else:
+                    # Non-completed appointment: hard remove from scheduled item
+                    item.services = [s for s in item.services if s.id != service_id]
+                    if len(item.services) == 0 and len(appointment.items) > 1:
+                        db.delete(item)
+
+                    log = AppointmentAuditLog(
+                        tenant_id=tenant_id,
+                        appointment_id=appointment.id,
+                        appointment_item_id=item.id,
+                        service_id=service_id,
+                        service_name=service_name,
+                        pet_id=item.pet_id,
+                        pet_name=item.pet.name if item.pet else None,
+                        user_id=user_id,
+                        action="service_removed",
+                        notes=f"Serviço '{service_name}' removido do agendamento",
+                    )
+                    db.add(log)
 
                 found = True
 
@@ -1557,64 +1621,65 @@ class AppointmentService:
                 and (not pet_id or not ci.pet_ids or pet_id in ci.pet_ids)
             ]
             for ci in matching_items:
-                if ci in comanda.items:
-                    comanda.items.remove(ci)
-                db.delete(ci)
+                ci.status = "removed"
+                ci.removed_at = now
+                ci.removed_by_user_id = user_id
+                ci.removal_reason = "Removido no agendamento"
+                db.add(ci)
             db.flush()
 
-            remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
+            active_items = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
+            remaining_subtotal = sum(ci.subtotal for ci in active_items)
             comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
-            if not comanda.items or len(comanda.items) == 0:
-                db.delete(comanda)
+            if not active_items or len(active_items) == 0:
+                comanda.status = "canceled"
 
-        # Verificar se o agendamento deve ser cancelado automaticamente
-        from sqlalchemy import func
-        from app.modules.appointments.models import AppointmentPackageCoverage
-        from app.modules.sales.models import Sale, SaleItem
-
-        total_remaining_services = sum(len(it.services) for it in appointment.items)
-        if total_remaining_services == 0:
-            appointment.status = AppointmentStatus.CANCELED
-            appointment.notes = (appointment.notes or "") + "\n[Cancelado automaticamente: todos os serviços foram removidos]"
-            db.add(appointment)
-        else:
-            item_ids = [item.id for item in appointment.items]
-            active_coverages = (
-                db.query(AppointmentPackageCoverage)
-                .filter(AppointmentPackageCoverage.appointment_item_id.in_(item_ids))
-                .count()
-            )
-            active_sale_items = (
-                db.query(SaleItem)
-                .join(Sale, Sale.id == SaleItem.sale_id)
-                .filter(
-                    Sale.tenant_id == tenant_id,
-                    Sale.status != "canceled",
-                    func.coalesce(SaleItem.status, "active") != "canceled",
-                    or_(
-                        SaleItem.appointment_id == appointment.id,
-                        (Sale.appointment_id == appointment.id) & (SaleItem.item_type == "service"),
-                    ),
-                )
-                .count()
-            )
-            active_comanda_items = (
-                db.query(ComandaItem)
-                .join(Comanda, Comanda.id == ComandaItem.comanda_id)
-                .filter(
-                    Comanda.tenant_id == tenant_id,
-                    Comanda.status == "open",
-                    or_(
-                        ComandaItem.appointment_id == appointment.id,
-                        Comanda.appointment_id == appointment.id,
-                    ),
-                )
-                .count()
-            )
-            if active_coverages == 0 and active_sale_items == 0 and active_comanda_items == 0:
+        # Se NÃO for agendamento finalizado, verificar se deve ser cancelado automaticamente
+        if not is_completed:
+            total_remaining_services = sum(len(it.services) for it in appointment.items)
+            if total_remaining_services == 0:
                 appointment.status = AppointmentStatus.CANCELED
-                appointment.notes = (appointment.notes or "") + "\n[Cancelado automaticamente: todos os serviços vinculados foram cancelados/removidos]"
+                appointment.notes = (appointment.notes or "") + "\n[Cancelado automaticamente: todos os serviços foram removidos]"
                 db.add(appointment)
+            else:
+                item_ids = [item.id for item in appointment.items]
+                active_coverages = (
+                    db.query(AppointmentPackageCoverage)
+                    .filter(AppointmentPackageCoverage.appointment_item_id.in_(item_ids))
+                    .count()
+                )
+                active_sale_items = (
+                    db.query(SaleItem)
+                    .join(Sale, Sale.id == SaleItem.sale_id)
+                    .filter(
+                        Sale.tenant_id == tenant_id,
+                        Sale.status != "canceled",
+                        func.coalesce(SaleItem.status, "active") != "canceled",
+                        or_(
+                            SaleItem.appointment_id == appointment.id,
+                            (Sale.appointment_id == appointment.id) & (SaleItem.item_type == "service"),
+                        ),
+                    )
+                    .count()
+                )
+                active_comanda_items = (
+                    db.query(ComandaItem)
+                    .join(Comanda, Comanda.id == ComandaItem.comanda_id)
+                    .filter(
+                        Comanda.tenant_id == tenant_id,
+                        Comanda.status == "open",
+                        ComandaItem.status == "active",
+                        or_(
+                            ComandaItem.appointment_id == appointment.id,
+                            Comanda.appointment_id == appointment.id,
+                        ),
+                    )
+                    .count()
+                )
+                if active_coverages == 0 and active_sale_items == 0 and active_comanda_items == 0:
+                    appointment.status = AppointmentStatus.CANCELED
+                    appointment.notes = (appointment.notes or "") + "\n[Cancelado automaticamente: todos os serviços vinculados foram cancelados/removidos]"
+                    db.add(appointment)
 
         db.commit()
         return self._attach_recurrence_info(db, self.repo.get_with_relations(db, appointment_id))

@@ -28,6 +28,10 @@ class ServiceInAppointmentResponse(BaseModel):
     price_cents: int
     duration_minutes: int | None = None
     is_package_covered: bool = False
+    billing_status: str = "active"
+    is_removed: bool = False
+    removed_at: datetime | None = None
+    removal_reason: str | None = None
     employee_id: int | None = None
     species: str | None = None
     size: str | None = None
@@ -75,7 +79,12 @@ class AppointmentItemResponse(BaseModel):
                     if credit.service_id and (credit.total_qty - credit.used_qty) > 0:
                         available_package_service_ids.add(credit.service_id)
 
-        emp_map = {item_svc.service_id: item_svc.employee_id for item_svc in getattr(data, "item_services", [])}
+        item_services = getattr(data, "item_services", []) or []
+        emp_map = {item_svc.service_id: item_svc.employee_id for item_svc in item_services}
+        status_map = {item_svc.service_id: getattr(item_svc, "status", "active") for item_svc in item_services}
+        removed_at_map = {item_svc.service_id: getattr(item_svc, "removed_at", None) for item_svc in item_services}
+        removal_reason_map = {item_svc.service_id: getattr(item_svc, "removal_reason", None) for item_svc in item_services}
+
         services_data = [
             {
                 "id": svc.id,
@@ -83,6 +92,10 @@ class AppointmentItemResponse(BaseModel):
                 "price_cents": svc.price_cents,
                 "duration_minutes": getattr(svc, "duration_minutes", None),
                 "is_package_covered": (svc.id in covered_ids) or (svc.id in available_package_service_ids),
+                "billing_status": status_map.get(svc.id, "active"),
+                "is_removed": status_map.get(svc.id, "active") in ("removed", "canceled"),
+                "removed_at": removed_at_map.get(svc.id),
+                "removal_reason": removal_reason_map.get(svc.id),
                 "employee_id": emp_map.get(svc.id),
                 "species": getattr(svc, "species", None),
                 "size": getattr(svc, "size", None),
@@ -124,6 +137,20 @@ class AppointmentUpdate(BaseModel):
     remove_recurrence: bool = False
 
 
+class AppointmentAuditLogResponse(BaseModel):
+    id: int
+    appointment_id: int
+    service_id: int | None = None
+    service_name: str | None = None
+    pet_name: str | None = None
+    action: str
+    notes: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class AppointmentResponse(BaseModel):
     id: int
     scheduled_at: datetime
@@ -139,6 +166,7 @@ class AppointmentResponse(BaseModel):
     recurrence_frequency: str | None = None
     recurrence: AppointmentRecurrenceInfo | None = None
 
+    audit_logs: List[AppointmentAuditLogResponse] = Field(default_factory=list)
     created_at: datetime
 
     class Config:
@@ -148,8 +176,14 @@ class AppointmentResponse(BaseModel):
     def compute_package_coverage(self) -> "AppointmentResponse":
         if self.is_paid or not self.items:
             return self
-        all_services = [s for item in self.items for s in item.services]
-        if all_services and all(s.is_package_covered for s in all_services):
+        # Considera apenas serviços ativos (ignora serviços removidos do faturamento no PDV)
+        active_services = [
+            s for item in self.items for s in item.services if not getattr(s, "is_removed", False)
+        ]
+        if active_services and all(s.is_package_covered for s in active_services):
+            self.is_fully_package_covered = True
+        elif not active_services and any(s.is_removed for item in self.items for s in item.services):
+            # Se todos os serviços foram dispensados/removidos, não há pendência de cobrança
             self.is_fully_package_covered = True
         return self
 

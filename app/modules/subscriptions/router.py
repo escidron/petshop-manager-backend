@@ -59,15 +59,81 @@ def get_my_subscription(
     if not sub:
         raise HTTPException(status_code=404, detail="Sem assinatura ativa")
 
+    if sub.pagarme_subscription_id and sub.payment_method != "pix" and sub.status not in ("canceled", "failed"):
+        sub = service.sync_subscription_from_pagarme(db, sub)
+
     # Se o período expirou, marca como past_due para liberar novo pagamento
     # (em produção isso seria feito pelo webhook do Pagar.me)
+    now_utc = datetime.now(timezone.utc)
     if sub.status in ("active", "pending") and sub.current_period_end:
         period_end = sub.current_period_end
         # Garante que period_end é timezone-aware para comparação segura
         if period_end.tzinfo is None:
             period_end = period_end.replace(tzinfo=timezone.utc)
-        if period_end < datetime.now(timezone.utc):
+        if period_end < now_utc:
             sub = _repo.update(db, sub, {"status": "past_due"})
+
+    # Se a assinatura tem trial_ends_at e não foi cancelada
+    if sub.trial_ends_at and sub.status not in ("canceled",):
+        trial_end = sub.trial_ends_at
+        if trial_end.tzinfo is None:
+            trial_end = trial_end.replace(tzinfo=timezone.utc)
+        
+        # Trial ainda no futuro: garante status 'trialing' independentemente de agendamento no gateway
+        if trial_end > now_utc and sub.status != "trialing":
+            sub = _repo.update(db, sub, {"status": "trialing"})
+        
+        # Trial terminou: verificar se já tem pagamento antecipado (PIX) ou assinatura agendada (cartão)
+        elif trial_end <= now_utc and sub.status == "trialing":
+            from datetime import timedelta
+
+            period_end = sub.current_period_end
+            if period_end and period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
+
+            # Playbook §9: Se current_period_end > trial_end, significa que o primeiro
+            # BillingPeriod já está PAID (pagamento antecipado via PIX).
+            # Ativar automaticamente sem nova cobrança.
+            if period_end and period_end > trial_end:
+                charge_repo_check = SubscriptionChargeRepository()
+                paid_charge = charge_repo_check.get_first_paid_charge(db, sub.id)
+                if paid_charge or period_end > now_utc:
+                    sub = _repo.update(db, sub, {
+                        "status": "active",
+                        "trial_ends_at": None,
+                    })
+                else:
+                    # Período vencido e sem pagamento confirmado
+                    sub = _repo.update(db, sub, {
+                        "status": "payment_pending",
+                        "trial_ends_at": None,
+                    })
+            elif sub.pagarme_subscription_id:
+                # Cartão: sincroniza com o Pagar.me
+                try:
+                    with service._pagarme_client() as client:
+                        resp = client.get(f"/subscriptions/{sub.pagarme_subscription_id}")
+                        if resp.status_code == 200:
+                            ps = resp.json()
+                            p_status = ps.get("status")
+                            if p_status in ("paid", "active"):
+                                # Usar billing_day preservado em vez de now + 30d
+                                billing_day = sub.billing_day or trial_end.day
+                                next_end = service._add_month_preserving_billing_day(trial_end, billing_day)
+                                sub = _repo.update(db, sub, {
+                                    "status": "active",
+                                    "trial_ends_at": None,
+                                    "current_period_end": next_end,
+                                    "billing_day": billing_day,
+                                })
+                except Exception as e:
+                    print(f"[WARN] Erro ao sincronizar assinatura pós-trial com Pagar.me: {e}")
+            else:
+                # Sem pagamento e sem subscription — marcar como payment_pending
+                sub = _repo.update(db, sub, {
+                    "status": "payment_pending",
+                    "trial_ends_at": None,
+                })
 
     # Check if eligible for refund
     sub.eligible_for_refund = False
@@ -222,6 +288,30 @@ def cancel_charge(
     return service.cancel_charge(db, tenant, charge_id)
 
 
+@router.get("/charges/{charge_id}/status", response_model=dict)
+def get_charge_status(
+    charge_id: str,
+    ctx: dict = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+):
+    """Retorna o status atual de uma cobrança para auto-detecção no frontend."""
+    tenant = ctx["tenant"]
+    from fastapi import HTTPException
+    from app.modules.subscriptions.models import SubscriptionCharge
+    charge = db.query(SubscriptionCharge).filter(
+        SubscriptionCharge.tenant_id == tenant.id,
+        SubscriptionCharge.pagarme_charge_id == charge_id,
+    ).first()
+    if not charge:
+        raise HTTPException(status_code=404, detail="Cobrança não encontrada")
+    return {
+        "charge_id": charge.pagarme_charge_id,
+        "status": charge.status,
+        "paid": charge.status.lower() == "paid",
+        "payment_method": charge.payment_method,
+    }
+
+
 # ---------------------------------------------------------------------------
 # WhatsApp Packages Endpoints (Proration + Checkout + Cancel)
 # ---------------------------------------------------------------------------
@@ -269,5 +359,15 @@ def cancel_package(
     """Cancela a assinatura do pacote de WhatsApp no Pagar.me."""
     tenant = ctx["tenant"]
     return service.cancel_package(db, tenant)
+
+
+@router.post("/simulate-pix-paid", response_model=dict)
+def simulate_pix_paid(
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Simula o webhook de pagamento do Pix para testes em ambiente local / sandbox."""
+    tenant = ctx["tenant"]
+    return service.simulate_pix_payment(db, tenant)
 
 

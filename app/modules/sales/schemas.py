@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 from typing import Literal, Any
 
@@ -111,6 +111,9 @@ class ComandaItemCreate(ComandaItemBase):
 class ComandaItemResponse(ComandaItemBase):
     id: int
     comanda_id: int
+    status: str = "active"
+    removed_at: datetime | None = None
+    removal_reason: str | None = None
 
     class Config:
         from_attributes = True
@@ -140,6 +143,12 @@ class ComandaResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="after")
+    def filter_active_items(self) -> "ComandaResponse":
+        if self.items:
+            self.items = [i for i in self.items if getattr(i, "status", "active") == "active"]
+        return self
 
 class PaginatedComandasResponse(BaseModel):
     items: list[ComandaResponse]
