@@ -222,8 +222,9 @@ def remove_unpaid_service(
     db: Session = Depends(get_db),
 ):
     tenant_id = request.state.tenant_user.tenant_id
+    user_id = getattr(request.state.tenant_user, "user_id", None)
     return AppointmentService().remove_unpaid_service(
-        db, tenant_id, appointment_id, service_id, pet_id=pet_id
+        db, tenant_id, appointment_id, service_id, pet_id=pet_id, user_id=user_id
     )
 
 

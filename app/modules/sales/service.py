@@ -401,6 +401,110 @@ class SalesService:
                         )
                         db.add(usage)
 
+    def _sync_canceled_sale_item_to_appointment_and_comanda(
+        self,
+        db: Session,
+        tenant_id: int,
+        sale: Sale,
+        item: SaleItem,
+        reason: str | None = None,
+        user_id: int | None = None,
+    ) -> None:
+        """
+        Sincroniza o cancelamento de um item da venda com o agendamento (AppointmentItemService,
+        AppointmentAuditLog) e com a comanda fechada (ComandaItem), aplicando soft-delete (status='canceled')
+        sem hard-delete para preservar auditoria e histórico.
+        """
+        from datetime import datetime, timezone
+        from decimal import Decimal
+        from app.modules.appointments.models import (
+            Appointment,
+            AppointmentItem,
+            AppointmentItemService,
+            AppointmentAuditLog,
+        )
+        from app.modules.sales.models import Comanda, ComandaItem
+
+        now = datetime.now(timezone.utc)
+        clean_reason = reason.strip() if (reason and reason.strip()) else ""
+        cancel_note = f"Cancelado na Venda #{sale.id}" + (f": {clean_reason}" if clean_reason else "")
+
+        # 1. Sincronizar no Agendamento se for item do tipo serviço
+        apt_id = getattr(item, "appointment_id", None) or sale.appointment_id
+        if apt_id and item.item_type == "service":
+            appointment = (
+                db.query(Appointment)
+                .filter(Appointment.id == apt_id, Appointment.tenant_id == tenant_id)
+                .first()
+            )
+            if appointment and appointment.items:
+                found_ais = False
+                for ai in appointment.items:
+                    ais = (
+                        db.query(AppointmentItemService)
+                        .filter(
+                            AppointmentItemService.appointment_item_id == ai.id,
+                            AppointmentItemService.service_id == item.item_id,
+                            AppointmentItemService.status == "active",
+                        )
+                        .first()
+                    )
+                    if ais:
+                        ais.status = "canceled"
+                        ais.removed_at = now
+                        ais.removed_by_user_id = user_id
+                        ais.removal_reason = cancel_note
+                        db.add(ais)
+
+                        # Registrar log de auditoria
+                        audit_log = AppointmentAuditLog(
+                            tenant_id=tenant_id,
+                            appointment_id=appointment.id,
+                            appointment_item_id=ai.id,
+                            service_id=item.item_id,
+                            service_name=item.name,
+                            pet_id=ai.pet_id,
+                            pet_name=ai.pet.name if ai.pet else None,
+                            user_id=user_id,
+                            action="sale_item_canceled",
+                            notes=cancel_note,
+                        )
+                        db.add(audit_log)
+                        found_ais = True
+                        break
+
+        # 2. Sincronizar na Comanda (fechada ou aberta)
+        target_comanda_id = sale.comanda_id
+        if not target_comanda_id and apt_id:
+            c_candidate = db.query(Comanda).filter(Comanda.appointment_id == apt_id, Comanda.tenant_id == tenant_id).first()
+            if c_candidate:
+                target_comanda_id = c_candidate.id
+
+        if target_comanda_id:
+            comanda = db.query(Comanda).filter(Comanda.id == target_comanda_id, Comanda.tenant_id == tenant_id).first()
+            if comanda and comanda.items:
+                ci = next(
+                    (
+                        c for c in comanda.items
+                        if getattr(c, "status", "active") == "active"
+                        and c.item_type == item.item_type
+                        and c.item_id == item.item_id
+                    ),
+                    None,
+                )
+                if ci:
+                    ci.status = "canceled"
+                    ci.removed_at = now
+                    ci.removed_by_user_id = user_id
+                    ci.removal_reason = cancel_note
+                    db.add(ci)
+
+                    # Recalcular total da comanda
+                    active_items = [c for c in comanda.items if getattr(c, "status", "active") != "canceled"]
+                    ci_subtotal = sum(Decimal(str(c.subtotal)) for c in active_items)
+                    comanda.total_amount = max(0.0, float(ci_subtotal - Decimal(str(comanda.discount_amount or 0))))
+                    db.add(comanda)
+
     def _check_and_cancel_linked_appointments(
         self,
         db: Session,
@@ -408,16 +512,22 @@ class SalesService:
         sale: Sale,
         appt_ids: set[int],
         reason: str | None = None,
+        user_id: int | None = None,
     ) -> None:
         """
         When all services of an appointment have been canceled (via sale item cancellations,
-        sale cancellation, etc.), automatically transitions the appointment to CANCELED status.
-        Also cleans up any remaining commissions, package usages, and open comanda items.
+        sale cancellation, etc.), updates appointment status and is_paid accordingly.
+        Preserves completed status if appointment was already completed, clearing is_paid.
+        Uses soft-delete on comanda items.
         """
+        from datetime import datetime, timezone
+        from decimal import Decimal
         from sqlalchemy import or_, func
         from app.modules.appointments.models import Appointment, AppointmentStatus, AppointmentPackageCoverage
         from app.modules.commissions.models import CommissionEntry
         from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
+
+        now = datetime.now(timezone.utc)
 
         for apt_id in appt_ids:
             if not apt_id:
@@ -450,6 +560,11 @@ class SalesService:
                 .count()
             )
 
+            # Se não restam itens de venda ativos pagos para este agendamento, desmarca is_paid
+            if active_sale_items == 0 and appointment.is_paid:
+                appointment.is_paid = False
+                db.add(appointment)
+
             # 2. Count active comanda items linked to this appointment (apenas serviços)
             active_comanda_items = (
                 db.query(ComandaItem)
@@ -457,6 +572,7 @@ class SalesService:
                 .filter(
                     Comanda.tenant_id == tenant_id,
                     Comanda.status == "open",
+                    ComandaItem.status == "active",
                     ComandaItem.item_type == "service",
                     or_(
                         ComandaItem.appointment_id == apt_id,
@@ -478,12 +594,22 @@ class SalesService:
 
             # If no active sale items, no active comanda items, and no active package coverages remain:
             if active_sale_items == 0 and active_comanda_items == 0 and active_coverages == 0:
-                appointment.status = AppointmentStatus.CANCELED
-                cancel_note = "\n[Cancelado automaticamente: todos os serviços vinculados foram cancelados na venda]"
-                if reason and reason.strip():
-                    cancel_note += f" - Motivo: {reason.strip()}"
-                appointment.notes = (appointment.notes or "") + cancel_note
-                db.add(appointment)
+                if appointment.status == AppointmentStatus.COMPLETED:
+                    # O atendimento clínico foi realizado, apenas os itens financeiros foram cancelados/estornados
+                    appointment.is_paid = False
+                    cancel_note = "\n[Pagamento cancelado na venda: todos os serviços vinculados foram cancelados]"
+                    if reason and reason.strip():
+                        cancel_note += f" - Motivo: {reason.strip()}"
+                    appointment.notes = (appointment.notes or "") + cancel_note
+                    db.add(appointment)
+                else:
+                    appointment.status = AppointmentStatus.CANCELED
+                    appointment.is_paid = False
+                    cancel_note = "\n[Cancelado automaticamente: todos os serviços vinculados foram cancelados na venda]"
+                    if reason and reason.strip():
+                        cancel_note += f" - Motivo: {reason.strip()}"
+                    appointment.notes = (appointment.notes or "") + cancel_note
+                    db.add(appointment)
 
                 # Clean up any commissions for this appointment
                 if item_ids:
@@ -495,7 +621,7 @@ class SalesService:
                     except Exception:
                         pass
 
-                # Clean up open comanda items if any
+                # Soft delete open comanda items if any (sem hard delete)
                 comandas = (
                     db.query(Comanda)
                     .filter(
@@ -511,34 +637,38 @@ class SalesService:
                 for comanda in comandas:
                     matching_items = [
                         ci for ci in list(comanda.items)
-                        if ci.appointment_id == appointment.id or (
-                            ci.item_type == "service" and comanda.appointment_id == appointment.id
+                        if getattr(ci, "status", "active") == "active" and (
+                            ci.appointment_id == appointment.id or (
+                                ci.item_type == "service" and comanda.appointment_id == appointment.id
+                            )
                         )
                     ]
                     for ci in matching_items:
-                        if ci in comanda.items:
-                            comanda.items.remove(ci)
-                        db.delete(ci)
+                        ci.status = "canceled"
+                        ci.removed_at = now
+                        ci.removed_by_user_id = user_id
+                        ci.removal_reason = "Cancelado automaticamente: agendamento vinculado cancelado"
+                        db.add(ci)
                     db.flush()
 
+                    active_ci = [ci for ci in comanda.items if getattr(ci, "status", "active") != "canceled"]
                     if comanda.appointment_id == appointment.id:
-                        other_appt_id = next((ci.appointment_id for ci in comanda.items if ci.appointment_id), None)
+                        other_appt_id = next((ci.appointment_id for ci in active_ci if ci.appointment_id), None)
                         comanda.appointment_id = other_appt_id
 
-                    remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
+                    remaining_subtotal = sum(ci.subtotal for ci in active_ci)
                     comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount or 0))))
-                    if not comanda.items or len(comanda.items) == 0:
-                        db.delete(comanda)
-                    else:
-                        db.add(comanda)
+                    if not active_ci:
+                        comanda.status = "canceled"
+                    db.add(comanda)
 
-    def cancel_sale(self, db: Session, tenant_id: int, sale_id: int, reason: str | None = None) -> Sale:
+    def cancel_sale(self, db: Session, tenant_id: int, sale_id: int, reason: str | None = None, user_id: int | None = None) -> Sale:
         sale = self.get_sale(db, tenant_id, sale_id)
         
         if sale.status == "canceled":
             raise HTTPException(status_code=400, detail="Venda já está cancelada.")
 
-        # 1. Reverse the stock and package credits for all active items
+        # 1. Reverse the stock, package credits, and sync canceled items for all active items
         now = datetime.now(timezone.utc)
         for item in sale.items:
             if getattr(item, "status", "active") != "canceled":
@@ -566,6 +696,7 @@ class SalesService:
                                     notes=f"Cancelamento Pacote em Venda #{sale.id}"
                                 )
                 self._revert_package_credits_for_item(db, tenant_id, sale, item, reason)
+                self._sync_canceled_sale_item_to_appointment_and_comanda(db, tenant_id, sale, item, reason, user_id)
                 item.status = "canceled"
                 item.cancel_reason = reason
                 item.canceled_at = now
@@ -616,7 +747,17 @@ class SalesService:
             except Exception:
                 pass
 
-        # 5. Check if linked appointments should be canceled
+        # 4. Remove commissions for this sale
+        try:
+            from app.modules.commissions.models import CommissionEntry
+            db.query(CommissionEntry).filter(
+                CommissionEntry.tenant_id == tenant_id,
+                CommissionEntry.sale_id == sale.id,
+            ).delete(synchronize_session=False)
+        except Exception:
+            pass
+
+        # 5. Check if linked appointments should be canceled / updated
         db.flush()
         candidate_appt_ids = set()
         if sale.appointment_id:
@@ -626,13 +767,13 @@ class SalesService:
                 candidate_appt_ids.add(i.appointment_id)
 
         if candidate_appt_ids:
-            self._check_and_cancel_linked_appointments(db, tenant_id, sale, candidate_appt_ids, reason)
+            self._check_and_cancel_linked_appointments(db, tenant_id, sale, candidate_appt_ids, reason, user_id)
 
         db.commit()
         db.refresh(sale)
         return sale
 
-    def cancel_sale_item(self, db: Session, tenant_id: int, sale_id: int, item_id: int, reason: str | None = None) -> Sale:
+    def cancel_sale_item(self, db: Session, tenant_id: int, sale_id: int, item_id: int, reason: str | None = None, user_id: int | None = None) -> Sale:
         sale = self.get_sale(db, tenant_id, sale_id)
         if sale.status == "canceled":
             raise HTTPException(status_code=400, detail="A venda já está totalmente cancelada.")
@@ -673,6 +814,9 @@ class SalesService:
 
         # 1.1 Reverse package credits / sold client packages
         self._revert_package_credits_for_item(db, tenant_id, sale, item, reason)
+
+        # 1.2 Synchronize canceled item to appointment (AppointmentItemService, AppointmentAuditLog) and comanda
+        self._sync_canceled_sale_item_to_appointment_and_comanda(db, tenant_id, sale, item, reason, user_id)
 
         # 2. Mark item as canceled
         item.status = "canceled"
@@ -764,7 +908,7 @@ class SalesService:
         db.add(sale)
         db.flush()
 
-        # 5. Check if linked appointments should be canceled
+        # 6. Check if linked appointments should be canceled / updated
         candidate_appt_ids = set()
         if getattr(item, "appointment_id", None):
             candidate_appt_ids.add(item.appointment_id)
@@ -775,7 +919,7 @@ class SalesService:
                 candidate_appt_ids.add(i.appointment_id)
 
         if candidate_appt_ids:
-            self._check_and_cancel_linked_appointments(db, tenant_id, sale, candidate_appt_ids, reason)
+            self._check_and_cancel_linked_appointments(db, tenant_id, sale, candidate_appt_ids, reason, user_id)
 
         db.commit()
         db.refresh(sale)
@@ -783,7 +927,7 @@ class SalesService:
 
     # ── Comandas ────────────────────────────────────────────────────────────
 
-    def save_open_comanda(self, db: Session, tenant_id: int, data: ComandaSaveRequest) -> Comanda:
+    def save_open_comanda(self, db: Session, tenant_id: int, data: ComandaSaveRequest, user_id: int | None = None) -> Comanda:
         if not data.client_id:
             raise HTTPException(status_code=400, detail="É necessário informar um cliente para criar uma comanda em aberto.")
 
@@ -808,7 +952,7 @@ class SalesService:
                         detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite permitido ({max_discount:.2f}%)."
                     )
 
-        return self.repository.save_open_comanda(db, tenant_id, data)
+        return self.repository.save_open_comanda(db, tenant_id, data, user_id=user_id)
 
     def get_comanda(self, db: Session, tenant_id: int, comanda_id: int) -> Comanda:
         comanda = self.repository.get_comanda(db, tenant_id, comanda_id)
@@ -817,7 +961,7 @@ class SalesService:
         return comanda
 
     def sync_client_open_comanda(self, db: Session, tenant_id: int, client_id: int) -> Comanda | None:
-        from app.modules.appointments.models import Appointment
+        from app.modules.appointments.models import Appointment, AppointmentItem
         from app.modules.appointments.schemas import AppointmentResponse
         from sqlalchemy.orm import selectinload
 
@@ -827,7 +971,10 @@ class SalesService:
         appts = (
             db.query(Appointment)
             .options(
-                selectinload(Appointment.items),
+                selectinload(Appointment.items).selectinload(AppointmentItem.services),
+                selectinload(Appointment.items).selectinload(AppointmentItem.item_services),
+                selectinload(Appointment.items).selectinload(AppointmentItem.coverages),
+                selectinload(Appointment.items).selectinload(AppointmentItem.pet),
                 selectinload(Appointment.sales),
                 selectinload(Appointment.sale_items),
             )
@@ -844,11 +991,21 @@ class SalesService:
         items_changed = False
         completed_appt_ids = {a.id for a in appts}
 
+        removed_keys = set()
+        for a in appts:
+            for item in a.items:
+                for ais in getattr(item, "item_services", []):
+                    if getattr(ais, "status", "active") == "removed":
+                        removed_keys.add((a.id, ais.service_id))
+
         if comanda and comanda.items:
-            # Limpar serviços de agendamentos que não estão mais finalizados/ativos (ex: cancelados)
+            # Limpar serviços de agendamentos que não estão mais finalizados/ativos ou que foram dispensados da cobrança (removed)
             stale_items = [
                 ci for ci in list(comanda.items)
-                if ci.item_type == "service" and ci.appointment_id and ci.appointment_id not in completed_appt_ids
+                if ci.item_type == "service" and (
+                    (ci.appointment_id and ci.appointment_id not in completed_appt_ids)
+                    or (((ci.appointment_id or comanda.appointment_id), ci.item_id) in removed_keys)
+                )
             ]
             if stale_items:
                 for si in stale_items:
@@ -880,6 +1037,8 @@ class SalesService:
 
             for item_resp in resp.items:
                 for s in item_resp.services:
+                    if getattr(s, "is_removed", False):
+                        continue
                     if (a.id, s.id) in existing_keys:
                         continue
 
@@ -940,8 +1099,8 @@ class SalesService:
         items, total = self.repository.list_open_comandas(db, tenant_id, search=search, limit=limit, offset=offset)
         return {"items": items, "total": total}
 
-    def delete_comanda(self, db: Session, tenant_id: int, comanda_id: int) -> dict:
-        success = self.repository.delete_comanda(db, tenant_id, comanda_id)
+    def delete_comanda(self, db: Session, tenant_id: int, comanda_id: int, user_id: int | None = None) -> dict:
+        success = self.repository.delete_comanda(db, tenant_id, comanda_id, user_id=user_id)
         if not success:
             raise HTTPException(status_code=404, detail="Comanda em aberto não encontrada para exclusão.")
         return {"ok": True}

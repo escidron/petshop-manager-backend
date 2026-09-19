@@ -71,7 +71,8 @@ def get_pos_client_details(client_id: int, request: Request, db: Session = Depen
 def save_comanda(data: ComandaSaveRequest, request: Request, db: Session = Depends(get_db)):
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
-    return service.save_open_comanda(db, tenant_id, data)
+    user_id = getattr(request.state.tenant_user, "user_id", None)
+    return service.save_open_comanda(db, tenant_id, data, user_id=user_id)
 
 
 @router.get("/comandas/open")
@@ -105,7 +106,8 @@ def get_comanda(comanda_id: int, request: Request, db: Session = Depends(get_db)
 def delete_comanda(comanda_id: int, request: Request, db: Session = Depends(get_db)):
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
-    return service.delete_comanda(db, tenant_id, comanda_id)
+    user_id = getattr(request.state.tenant_user, "user_id", None)
+    return service.delete_comanda(db, tenant_id, comanda_id, user_id=user_id)
 
 
 # ── Vendas / Sales ──────────────────────────────────────────────────────
@@ -156,8 +158,9 @@ def cancel_sale(
         )
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
+    user_id = getattr(tenant_user, "user_id", None) or getattr(user, "id", None)
     reason = data.reason if data else None
-    return service.cancel_sale(db, tenant_id, sale_id, reason=reason)
+    return service.cancel_sale(db, tenant_id, sale_id, reason=reason, user_id=user_id)
 
 
 @router.post("/{sale_id}/items/{item_id}/cancel", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])
@@ -178,8 +181,9 @@ def cancel_sale_item(
         )
     service = SalesService()
     tenant_id = request.state.tenant_user.tenant_id
+    user_id = getattr(tenant_user, "user_id", None) or getattr(user, "id", None)
     reason = data.reason if data else None
-    return service.cancel_sale_item(db, tenant_id, sale_id, item_id, reason=reason)
+    return service.cancel_sale_item(db, tenant_id, sale_id, item_id, reason=reason, user_id=user_id)
 
 
 @router.patch("/{sale_id}/items/{item_id}/employee", response_model=SaleResponse, dependencies=[Depends(require_active_subscription)])

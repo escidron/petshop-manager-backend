@@ -316,5 +316,20 @@ class ComandaItem(Base):
         index=True,
     )
 
+    status: Mapped[str] = mapped_column(
+        String(20), default="active", server_default="active", nullable=False, index=True
+    )  # "active", "removed"
+
+    removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    removed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    removal_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     comanda = relationship("Comanda", back_populates="items")
     appointment = relationship("Appointment")
+    removed_by_user = relationship("app.modules.users.models.User", foreign_keys=[removed_by_user_id])

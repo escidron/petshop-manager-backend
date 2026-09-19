@@ -179,7 +179,7 @@ class SalesRepository:
 
     # ── Comandas ────────────────────────────────────────────────────────────
 
-    def save_open_comanda(self, db: Session, tenant_id: int, data: ComandaSaveRequest) -> Comanda:
+    def save_open_comanda(self, db: Session, tenant_id: int, data: ComandaSaveRequest, user_id: int | None = None) -> Comanda:
         items_subtotal = sum(item.subtotal for item in data.items)
         calc_total = max(0.0, float(Decimal(str(items_subtotal)) - Decimal(str(data.discount_amount))))
 
@@ -204,6 +204,8 @@ class SalesRepository:
                 Comanda.status == "open",
             ).first()
 
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
         removed_appointment_services: list[tuple[int, int, list[int] | None]] = []
 
         if not comanda:
@@ -219,22 +221,6 @@ class SalesRepository:
             db.add(comanda)
             db.flush()
         else:
-            # Check for any appointment services that were removed from the comanda
-            if comanda.items:
-                incoming_keys = {
-                    (
-                        getattr(item, "appointment_id", None) or comanda.appointment_id or data.appointment_id,
-                        item.item_id,
-                    )
-                    for item in data.items
-                    if item.item_type == "service"
-                }
-                for existing_item in comanda.items:
-                    apt_id = existing_item.appointment_id or comanda.appointment_id
-                    if existing_item.item_type == "service" and apt_id:
-                        if (apt_id, existing_item.item_id) not in incoming_keys:
-                            removed_appointment_services.append((apt_id, existing_item.item_id, existing_item.pet_ids))
-
             comanda.status = "open"
             comanda.client_id = data.client_id
             if data.appointment_id:
@@ -243,35 +229,87 @@ class SalesRepository:
             comanda.discount_amount = data.discount_amount
             if data.notes is not None:
                 comanda.notes = data.notes
-            # Clear old items to rebuild
-            comanda.items.clear()
-            db.flush()
+
+            # Detect removed items among existing active items
+            incoming_keys = {
+                (
+                    item.item_type,
+                    item.item_id,
+                    getattr(item, "appointment_id", None) or comanda.appointment_id or data.appointment_id if item.item_type == "service" else None,
+                )
+                for item in data.items
+            }
+
+            for existing_item in list(comanda.items):
+                if getattr(existing_item, "status", "active") == "active":
+                    apt_id = existing_item.appointment_id or comanda.appointment_id
+                    key = (existing_item.item_type, existing_item.item_id, apt_id if existing_item.item_type == "service" else None)
+                    if key not in incoming_keys:
+                        existing_item.status = "removed"
+                        existing_item.removed_at = now
+                        existing_item.removed_by_user_id = user_id
+                        existing_item.removal_reason = "Removido no carrinho/comanda do PDV"
+                        db.add(existing_item)
+                        if existing_item.item_type == "service" and apt_id:
+                            removed_appointment_services.append((apt_id, existing_item.item_id, existing_item.pet_ids))
 
         if removed_appointment_services:
-            self._sync_removed_services_from_appointments(db, tenant_id, removed_appointment_services)
+            self._sync_removed_services_from_appointments(db, tenant_id, removed_appointment_services, user_id=user_id)
 
         if len(data.items) == 0:
             if comanda and comanda.id:
-                db.delete(comanda)
+                comanda.status = "canceled"
+                comanda.total_amount = 0.0
+                for ci in comanda.items:
+                    if getattr(ci, "status", "active") == "active":
+                        ci.status = "removed"
+                        ci.removed_at = now
+                        ci.removed_by_user_id = user_id
+                        ci.removal_reason = "Comanda esvaziada no PDV"
+                        db.add(ci)
                 db.commit()
             return comanda
 
+        # Add new items or update existing active items
         for item in data.items:
-            c_item = ComandaItem(
-                comanda_id=comanda.id,
-                item_type=item.item_type,
-                item_id=item.item_id,
-                name=item.name,
-                quantity=item.quantity,
-                unit_price=item.unit_price,
-                subtotal=item.subtotal,
-                employee_id=item.employee_id,
-                pet_ids=item.pet_ids,
-                client_package_id_to_pay=item.client_package_id_to_pay,
-                unit=item.unit or "UN",
-                appointment_id=(getattr(item, "appointment_id", None) or comanda.appointment_id) if item.item_type == "service" else None,
+            apt_id = (getattr(item, "appointment_id", None) or comanda.appointment_id) if item.item_type == "service" else None
+            existing = next(
+                (
+                    ci for ci in comanda.items
+                    if getattr(ci, "status", "active") == "active"
+                    and ci.item_type == item.item_type
+                    and ci.item_id == item.item_id
+                    and (ci.appointment_id == apt_id or (not ci.appointment_id and not apt_id))
+                ),
+                None
             )
-            db.add(c_item)
+            if existing:
+                existing.name = item.name
+                existing.quantity = item.quantity
+                existing.unit_price = item.unit_price
+                existing.subtotal = item.subtotal
+                existing.employee_id = item.employee_id
+                existing.pet_ids = item.pet_ids
+                existing.client_package_id_to_pay = item.client_package_id_to_pay
+                existing.unit = item.unit or "UN"
+                db.add(existing)
+            else:
+                c_item = ComandaItem(
+                    comanda_id=comanda.id,
+                    item_type=item.item_type,
+                    item_id=item.item_id,
+                    name=item.name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    subtotal=item.subtotal,
+                    employee_id=item.employee_id,
+                    pet_ids=item.pet_ids,
+                    client_package_id_to_pay=item.client_package_id_to_pay,
+                    unit=item.unit or "UN",
+                    appointment_id=apt_id,
+                    status="active",
+                )
+                db.add(c_item)
 
         db.commit()
         db.refresh(comanda)
@@ -282,12 +320,17 @@ class SalesRepository:
         db: Session,
         tenant_id: int,
         removed_items: list[tuple[int, int, list[int] | None]],
+        user_id: int | None = None,
     ):
         """
         When an uncovered service originating from an appointment is deleted from an open comanda,
-        sync the deletion to the appointment so it doesn't remain pending/unpaid.
+        mark it as 'removed' (unbilled) in appointment_item_services and register an audit log,
+        preserving history and the pet record while clearing pending payment status.
         """
-        from app.modules.appointments.models import Appointment, AppointmentItem, AppointmentItemService
+        from datetime import datetime, timezone
+        from app.modules.appointments.models import Appointment, AppointmentItem, AppointmentItemService, AppointmentAuditLog
+
+        now = datetime.now(timezone.utc)
 
         for apt_id, service_id, pet_ids in removed_items:
             if not apt_id:
@@ -295,6 +338,7 @@ class SalesRepository:
             appointment = db.query(Appointment).options(
                 selectinload(Appointment.items).selectinload(AppointmentItem.services),
                 selectinload(Appointment.items).selectinload(AppointmentItem.coverages),
+                selectinload(Appointment.items).selectinload(AppointmentItem.pet),
             ).filter(
                 Appointment.id == apt_id,
                 Appointment.tenant_id == tenant_id,
@@ -307,14 +351,50 @@ class SalesRepository:
                 if pet_ids and item.pet_id not in pet_ids:
                     continue
 
-                # Never remove a service that was covered by a package
+                # Never touch a service that was covered by a package
                 if any(c.service_id == service_id for c in item.coverages):
                     continue
 
                 if any(s.id == service_id for s in item.services):
-                    item.services = [s for s in item.services if s.id != service_id]
-                    if len(item.services) == 0 and len(appointment.items) > 1:
-                        db.delete(item)
+                    ais = db.query(AppointmentItemService).filter(
+                        AppointmentItemService.appointment_item_id == item.id,
+                        AppointmentItemService.service_id == service_id,
+                    ).first()
+
+                    service_obj = next((s for s in item.services if s.id == service_id), None)
+                    service_name = service_obj.name if service_obj else None
+
+                    if ais:
+                        ais.status = "removed"
+                        ais.removed_at = now
+                        ais.removed_by_user_id = user_id
+                        ais.removal_reason = "Removido no carrinho/comanda do PDV"
+                        db.add(ais)
+                    else:
+                        ais = AppointmentItemService(
+                            appointment_item_id=item.id,
+                            service_id=service_id,
+                            status="removed",
+                            removed_at=now,
+                            removed_by_user_id=user_id,
+                            removal_reason="Removido no carrinho/comanda do PDV",
+                        )
+                        db.add(ais)
+
+                    # Create immutable audit log
+                    audit = AppointmentAuditLog(
+                        tenant_id=tenant_id,
+                        appointment_id=appointment.id,
+                        appointment_item_id=item.id,
+                        service_id=service_id,
+                        service_name=service_name,
+                        pet_id=item.pet_id,
+                        pet_name=item.pet.name if item.pet else None,
+                        user_id=user_id,
+                        action="service_removed_from_pos",
+                        notes=f"Serviço '{service_name}' removido da cobrança no PDV",
+                    )
+                    db.add(audit)
 
             db.flush()
 
@@ -352,7 +432,7 @@ class SalesRepository:
         ).join(Client, Comanda.client_id == Client.id).filter(
             Comanda.tenant_id == tenant_id,
             Comanda.status == "open",
-            Comanda.items.any(),
+            Comanda.items.any(ComandaItem.status == "active"),
         )
 
         if search:
@@ -368,18 +448,27 @@ class SalesRepository:
         items = q.order_by(desc(Comanda.updated_at)).offset(offset).limit(limit).all()
         return items, total
 
-    def delete_comanda(self, db: Session, tenant_id: int, comanda_id: int) -> bool:
+    def delete_comanda(self, db: Session, tenant_id: int, comanda_id: int, user_id: int | None = None) -> bool:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
         comanda = self.get_comanda(db, tenant_id, comanda_id)
         if comanda and comanda.status == "open":
             removed_appointment_services: list[tuple[int, int, list[int] | None]] = []
             for existing_item in comanda.items:
-                apt_id = existing_item.appointment_id or comanda.appointment_id
-                if existing_item.item_type == "service" and apt_id:
-                    removed_appointment_services.append((apt_id, existing_item.item_id, existing_item.pet_ids))
+                if getattr(existing_item, "status", "active") == "active":
+                    existing_item.status = "removed"
+                    existing_item.removed_at = now
+                    existing_item.removed_by_user_id = user_id
+                    existing_item.removal_reason = "Comanda cancelada/excluída no PDV"
+                    db.add(existing_item)
+                    apt_id = existing_item.appointment_id or comanda.appointment_id
+                    if existing_item.item_type == "service" and apt_id:
+                        removed_appointment_services.append((apt_id, existing_item.item_id, existing_item.pet_ids))
 
-            db.delete(comanda)
+            comanda.status = "canceled"
+            comanda.total_amount = 0.0
             if removed_appointment_services:
-                self._sync_removed_services_from_appointments(db, tenant_id, removed_appointment_services)
+                self._sync_removed_services_from_appointments(db, tenant_id, removed_appointment_services, user_id=user_id)
             db.commit()
             return True
         return False
