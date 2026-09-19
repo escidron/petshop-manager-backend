@@ -1,6 +1,5 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from app.modules.auth.token import verify_password
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -12,6 +11,8 @@ from app.modules.users.models import User
 from app.modules.users.schemas import UserCreate
 from app.modules.users.service import UserService
 from app.modules.subscriptions.service import is_subscription_eligible_for_refund
+from app.modules.subscriptions.engine import calculate_trial_end, get_default_trial_days
+from sqlalchemy import text
 
 from .repository import TenantRepository, TenantTypeRepository, TenantUserRepository
 
@@ -55,7 +56,6 @@ class TenantService:
             print(f"[DEBUG CREATE_TENANT] Tenant created in memory with default working hours. ID={tenant.id}")
 
             # 3️⃣ Atualizar o tenant_id da sessão para o novo tenant (necessário para passar no RLS)
-            from sqlalchemy import text
             print(f"[DEBUG CREATE_TENANT] Setting SET LOCAL app.current_tenant_id = {tenant.id}")
             db.execute(text("SET LOCAL app.current_tenant_id = :tid"), {"tid": tenant.id})
 
@@ -97,9 +97,9 @@ class TenantService:
 
             # 6️⃣ Criar Subscription
             if plan.trial_days > 0:
-                from app.modules.subscriptions.service import _add_month_preserving_billing_day
-                trial_end = _add_month_preserving_billing_day(now, now.day)
-                print(f"[DEBUG CREATE_TENANT] Creating trialing subscription ending at {trial_end}")
+                effective_trial_days = get_default_trial_days()
+                trial_end, billing_day = calculate_trial_end(now, effective_trial_days)
+                print(f"[DEBUG CREATE_TENANT] Creating trialing subscription ending at {trial_end} (days: {effective_trial_days}, anchor: {billing_day})")
                 sub = self.subscription_repository.create(
                     db=db,
                     tenant_id=tenant.id,
@@ -111,7 +111,7 @@ class TenantService:
                     whatsapp_package_status=pkg_status,
                     whatsapp_messages_limit=pkg_limit,
                     whatsapp_messages_used=0,
-                    billing_day=now.day,
+                    billing_day=billing_day,
                 )
             else:
                 print(f"[DEBUG CREATE_TENANT] Creating incomplete subscription with pending initial payment")

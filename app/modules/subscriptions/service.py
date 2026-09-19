@@ -1006,8 +1006,15 @@ def set_default_payment_method(db: Session, tenant: Tenant, pm_id: str) -> None:
         sub.payment_method = "card"
         now = datetime.now(timezone.utc)
 
-        # Determina o plano base com ID Pagar.me
-        plan_to_use = sub.plan
+        # Determina o plano base com ID Pagar.me (se tiver pacote ativo, usa o Combo correspondente)
+        plan_to_use = None
+        if sub.whatsapp_package_id and sub.whatsapp_package_status == "active":
+            combo_code = COMBO_MAP.get(sub.whatsapp_package_id)
+            if combo_code:
+                plan_to_use = db.query(Plan).filter(Plan.code == combo_code, Plan.is_active == True).first()
+
+        if not plan_to_use or not plan_to_use.pagarme_plan_id:
+            plan_to_use = sub.plan
         if not plan_to_use or not plan_to_use.pagarme_plan_id:
             plan_to_use = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
 
@@ -2012,7 +2019,19 @@ def preview_package_proration(db: Session, tenant: Tenant, package_code: str) ->
     billing_day = sub.billing_day if (sub and sub.billing_day) else datetime.now(timezone.utc).day
 
     limit = PACKAGE_LIMITS.get(package_code, 500)
-    proration = calculate_proration(billing_day, plan.price_cents, total_messages=limit)
+
+    # Verifica se já possui pacote ativo para cobrar apenas a diferença proporcional (Upgrade)
+    current_pkg_id = sub.whatsapp_package_id if sub else None
+    current_pkg_status = sub.whatsapp_package_status if sub else None
+    price_to_calculate = plan.price_cents
+
+    if current_pkg_id and current_pkg_status == "active" and current_pkg_id != package_code:
+        current_plan = db.query(Plan).filter(Plan.code == current_pkg_id, Plan.is_active == True).first()
+        if current_plan:
+            diff = plan.price_cents - current_plan.price_cents
+            price_to_calculate = max(0, diff)
+
+    proration = calculate_proration(billing_day, price_to_calculate, total_messages=limit)
 
     return {
         "package_code": package_code,
@@ -2058,16 +2077,52 @@ def checkout_package(
 
     limit = PACKAGE_LIMITS.get(package_code, 500)
     billing_day = sub.billing_day or datetime.now(timezone.utc).day
-    proration = calculate_proration(billing_day, plan.price_cents, total_messages=limit)
+
+    # Verifica se já possui um pacote ativo (Troca / Upgrade de Pacote)
+    current_pkg_id = sub.whatsapp_package_id
+    current_pkg_status = sub.whatsapp_package_status
+    price_to_calculate = plan.price_cents
+
+    if current_pkg_id and current_pkg_status == "active" and current_pkg_id != package_code:
+        current_plan = db.query(Plan).filter(Plan.code == current_pkg_id, Plan.is_active == True).first()
+        if current_plan:
+            diff = plan.price_cents - current_plan.price_cents
+            price_to_calculate = max(0, diff)
+
+    proration = calculate_proration(billing_day, price_to_calculate, total_messages=limit)
     prorated_amount = proration["prorated_amount_cents"]
     next_billing_date = proration["next_billing_date"]
     is_prorated = proration["is_prorated"]
-    initial_messages_limit = proration["prorated_messages"] if is_prorated else limit
+    initial_messages_limit = limit
+
+    # Se estiver em trial, a data de renovação deve coincidir com trial_ends_at
+    now_utc = datetime.now(timezone.utc)
+    if sub.trial_ends_at and (sub.status == "trialing" or sub.trial_ends_at > now_utc):
+        trial_end = sub.trial_ends_at
+        if trial_end.tzinfo is None:
+            trial_end = trial_end.replace(tzinfo=timezone.utc)
+        next_billing_date = trial_end
 
     customer_id = _ensure_pagarme_customer(db, tenant, user_email, user_name, document)
 
     # PIX
     if payment_method == "pix":
+        if prorated_amount == 0:
+            _repo.update(db, sub, {
+                "whatsapp_package_id": package_code,
+                "whatsapp_package_status": "active",
+                "whatsapp_messages_limit": initial_messages_limit,
+                "whatsapp_period_end": next_billing_date,
+            })
+            db.commit()
+            return {
+                "status": "active",
+                "payment_method": "pix",
+                "amount": 0,
+                "message": "Pacote alterado com sucesso.",
+                "next_billing_date": next_billing_date.isoformat(),
+            }
+
         charge_payload = {
             "customer_id": customer_id,
             "amount": prorated_amount,
@@ -2156,47 +2211,48 @@ def checkout_package(
             final_card_id = card_resp.json()["id"]
             _register_card_for_tenant(db, tenant.id, final_card_id)
 
-    # 1. Cobrança do ciclo atual: sempre cobrança avulsa do pacote (pro-rata ou cheia) até next_billing_date
-    current_charge_amount = prorated_amount if is_prorated else plan.price_cents
-    charge_payload = {
-        "customer_id": customer_id,
-        "amount": current_charge_amount,
-        "payment": {
-            "payment_method": "credit_card",
-            "credit_card": {
-                "card_id": final_card_id,
-                "statement_descriptor": "DATAPET",
-                "installments": 1,
+    # 1. Cobrança do ciclo atual: cobra avulso no cartão apenas se houver valor a cobrar (ex: upgrade ou nova contratação)
+    current_charge_amount = prorated_amount if is_prorated else price_to_calculate
+    if current_charge_amount > 0:
+        charge_payload = {
+            "customer_id": customer_id,
+            "amount": current_charge_amount,
+            "payment": {
+                "payment_method": "credit_card",
+                "credit_card": {
+                    "card_id": final_card_id,
+                    "statement_descriptor": "DATAPET",
+                    "installments": 1,
+                },
             },
-        },
-        "metadata": {
-            "tenant_id": str(tenant.id),
-            "tenant_name": tenant.name,
-            "type": "whatsapp_package_proration" if is_prorated else "whatsapp_package",
-            "package_code": package_code,
-        },
-    }
-    with _pagarme_client() as client:
-        charge_resp = client.post("/charges", json=charge_payload)
-        if charge_resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"Erro ao processar cobrança do pacote: {charge_resp.text}")
-        charge_data = charge_resp.json()
-        if charge_data.get("status") not in ("paid", "active", "pending"):
-            raise HTTPException(status_code=400, detail="Pagamento do pacote recusado pela operadora do cartão")
+            "metadata": {
+                "tenant_id": str(tenant.id),
+                "tenant_name": tenant.name,
+                "type": "whatsapp_package_proration" if is_prorated else "whatsapp_package",
+                "package_code": package_code,
+            },
+        }
+        with _pagarme_client() as client:
+            charge_resp = client.post("/charges", json=charge_payload)
+            if charge_resp.status_code not in (200, 201):
+                raise HTTPException(status_code=502, detail=f"Erro ao processar cobrança do pacote: {charge_resp.text}")
+            charge_data = charge_resp.json()
+            if charge_data.get("status") not in ("paid", "active", "pending"):
+                raise HTTPException(status_code=400, detail="Pagamento do pacote recusado pela operadora do cartão")
 
-        last_trans = charge_data.get("last_transaction", {})
-        card_info = last_trans.get("card", {})
-        _charge_repo.create(
-            db=db,
-            tenant_id=tenant.id,
-            subscription_id=sub.id,
-            pagarme_charge_id=charge_data["id"],
-            amount=current_charge_amount,
-            status=charge_data.get("status", "paid"),
-            payment_method="card",
-            card_brand=card_info.get("brand"),
-            card_last_four=card_info.get("last_four_digits"),
-        )
+            last_trans = charge_data.get("last_transaction", {})
+            card_info = last_trans.get("card", {})
+            _charge_repo.create(
+                db=db,
+                tenant_id=tenant.id,
+                subscription_id=sub.id,
+                pagarme_charge_id=charge_data["id"],
+                amount=current_charge_amount,
+                status=charge_data.get("status", "paid"),
+                payment_method="card",
+                card_brand=card_info.get("brand"),
+                card_last_four=card_info.get("last_four_digits"),
+            )
 
     # Verifica se a assinatura base do tenant está em período de gratuidade (trial) ativo
     is_base_trial_active = (

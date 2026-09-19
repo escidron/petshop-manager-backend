@@ -288,6 +288,30 @@ def cancel_charge(
     return service.cancel_charge(db, tenant, charge_id)
 
 
+@router.get("/charges/{charge_id}/status", response_model=dict)
+def get_charge_status(
+    charge_id: str,
+    ctx: dict = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+):
+    """Retorna o status atual de uma cobrança para auto-detecção no frontend."""
+    tenant = ctx["tenant"]
+    from fastapi import HTTPException
+    from app.modules.subscriptions.models import SubscriptionCharge
+    charge = db.query(SubscriptionCharge).filter(
+        SubscriptionCharge.tenant_id == tenant.id,
+        SubscriptionCharge.pagarme_charge_id == charge_id,
+    ).first()
+    if not charge:
+        raise HTTPException(status_code=404, detail="Cobrança não encontrada")
+    return {
+        "charge_id": charge.pagarme_charge_id,
+        "status": charge.status,
+        "paid": charge.status.lower() == "paid",
+        "payment_method": charge.payment_method,
+    }
+
+
 # ---------------------------------------------------------------------------
 # WhatsApp Packages Endpoints (Proration + Checkout + Cancel)
 # ---------------------------------------------------------------------------
