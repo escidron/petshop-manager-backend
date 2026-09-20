@@ -66,7 +66,7 @@ jobs:
             ACCESS_TOKEN_EXPIRE_MINUTES=480
             REFRESH_TOKEN_EXPIRE_DAYS=7
             APP_NAME=Pet Controle
-            DEFAULT_FROM_EMAIL=mail@sistemapetcontrole.com.br
+            DEFAULT_FROM_EMAIL=mail@sistemadatapet.com.br
             ADMIN_EMAIL=eduardosanchezcidron@gmail.com
 
       - name: Set up Python
