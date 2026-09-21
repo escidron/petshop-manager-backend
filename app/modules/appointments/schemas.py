@@ -165,8 +165,6 @@ class AppointmentResponse(BaseModel):
     recurrence_id: str | None = None
     recurrence_frequency: str | None = None
     recurrence: AppointmentRecurrenceInfo | None = None
-
-    audit_logs: List[AppointmentAuditLogResponse] = Field(default_factory=list)
     created_at: datetime
 
     class Config:

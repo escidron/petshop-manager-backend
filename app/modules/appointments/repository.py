@@ -10,13 +10,15 @@ from app.modules.pets.models import Pet
 
 def _eager_options():
     """Opções de eager loading reutilizáveis para evitar N+1."""
+    from app.modules.sales.models import Sale, SaleItem
     return [
         joinedload(Appointment.client),                          # many-to-one → joinedload ok
-        selectinload(Appointment.sales),                         # one-to-many → selectinload
-        selectinload(Appointment.sale_items),                    # one-to-many → selectinload
+        selectinload(Appointment.sales).selectinload(Sale.items),# one-to-many com items da venda para is_paid
+        selectinload(Appointment.sale_items)
+            .joinedload(SaleItem.sale),                          # many-to-one para is_paid sem N+1
         selectinload(Appointment.items)                          # one-to-many → selectinload
             .joinedload(AppointmentItem.pet)                     # many-to-one dentro do item
-            .selectinload(Pet.photos),                           # one-to-many (pet.photos)
+            .selectinload(Pet.photos),                           # batch eager load to avoid lazy queries
         selectinload(Appointment.items)
             .joinedload(AppointmentItem.pet)
             .selectinload(Pet.client_packages)
