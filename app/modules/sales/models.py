@@ -354,7 +354,4 @@ class ComandaItem(Base):
                         return apt.scheduled_at
             except Exception:
                 pass
-        if not self.appointment_id and self.comanda and getattr(self.comanda, "appointment", None):
-            if getattr(self.comanda.appointment, "scheduled_at", None):
-                return self.comanda.appointment.scheduled_at
         return None
