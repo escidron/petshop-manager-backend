@@ -59,9 +59,11 @@ def get_pos_client_details(client_id: int, request: Request, db: Session = Depen
     client_comanda = sales_service.get_client_open_comanda(db, tenant_id, client_id)
     
     return POSClientDetailsResponse(
-        client_pets=PetService().list_pets_by_client(db, tenant_id, client_id),
-        client_packages=ClientPackageService().list_by_client(db, tenant_id, client_id),
-        client_appointments=AppointmentService().list_by_client(db, tenant_id, client_id),
+        client_pets=PetService().list_pets_by_client(db, tenant_id, client_id, include_photos=False),
+        client_packages=ClientPackageService().list_by_client(db, tenant_id, client_id, active_only=True),
+        client_appointments=AppointmentService().list_by_client(
+            db, tenant_id, client_id, limit=15, only_active_or_recent=True
+        ),
         open_comandas=[client_comanda] if client_comanda else [],
     )
 

@@ -168,8 +168,12 @@ class AppointmentService:
         db: Session,
         tenant_id: int,
         client_id: int,
+        limit: int | None = None,
+        only_active_or_recent: bool = False,
     ):
-        appts = self.repo.list_by_client(db, tenant_id, client_id)
+        appts = self.repo.list_by_client(
+            db, tenant_id, client_id, limit=limit, only_active_or_recent=only_active_or_recent
+        )
         for appt in appts:
             if appt.recurrence_id and not appt.recurrence_frequency:
                 appt.recurrence_frequency = "weekly"

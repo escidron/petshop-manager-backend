@@ -21,6 +21,9 @@ def _eager_options():
             .selectinload(Pet.client_packages)
             .selectinload(ClientPackage.credits),
         selectinload(Appointment.items)
+            .joinedload(AppointmentItem.pet)
+            .selectinload(Pet.photos),
+        selectinload(Appointment.items)
             .selectinload(AppointmentItem.services),             # many-to-many → selectinload
         selectinload(Appointment.items)
             .selectinload(AppointmentItem.coverages),            # one-to-many → selectinload
@@ -130,17 +133,32 @@ class AppointmentRepository:
         db: Session,
         tenant_id: int,
         client_id: int,
+        limit: int | None = None,
+        only_active_or_recent: bool = False,
     ) -> list[Appointment]:
-        return (
+        q = (
             db.query(Appointment)
             .options(*_eager_options())
             .filter(
                 Appointment.tenant_id == tenant_id,
                 Appointment.client_id == client_id,
             )
-            .order_by(Appointment.scheduled_at.desc())
-            .all()
         )
+        if only_active_or_recent:
+            from datetime import datetime, timezone, timedelta
+            from sqlalchemy import or_
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            q = q.filter(
+                or_(
+                    Appointment.status.in_(["pending", "confirmed"]),
+                    Appointment.is_paid == False,
+                    Appointment.scheduled_at >= cutoff,
+                )
+            )
+        q = q.order_by(Appointment.scheduled_at.desc())
+        if limit:
+            q = q.limit(limit)
+        return q.all()
     
     def list_by_tenant(
         self,
