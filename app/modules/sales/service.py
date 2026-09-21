@@ -999,12 +999,14 @@ class SalesService:
                         removed_keys.add((a.id, ais.service_id))
 
         if comanda and comanda.items:
-            # Limpar serviços de agendamentos que não estão mais finalizados/ativos ou que foram dispensados da cobrança (removed)
+            # Limpar serviços de agendamentos que não estão mais finalizados/ativos, foram dispensados da cobrança (removed)
+            # ou serviços cobertos por pacotes (na comanda em aberto devem ficar apenas serviços a pagar)
             stale_items = [
                 ci for ci in list(comanda.items)
                 if ci.item_type == "service" and (
                     (ci.appointment_id and ci.appointment_id not in completed_appt_ids)
                     or (((ci.appointment_id or comanda.appointment_id), ci.item_id) in removed_keys)
+                    or (ci.appointment_id and (float(ci.subtotal or 0) == 0.0 or "(via pacote)" in (ci.name or "")))
                 )
             ]
             if stale_items:
@@ -1039,6 +1041,8 @@ class SalesService:
                 for s in item_resp.services:
                     if getattr(s, "is_removed", False):
                         continue
+                    if getattr(s, "is_package_covered", False):
+                        continue
                     if (a.id, s.id) in existing_keys:
                         continue
 
@@ -1055,17 +1059,15 @@ class SalesService:
                         db.flush()
 
                     real_price = float(Decimal(s.price_cents) / Decimal("100"))
-                    subtotal = 0.0 if s.is_package_covered else real_price
-                    name = f"{s.name} (via pacote)" if s.is_package_covered else s.name
 
                     c_item = ComandaItem(
                         comanda_id=comanda.id,
                         item_type="service",
                         item_id=s.id,
-                        name=name,
+                        name=s.name,
                         quantity=1,
                         unit_price=real_price,
-                        subtotal=subtotal,
+                        subtotal=real_price,
                         employee_id=s.employee_id or emp_map.get(s.id),
                         pet_ids=[item_resp.pet.id] if item_resp.pet else None,
                         unit="UN",
@@ -1086,9 +1088,10 @@ class SalesService:
                 total = sum(Decimal(str(ci.subtotal)) for ci in comanda.items)
                 comanda.total_amount = max(0.0, float(total - Decimal(str(comanda.discount_amount or 0))))
                 db.commit()
-                db.refresh(comanda)
 
-        return comanda
+        if comanda:
+            return self.repository.get_comanda(db, tenant_id, comanda.id)
+        return None
 
     def get_client_open_comanda(self, db: Session, tenant_id: int, client_id: int) -> Comanda | None:
         return self.sync_client_open_comanda(db, tenant_id, client_id)

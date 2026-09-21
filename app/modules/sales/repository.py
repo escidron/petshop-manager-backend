@@ -312,8 +312,7 @@ class SalesRepository:
                 db.add(c_item)
 
         db.commit()
-        db.refresh(comanda)
-        return comanda
+        return self.get_comanda(db, tenant_id, comanda.id)
 
     def _sync_removed_services_from_appointments(
         self,
@@ -401,7 +400,8 @@ class SalesRepository:
     def get_comanda(self, db: Session, tenant_id: int, comanda_id: int) -> Comanda | None:
         return db.query(Comanda).options(
             selectinload(Comanda.client).selectinload(Client.pets),
-            selectinload(Comanda.items),
+            selectinload(Comanda.items).selectinload(ComandaItem.appointment),
+            selectinload(Comanda.appointment),
         ).filter(
             Comanda.id == comanda_id,
             Comanda.tenant_id == tenant_id,
@@ -410,7 +410,8 @@ class SalesRepository:
     def get_client_open_comanda(self, db: Session, tenant_id: int, client_id: int) -> Comanda | None:
         return db.query(Comanda).options(
             selectinload(Comanda.client).selectinload(Client.pets),
-            selectinload(Comanda.items),
+            selectinload(Comanda.items).selectinload(ComandaItem.appointment),
+            selectinload(Comanda.appointment),
         ).filter(
             Comanda.client_id == client_id,
             Comanda.tenant_id == tenant_id,
@@ -428,7 +429,8 @@ class SalesRepository:
     ) -> tuple[list[Comanda], int]:
         q = db.query(Comanda).options(
             selectinload(Comanda.client).selectinload(Client.pets),
-            selectinload(Comanda.items),
+            selectinload(Comanda.items).selectinload(ComandaItem.appointment),
+            selectinload(Comanda.appointment),
         ).join(Client, Comanda.client_id == Client.id).filter(
             Comanda.tenant_id == tenant_id,
             Comanda.status == "open",

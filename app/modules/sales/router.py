@@ -21,6 +21,7 @@ from .schemas import (
     POSClientDetailsResponse,
     ComandaSaveRequest,
     ComandaResponse,
+    PaginatedComandasResponse,
     SaleCancelRequest,
     SaleItemCancelRequest,
 )
@@ -75,7 +76,7 @@ def save_comanda(data: ComandaSaveRequest, request: Request, db: Session = Depen
     return service.save_open_comanda(db, tenant_id, data, user_id=user_id)
 
 
-@router.get("/comandas/open")
+@router.get("/comandas/open", response_model=PaginatedComandasResponse)
 def list_open_comandas(
     request: Request,
     db: Session = Depends(get_db),
