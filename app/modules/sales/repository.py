@@ -235,14 +235,14 @@ class SalesRepository:
                 (
                     item.item_type,
                     item.item_id,
-                    getattr(item, "appointment_id", None) or comanda.appointment_id or data.appointment_id if item.item_type == "service" else None,
+                    getattr(item, "appointment_id", None) if item.item_type == "service" else None,
                 )
                 for item in data.items
             }
 
             for existing_item in list(comanda.items):
                 if getattr(existing_item, "status", "active") == "active":
-                    apt_id = existing_item.appointment_id or comanda.appointment_id
+                    apt_id = existing_item.appointment_id
                     key = (existing_item.item_type, existing_item.item_id, apt_id if existing_item.item_type == "service" else None)
                     if key not in incoming_keys:
                         existing_item.status = "removed"
@@ -272,7 +272,7 @@ class SalesRepository:
 
         # Add new items or update existing active items
         for item in data.items:
-            apt_id = (getattr(item, "appointment_id", None) or comanda.appointment_id) if item.item_type == "service" else None
+            apt_id = getattr(item, "appointment_id", None) if item.item_type == "service" else None
             existing = next(
                 (
                     ci for ci in comanda.items
