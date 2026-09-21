@@ -57,9 +57,13 @@ class PetService:
         client_id: int,
         include_photos: bool = True,
     ):
-        return self.repository.list_by_client(
+        pets = self.repository.list_by_client(
             db, tenant_id, client_id, include_photos=include_photos
         )
+        if not include_photos:
+            for pet in pets:
+                pet.__dict__["photos"] = []
+        return pets
 
     def update_pet(
         self,

@@ -100,9 +100,9 @@ class ClientPackageService:
         return {"items": items, "total": total}
 
     def list_by_client(
-        self, db: Session, tenant_id: int, client_id: int, active_only: bool = False
+        self, db: Session, tenant_id: int, client_id: int, active_only: bool = False, include_usages: bool = True
     ) -> list[ClientPackageResponse]:
-        return self.repo.list_by_client(db, tenant_id, client_id, active_only=active_only)
+        return self.repo.list_by_client(db, tenant_id, client_id, active_only=active_only, include_usages=include_usages)
 
     def deactivate(
         self, db: Session, tenant_id: int, client_package_id: int

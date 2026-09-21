@@ -95,15 +95,19 @@ class ClientPackageRepository:
         )
 
     def list_by_client(
-        self, db: Session, tenant_id: int, client_id: int, active_only: bool = False
+        self, db: Session, tenant_id: int, client_id: int, active_only: bool = False, include_usages: bool = True
     ) -> list[ClientPackage]:
+        options = [
+            selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
+        ]
+        if include_usages:
+            options.extend([
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
+                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user),
+            ])
         q = (
             db.query(ClientPackage)
-            .options(
-                selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
-                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.credit),
-                selectinload(ClientPackage.usages).selectinload(ClientPackageUsage.user)
-            )
+            .options(*options)
             .filter(
                 ClientPackage.tenant_id == tenant_id,
                 ClientPackage.client_id == client_id,
@@ -111,7 +115,11 @@ class ClientPackageRepository:
         )
         if active_only:
             q = q.filter(ClientPackage.is_active == True)
-        return q.order_by(ClientPackage.created_at.desc()).all()
+        pkgs = q.order_by(ClientPackage.created_at.desc()).all()
+        if not include_usages:
+            for pkg in pkgs:
+                pkg.__dict__["usages"] = []
+        return pkgs
 
     def deactivate(self, db: Session, client_package: ClientPackage) -> ClientPackage:
         client_package.is_active = False
