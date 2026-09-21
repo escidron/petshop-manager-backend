@@ -6,7 +6,7 @@ from typing import Optional
 
 from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant
-from .schemas import DashboardStartupResponse
+from .schemas import DashboardStartupResponse, DashboardDayResponse
 
 from app.modules.appointments.service import AppointmentService
 from app.modules.client_packages.service import ClientPackageService
@@ -31,7 +31,6 @@ def get_dashboard_startup(
     appointments = AppointmentService().list_by_day(db, tenant_id, target_date)
     highlighted = AppointmentService().list_highlighted_days(db, tenant_id, start_date, end_date)
     
-    invoices_res = AppointmentService().list_open_invoices(db, tenant_id, limit=15)
     unpaid_res = ClientPackageService().list_unpaid_packages(db, tenant_id, limit=15)
     comandas_res = SalesService().list_open_comandas(db, tenant_id, limit=15)
     
@@ -52,11 +51,35 @@ def get_dashboard_startup(
     return DashboardStartupResponse(
         appointments_today=appointments,
         highlighted_days=highlighted,
-        open_invoices=invoices_res,
         unpaid_packages=unpaid_res,
         packages_catalog=packages,
         waiting_list_pending=waiting_list,
         open_comandas=comandas_res,
+        daily_revenue_cents=daily_revenue_cents,
+    )
+
+
+@router.get("/day", response_model=DashboardDayResponse)
+def get_dashboard_day(
+    request: Request,
+    target_date: date,
+    db: Session = Depends(get_db)
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    appointments = AppointmentService().list_by_day(db, tenant_id, target_date)
+    
+    from app.utils.timezone import get_day_bounds_brazil
+    start_target, end_target = get_day_bounds_brazil(target_date)
+    daily_revenue_val = db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(
+        Sale.tenant_id == tenant_id,
+        Sale.status == "completed",
+        Sale.created_at >= start_target,
+        Sale.created_at <= end_target,
+    ).scalar()
+    daily_revenue_cents = int(round(float(daily_revenue_val) * 100))
+
+    return DashboardDayResponse(
+        appointments=appointments,
         daily_revenue_cents=daily_revenue_cents,
     )
 

@@ -11,9 +11,13 @@ from app.modules.sales.schemas import PaginatedComandasResponse
 class DashboardStartupResponse(BaseModel):
     appointments_today: list[AppointmentResponse]
     highlighted_days: list[date]
-    open_invoices: PaginatedAppointmentsResponse
+    open_invoices: Optional[PaginatedAppointmentsResponse] = None
     unpaid_packages: PaginatedClientPackagesResponse
     packages_catalog: list[Package]
     waiting_list_pending: list[WaitingListEntryResponse]
     open_comandas: Optional[PaginatedComandasResponse] = None
+    daily_revenue_cents: int = 0
+
+class DashboardDayResponse(BaseModel):
+    appointments: list[AppointmentResponse]
     daily_revenue_cents: int = 0
