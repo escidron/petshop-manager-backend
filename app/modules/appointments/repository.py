@@ -21,9 +21,6 @@ def _eager_options():
             .selectinload(Pet.client_packages)
             .selectinload(ClientPackage.credits),
         selectinload(Appointment.items)
-            .joinedload(AppointmentItem.pet)
-            .selectinload(Pet.photos),
-        selectinload(Appointment.items)
             .selectinload(AppointmentItem.services),             # many-to-many → selectinload
         selectinload(Appointment.items)
             .selectinload(AppointmentItem.coverages),            # one-to-many → selectinload
@@ -146,16 +143,28 @@ class AppointmentRepository:
         )
         if only_active_or_recent:
             from datetime import datetime, timezone, timedelta
-            from sqlalchemy import or_
-            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            from sqlalchemy import or_, and_
+            now = datetime.now(timezone.utc)
+            recent_past = now - timedelta(days=7)
+            max_future = now + timedelta(days=60)
             q = q.filter(
+                Appointment.status != "canceled",
                 or_(
-                    Appointment.status.in_(["pending", "confirmed"]),
-                    Appointment.is_paid == False,
-                    Appointment.scheduled_at >= cutoff,
+                    and_(
+                        Appointment.status.in_(["pending", "confirmed"]),
+                        Appointment.scheduled_at >= (now - timedelta(days=1)),
+                        Appointment.scheduled_at <= max_future,
+                    ),
+                    and_(
+                        Appointment.status == "completed",
+                        Appointment.scheduled_at >= recent_past,
+                    ),
                 )
             )
-        q = q.order_by(Appointment.scheduled_at.desc())
+            q = q.order_by(Appointment.scheduled_at.asc())
+        else:
+            q = q.order_by(Appointment.scheduled_at.desc())
+
         if limit:
             q = q.limit(limit)
         return q.all()

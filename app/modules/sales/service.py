@@ -967,7 +967,20 @@ class SalesService:
 
         comanda = self.repository.get_client_open_comanda(db, tenant_id, client_id)
 
-        # Buscar agendamentos finalizados do cliente para checar pendências
+        from datetime import datetime, timezone, timedelta
+        from sqlalchemy import or_
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        appt_filters = [
+            Appointment.tenant_id == tenant_id,
+            Appointment.client_id == client_id,
+            Appointment.status == "completed",
+        ]
+        if comanda and comanda.appointment_id:
+            appt_filters.append(or_(Appointment.scheduled_at >= cutoff, Appointment.id == comanda.appointment_id))
+        else:
+            appt_filters.append(Appointment.scheduled_at >= cutoff)
+
+        # Buscar agendamentos finalizados recentes do cliente para checar pendências
         appts = (
             db.query(Appointment)
             .options(
@@ -978,11 +991,7 @@ class SalesService:
                 selectinload(Appointment.sales),
                 selectinload(Appointment.sale_items),
             )
-            .filter(
-                Appointment.tenant_id == tenant_id,
-                Appointment.client_id == client_id,
-                Appointment.status == "completed",
-            )
+            .filter(*appt_filters)
             .order_by(Appointment.scheduled_at.asc())
             .all()
         )
@@ -1092,7 +1101,9 @@ class SalesService:
                 db.commit()
 
         if comanda:
-            return self.repository.get_comanda(db, tenant_id, comanda.id)
+            if items_added or items_changed:
+                return self.repository.get_comanda(db, tenant_id, comanda.id)
+            return comanda
         return None
 
     def get_client_open_comanda(self, db: Session, tenant_id: int, client_id: int) -> Comanda | None:
