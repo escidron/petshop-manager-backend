@@ -99,11 +99,32 @@ class AppointmentItemResponse(BaseModel):
                 "employee_id": emp_map.get(svc.id),
                 "species": getattr(svc, "species", None),
                 "size": getattr(svc, "size", None),
-                "coat_type": getattr(svc, "coat_type", None),
             }
-            for svc in data.services
+            for svc in getattr(data, "services", [])
         ]
-        return {"id": data.id, "pet": data.pet, "services": services_data}
+        pet = getattr(data, "pet", None)
+        pet_dict = {
+            "id": pet.id,
+            "client_id": pet.client_id,
+            "name": pet.name,
+            "species": pet.species,
+            "breed": pet.breed,
+            "gender": pet.gender,
+            "is_neutered": pet.is_neutered,
+            "size": pet.size,
+            "coat_type": pet.coat_type,
+            "coat_color": pet.coat_color,
+            "age": pet.age,
+            "age_unit": pet.age_unit,
+            "birth_date": pet.birth_date,
+            "notes": pet.notes,
+            "is_active": pet.is_active,
+            "is_deceased": getattr(pet, "is_deceased", False),
+            "owner_name": getattr(pet, "owner_name", None),
+            "photos": [],
+        } if pet else None
+
+        return {"id": data.id, "pet": pet_dict, "services": services_data}
 
 
 class AppointmentRecurrence(BaseModel):
