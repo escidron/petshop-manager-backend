@@ -862,114 +862,8 @@ class AppointmentService:
                 )
             ).all()
 
-            if uncovered_services or open_comandas:
-                # Há comanda ou itens a pagar: remove package_sale para que tudo vá para o Caixa
-                if package_sale:
-                    for old_si in list(package_sale.items):
-                        db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
-                    db.delete(package_sale)
-                    db.flush()
-
-                for comanda in open_comandas:
-                    for ci in list(comanda.items):
-                        if ci.appointment_id == appointment.id or (ci.appointment_id is None and comanda.appointment_id == appointment.id and ci.item_type == "service"):
-                            comanda.items.remove(ci)
-                            db.delete(ci)
-                    db.flush()
-
-                    for it, s in covered_services:
-                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
-                        real_price = float(Decimal(s.price_cents) / Decimal("100"))
-                        c_item = ComandaItem(
-                            comanda_id=comanda.id,
-                            item_type="service",
-                            item_id=s.id,
-                            name=f"{s.name} (via pacote)",
-                            quantity=1,
-                            unit_price=real_price,
-                            subtotal=0.0,
-                            employee_id=emp_id,
-                            pet_ids=[it.pet_id],
-                            unit="UN",
-                            appointment_id=appointment_full.id,
-                        )
-                        db.add(c_item)
-
-                    for it, s in uncovered_services:
-                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
-                        price = float(Decimal(s.price_cents) / Decimal("100"))
-                        c_item = ComandaItem(
-                            comanda_id=comanda.id,
-                            item_type="service",
-                            item_id=s.id,
-                            name=s.name,
-                            quantity=1,
-                            unit_price=price,
-                            subtotal=price,
-                            employee_id=emp_id,
-                            pet_ids=[it.pet_id],
-                            unit="UN",
-                            appointment_id=appointment_full.id,
-                        )
-                        db.add(c_item)
-
-                    db.flush()
-                    remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
-                    comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
-                    if not comanda.items:
-                        db.delete(comanda)
-
-                if uncovered_services and not open_comandas:
-                    extra_total = sum(Decimal(s.price_cents) / Decimal("100") for _, s in uncovered_services)
-                    comanda = Comanda(
-                        tenant_id=tenant_id,
-                        client_id=appointment_full.client_id,
-                        appointment_id=appointment_full.id,
-                        status="open",
-                        total_amount=float(extra_total),
-                        discount_amount=0.0,
-                    )
-                    db.add(comanda)
-                    db.flush()
-
-                    for it, s in covered_services:
-                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
-                        real_price = float(Decimal(s.price_cents) / Decimal("100"))
-                        c_item = ComandaItem(
-                            comanda_id=comanda.id,
-                            item_type="service",
-                            item_id=s.id,
-                            name=f"{s.name} (via pacote)",
-                            quantity=1,
-                            unit_price=real_price,
-                            subtotal=0.0,
-                            employee_id=emp_id,
-                            pet_ids=[it.pet_id],
-                            unit="UN",
-                            appointment_id=appointment_full.id,
-                        )
-                        db.add(c_item)
-
-                    for it, s in uncovered_services:
-                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
-                        price = float(Decimal(s.price_cents) / Decimal("100"))
-                        c_item = ComandaItem(
-                            comanda_id=comanda.id,
-                            item_type="service",
-                            item_id=s.id,
-                            name=s.name,
-                            quantity=1,
-                            unit_price=price,
-                            subtotal=price,
-                            employee_id=emp_id,
-                            pet_ids=[it.pet_id],
-                            unit="UN",
-                            appointment_id=appointment_full.id,
-                        )
-                        db.add(c_item)
-
-            elif covered_services:
-                # 100% pacote sem extras nem comanda
+            # 1. Sincroniza serviços de pacote em package_sale (comissões registradas diretamente)
+            if covered_services:
                 if not package_sale:
                     package_sale = Sale(
                         tenant_id=tenant_id,
@@ -1025,6 +919,75 @@ class AppointmentService:
                 for old_si in list(package_sale.items):
                     db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
                 db.delete(package_sale)
+                db.flush()
+
+            # 2. Sincroniza serviços a pagar na Comanda aberta (NUNCA serviços de pacote)
+            if open_comandas:
+                for comanda in open_comandas:
+                    for ci in list(comanda.items):
+                        if (
+                            ci.appointment_id == appointment.id
+                            or (ci.appointment_id is None and comanda.appointment_id == appointment.id and ci.item_type == "service")
+                            or (ci.appointment_id and (float(ci.subtotal or 0) == 0.0 or "(via pacote)" in (ci.name or "")))
+                        ):
+                            comanda.items.remove(ci)
+                            db.delete(ci)
+                    db.flush()
+
+                    for it, s in uncovered_services:
+                        emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                        price = float(Decimal(s.price_cents) / Decimal("100"))
+                        c_item = ComandaItem(
+                            comanda_id=comanda.id,
+                            item_type="service",
+                            item_id=s.id,
+                            name=s.name,
+                            quantity=1,
+                            unit_price=price,
+                            subtotal=price,
+                            employee_id=emp_id,
+                            pet_ids=[it.pet_id],
+                            unit="UN",
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(c_item)
+
+                    db.flush()
+                    remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
+                    comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
+                    if not comanda.items:
+                        db.delete(comanda)
+
+            elif uncovered_services:
+                extra_total = sum(Decimal(s.price_cents) / Decimal("100") for _, s in uncovered_services)
+                comanda = Comanda(
+                    tenant_id=tenant_id,
+                    client_id=appointment_full.client_id,
+                    appointment_id=appointment_full.id,
+                    status="open",
+                    total_amount=float(extra_total),
+                    discount_amount=0.0,
+                )
+                db.add(comanda)
+                db.flush()
+
+                for it, s in uncovered_services:
+                    emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                    price = float(Decimal(s.price_cents) / Decimal("100"))
+                    c_item = ComandaItem(
+                        comanda_id=comanda.id,
+                        item_type="service",
+                        item_id=s.id,
+                        name=s.name,
+                        quantity=1,
+                        unit_price=price,
+                        subtotal=price,
+                        employee_id=emp_id,
+                        pet_ids=[it.pet_id],
+                        unit="UN",
+                        appointment_id=appointment_full.id,
+                    )
+                    db.add(c_item)
 
         db.commit()
 
@@ -1249,67 +1212,8 @@ class AppointmentService:
                     Comanda.status == "open",
                 ).first()
 
-                # Se há serviços não cobertos (ou comanda aberta), tudo vai para a comanda unificada
-                if uncovered_services or existing_comanda:
-                    extra_total = sum(Decimal(service.price_cents) / Decimal("100") for _, service in uncovered_services)
-
-                    if not existing_comanda:
-                        comanda = Comanda(
-                            tenant_id=tenant_id,
-                            client_id=appointment_full.client_id,
-                            appointment_id=appointment_full.id,
-                            status="open",
-                            total_amount=float(extra_total),
-                            discount_amount=0.0,
-                        )
-                        db.add(comanda)
-                        db.flush()
-                    else:
-                        comanda = existing_comanda
-                        comanda.total_amount = float(Decimal(str(comanda.total_amount)) + extra_total)
-                        if not comanda.appointment_id:
-                            comanda.appointment_id = appointment_full.id
-
-                    # Inclui serviços cobertos por pacote na comanda com subtotal 0,00
-                    for item, service in covered_services:
-                        emp_id = item_emp_maps[item.id].get(service.id)
-                        real_price = float(Decimal(service.price_cents) / Decimal("100"))
-                        c_item = ComandaItem(
-                            comanda_id=comanda.id,
-                            item_type="service",
-                            item_id=service.id,
-                            name=f"{service.name} (via pacote)",
-                            quantity=1,
-                            unit_price=real_price,
-                            subtotal=0.0,
-                            employee_id=emp_id,
-                            pet_ids=[item.pet_id],
-                            unit="UN",
-                            appointment_id=appointment_full.id,
-                        )
-                        db.add(c_item)
-
-                    # Inclui serviços não cobertos por pacote com preço normal
-                    for item, service in uncovered_services:
-                        emp_id = item_emp_maps[item.id].get(service.id)
-                        price = float(Decimal(service.price_cents) / Decimal("100"))
-                        c_item = ComandaItem(
-                            comanda_id=comanda.id,
-                            item_type="service",
-                            item_id=service.id,
-                            name=service.name,
-                            quantity=1,
-                            unit_price=price,
-                            subtotal=price,
-                            employee_id=emp_id,
-                            pet_ids=[item.pet_id],
-                            unit="UN",
-                            appointment_id=appointment_full.id,
-                        )
-                        db.add(c_item)
-
-                elif covered_services:
-                    # Agendamento 100% pacote sem extras nem comanda: conclui direto com package_sale
+                # 1. Serviços de pacote geram package_sale e comissões diretamente
+                if covered_services:
                     package_sale = Sale(
                         tenant_id=tenant_id,
                         client_id=appointment_full.client_id,
@@ -1354,6 +1258,46 @@ class AppointmentService:
                                 )
                             except Exception:
                                 pass
+
+                # 2. Se há serviços não cobertos (a pagar), adiciona APENAS os não cobertos à comanda aberta
+                if uncovered_services:
+                    extra_total = sum(Decimal(service.price_cents) / Decimal("100") for _, service in uncovered_services)
+
+                    if not existing_comanda:
+                        comanda = Comanda(
+                            tenant_id=tenant_id,
+                            client_id=appointment_full.client_id,
+                            appointment_id=appointment_full.id,
+                            status="open",
+                            total_amount=float(extra_total),
+                            discount_amount=0.0,
+                        )
+                        db.add(comanda)
+                        db.flush()
+                    else:
+                        comanda = existing_comanda
+                        comanda.total_amount = float(Decimal(str(comanda.total_amount)) + extra_total)
+                        if not comanda.appointment_id:
+                            comanda.appointment_id = appointment_full.id
+
+                    # Inclui APENAS serviços não cobertos por pacote com preço normal
+                    for item, service in uncovered_services:
+                        emp_id = item_emp_maps[item.id].get(service.id)
+                        price = float(Decimal(service.price_cents) / Decimal("100"))
+                        c_item = ComandaItem(
+                            comanda_id=comanda.id,
+                            item_type="service",
+                            item_id=service.id,
+                            name=service.name,
+                            quantity=1,
+                            unit_price=price,
+                            subtotal=price,
+                            employee_id=emp_id,
+                            pet_ids=[item.pet_id],
+                            unit="UN",
+                            appointment_id=appointment_full.id,
+                        )
+                        db.add(c_item)
 
             db.commit()
 

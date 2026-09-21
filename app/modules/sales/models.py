@@ -331,5 +331,30 @@ class ComandaItem(Base):
     removal_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     comanda = relationship("Comanda", back_populates="items")
-    appointment = relationship("Appointment")
+    appointment = relationship("Appointment", lazy="joined")
     removed_by_user = relationship("app.modules.users.models.User", foreign_keys=[removed_by_user_id])
+
+    @property
+    def appointment_date(self) -> datetime | None:
+        if self.item_type != "service":
+            return None
+        if self.appointment and getattr(self.appointment, "scheduled_at", None):
+            return self.appointment.scheduled_at
+        if self.appointment_id:
+            if self.comanda and getattr(self.comanda, "appointment_id", None) == self.appointment_id:
+                if getattr(self.comanda, "appointment", None) and getattr(self.comanda.appointment, "scheduled_at", None):
+                    return self.comanda.appointment.scheduled_at
+            try:
+                from app.modules.appointments.models import Appointment
+                from sqlalchemy.orm import object_session
+                sess = object_session(self)
+                if sess:
+                    apt = sess.query(Appointment).filter(Appointment.id == self.appointment_id).first()
+                    if apt and apt.scheduled_at:
+                        return apt.scheduled_at
+            except Exception:
+                pass
+        if not self.appointment_id and self.comanda and getattr(self.comanda, "appointment", None):
+            if getattr(self.comanda.appointment, "scheduled_at", None):
+                return self.comanda.appointment.scheduled_at
+        return None

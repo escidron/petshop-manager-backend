@@ -104,6 +104,7 @@ class ComandaItemBase(BaseModel):
     client_package_id_to_pay: int | None = None
     appointment_id: int | None = None
     unit: str = "UN"
+    appointment_date: datetime | None = None
 
 class ComandaItemCreate(ComandaItemBase):
     pass
