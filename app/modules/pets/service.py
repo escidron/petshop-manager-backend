@@ -55,9 +55,10 @@ class PetService:
         db: Session,
         tenant_id: int,
         client_id: int,
+        include_photos: bool = True,
     ):
         return self.repository.list_by_client(
-            db, tenant_id, client_id
+            db, tenant_id, client_id, include_photos=include_photos
         )
 
     def update_pet(

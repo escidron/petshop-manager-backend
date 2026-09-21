@@ -50,17 +50,15 @@ class PetRepository:
         db: Session,
         tenant_id: int,
         client_id: int,
+        include_photos: bool = True,
     ) -> list[Pet]:
-        return (
-            db.query(Pet)
-            .options(joinedload(Pet.photos))
-            .filter(
-                Pet.tenant_id == tenant_id,
-                Pet.client_id == client_id,
-            )
-            .order_by(Pet.name)
-            .all()
+        q = db.query(Pet).filter(
+            Pet.tenant_id == tenant_id,
+            Pet.client_id == client_id,
         )
+        if include_photos:
+            q = q.options(joinedload(Pet.photos))
+        return q.order_by(Pet.name).all()
 
     def update(
         self,

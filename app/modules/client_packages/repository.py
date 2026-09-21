@@ -95,9 +95,9 @@ class ClientPackageRepository:
         )
 
     def list_by_client(
-        self, db: Session, tenant_id: int, client_id: int
+        self, db: Session, tenant_id: int, client_id: int, active_only: bool = False
     ) -> list[ClientPackage]:
-        return (
+        q = (
             db.query(ClientPackage)
             .options(
                 selectinload(ClientPackage.credits).selectinload(ClientPackageCredit.service),
@@ -108,9 +108,10 @@ class ClientPackageRepository:
                 ClientPackage.tenant_id == tenant_id,
                 ClientPackage.client_id == client_id,
             )
-            .order_by(ClientPackage.created_at.desc())
-            .all()
         )
+        if active_only:
+            q = q.filter(ClientPackage.is_active == True)
+        return q.order_by(ClientPackage.created_at.desc()).all()
 
     def deactivate(self, db: Session, client_package: ClientPackage) -> ClientPackage:
         client_package.is_active = False

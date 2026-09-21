@@ -1074,17 +1074,19 @@ class SalesService:
                         appointment_id=a.id,
                     )
                     db.add(c_item)
+                    if comanda.items is not None:
+                        comanda.items.append(c_item)
                     existing_keys.add((a.id, s.id))
                     items_added = True
 
         if comanda:
+            db.flush()
+            db.refresh(comanda, ["items"])
             if not comanda.items or len(comanda.items) == 0:
                 db.delete(comanda)
                 db.commit()
                 return None
             elif items_added or items_changed:
-                db.flush()
-                db.refresh(comanda)
                 total = sum(Decimal(str(ci.subtotal)) for ci in comanda.items)
                 comanda.total_amount = max(0.0, float(total - Decimal(str(comanda.discount_amount or 0))))
                 db.commit()
