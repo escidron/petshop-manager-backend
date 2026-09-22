@@ -263,6 +263,19 @@ class ComandaItem(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
     comanda_id: Mapped[int] = mapped_column(
         ForeignKey("comandas.id", ondelete="CASCADE"),
         nullable=False,
