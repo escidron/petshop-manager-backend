@@ -1110,9 +1110,21 @@ class AppointmentService:
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
 
         if not appointment:
-            return ("Agendamento não encontrado")
+            raise HTTPException(status_code=404, detail="Agendamento não encontrado")
 
         current_status = appointment.status
+
+        # Idempotência: Se o agendamento já está no status resultante da ação (ex: clique duplo rápido ou retry),
+        # retorna o agendamento atual com as relações em vez de lançar erro 400.
+        target_status_map = {
+            AppointmentAction.CONFIRM: AppointmentStatus.CONFIRMED,
+            AppointmentAction.START: AppointmentStatus.IN_PROGRESS,
+            AppointmentAction.COMPLETE: AppointmentStatus.COMPLETED,
+            AppointmentAction.CANCEL: AppointmentStatus.CANCELED,
+            AppointmentAction.NO_SHOW: AppointmentStatus.NO_SHOW,
+        }
+        if target_status_map.get(action) == current_status:
+            return self.repo.get_with_relations(db, appointment.id)
 
         if current_status not in self.TRANSITIONS:
             raise HTTPException(
