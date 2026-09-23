@@ -959,8 +959,9 @@ class AppointmentService:
                     db.flush()
                     remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
                     comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
-                    if not comanda.items:
-                        db.delete(comanda)
+                    if not comanda.items or len(comanda.items) == 0:
+                        comanda.status = "canceled"
+                        comanda.total_amount = 0.0
 
             elif uncovered_services:
                 extra_total = sum(Decimal(s.price_cents) / Decimal("100") for _, s in uncovered_services)
@@ -1822,9 +1823,9 @@ class AppointmentService:
                 float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount or 0))),
             )
             if not comanda.items or len(comanda.items) == 0:
-                db.delete(comanda)
-            else:
-                db.add(comanda)
+                comanda.status = "canceled"
+                comanda.total_amount = 0.0
+            db.add(comanda)
 
         # 6. Atualizar status do agendamento para cancelado
         appointment.status = AppointmentStatus.CANCELED

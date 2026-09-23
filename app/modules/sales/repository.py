@@ -26,12 +26,21 @@ def _sale_eager_options():
 
 class SalesRepository:
     def create(self, db: Session, tenant_id: int, data: SaleCreate) -> Sale:
+        comanda_id = data.comanda_id
+        if comanda_id:
+            exists = db.query(Comanda.id).filter(
+                Comanda.id == comanda_id,
+                Comanda.tenant_id == tenant_id,
+            ).first()
+            if not exists:
+                comanda_id = None
+
         db_sale = Sale(
             tenant_id=tenant_id,
             client_id=data.client_id,
             pet_id=data.pet_id,
             appointment_id=data.appointment_id,
-            comanda_id=data.comanda_id,
+            comanda_id=comanda_id,
             total_amount=data.total_amount,
             discount_amount=data.discount_amount,
             payment_method=data.payment_method,
@@ -72,9 +81,9 @@ class SalesRepository:
 
         # If linked to a comanda (or if an open comanda exists for this appointment/client)
         target_comanda = None
-        if data.comanda_id:
+        if comanda_id:
             target_comanda = db.query(Comanda).filter(
-                Comanda.id == data.comanda_id,
+                Comanda.id == comanda_id,
                 Comanda.tenant_id == tenant_id,
             ).first()
         elif data.appointment_id:
