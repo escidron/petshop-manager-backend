@@ -11,9 +11,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Set Backup Filename
+    - name: Set Backup Filename & Date Variables
       id: vars
-      run: echo "FILE_NAME=backup_petshop_prod_$(date +'%Y-%m-%d_%H-%M-%S').sql.gz" >> $GITHUB_ENV
+      run: |
+        TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
+        echo "FILE_NAME=backup_datapet_prod_${TIMESTAMP}.sql.gz" >> $GITHUB_ENV
+        echo "DAY_OF_WEEK=$(date +'%u')" >> $GITHUB_ENV  # 1=Segunda, ..., 7=Domingo
+        echo "DAY_OF_MONTH=$(date +'%d')" >> $GITHUB_ENV # 01 a 31
 
     - name: Dump Supabase Database
       env:
@@ -24,7 +28,7 @@ jobs:
         echo "Iniciando backup do banco de dados (usando imagem Docker do Postgres 17 para compatibilidade)..."
         # Usamos docker para garantir que a versao do pg_dump bata com a do Supabase (PG 17)
         docker run --rm -i postgres:17 pg_dump "$DATABASE_URL" -F p --clean | gzip > ${{ env.FILE_NAME }}
-        echo "Backup concluido localmente: ${{ env.FILE_NAME }}"
+        echo "Backup concluido localmente: ${{ env.FILE_NAME }} ($(du -h ${{ env.FILE_NAME }} | cut -f1))"
 
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
@@ -35,11 +39,27 @@ jobs:
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
 
-    - name: Upload Backup to Google Cloud Storage
+    - name: Upload Backup to Google Cloud Storage (GFS Strategy)
       env:
         # O nome do seu bucket exclusivo de backups guardado nos Secrets do GitHub
         GCS_BACKUP_BUCKET_NAME: ${{ secrets.GCS_BACKUP_BUCKET_NAME }}
       run: |
         echo "Fazendo upload para o Google Cloud Storage (Bucket: $GCS_BACKUP_BUCKET_NAME)..."
-        gsutil cp ${{ env.FILE_NAME }} gs://$GCS_BACKUP_BUCKET_NAME/database_backups/${{ env.FILE_NAME }}
-        echo "Upload concluido com sucesso e protegido na nuvem!"
+
+        # 1. Backup Diário: Salva sempre na pasta daily/
+        echo "-> [DAILY] Enviando backup diário..."
+        gsutil cp ${{ env.FILE_NAME }} gs://$GCS_BACKUP_BUCKET_NAME/database_backups/daily/${{ env.FILE_NAME }}
+
+        # 2. Backup Semanal: Todo domingo (dia 7), salva cópia na pasta weekly/
+        if [ "${{ env.DAY_OF_WEEK }}" = "7" ]; then
+          echo "-> [WEEKLY] Domingo detectado! Salvando cópia de retenção semanal..."
+          gsutil cp ${{ env.FILE_NAME }} gs://$GCS_BACKUP_BUCKET_NAME/database_backups/weekly/${{ env.FILE_NAME }}
+        fi
+
+        # 3. Backup Mensal: No 1º dia de cada mês (dia 01), salva cópia na pasta monthly/
+        if [ "${{ env.DAY_OF_MONTH }}" = "01" ]; then
+          echo "-> [MONTHLY] 1º dia do mês detectado! Salvando cópia de retenção mensal..."
+          gsutil cp ${{ env.FILE_NAME }} gs://$GCS_BACKUP_BUCKET_NAME/database_backups/monthly/${{ env.FILE_NAME }}
+        fi
+
+        echo "Upload concluído com sucesso e organizado na nuvem!"
