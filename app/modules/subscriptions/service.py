@@ -632,7 +632,7 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
         "customer_id": customer_id,
         "payment": {
             "payment_method": "pix",
-            "pix": {"expires_in": 3600},
+            "pix": {"expires_in": 1800},
         },
         "amount": plan.price_cents,
         "currency": plan.currency or "BRL",
@@ -2129,7 +2129,7 @@ def checkout_package(
             "payment": {
                 "payment_method": "pix",
                 "pix": {
-                    "expires_in": 86400,
+                    "expires_in": 1800,
                 },
             },
             "metadata": {

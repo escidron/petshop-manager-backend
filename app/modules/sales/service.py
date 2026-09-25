@@ -1092,7 +1092,8 @@ class SalesService:
             db.flush()
             db.refresh(comanda, ["items"])
             if not comanda.items or len(comanda.items) == 0:
-                db.delete(comanda)
+                comanda.status = "canceled"
+                comanda.total_amount = 0.0
                 db.commit()
                 return None
             elif items_added or items_changed:

@@ -959,8 +959,9 @@ class AppointmentService:
                     db.flush()
                     remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
                     comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
-                    if not comanda.items:
-                        db.delete(comanda)
+                    if not comanda.items or len(comanda.items) == 0:
+                        comanda.status = "canceled"
+                        comanda.total_amount = 0.0
 
             elif uncovered_services:
                 extra_total = sum(Decimal(s.price_cents) / Decimal("100") for _, s in uncovered_services)
@@ -1109,9 +1110,21 @@ class AppointmentService:
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
 
         if not appointment:
-            return ("Agendamento não encontrado")
+            raise HTTPException(status_code=404, detail="Agendamento não encontrado")
 
         current_status = appointment.status
+
+        # Idempotência: Se o agendamento já está no status resultante da ação (ex: clique duplo rápido ou retry),
+        # retorna o agendamento atual com as relações em vez de lançar erro 400.
+        target_status_map = {
+            AppointmentAction.CONFIRM: AppointmentStatus.CONFIRMED,
+            AppointmentAction.START: AppointmentStatus.IN_PROGRESS,
+            AppointmentAction.COMPLETE: AppointmentStatus.COMPLETED,
+            AppointmentAction.CANCEL: AppointmentStatus.CANCELED,
+            AppointmentAction.NO_SHOW: AppointmentStatus.NO_SHOW,
+        }
+        if target_status_map.get(action) == current_status:
+            return self.repo.get_with_relations(db, appointment.id)
 
         if current_status not in self.TRANSITIONS:
             raise HTTPException(
@@ -1822,9 +1835,9 @@ class AppointmentService:
                 float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount or 0))),
             )
             if not comanda.items or len(comanda.items) == 0:
-                db.delete(comanda)
-            else:
-                db.add(comanda)
+                comanda.status = "canceled"
+                comanda.total_amount = 0.0
+            db.add(comanda)
 
         # 6. Atualizar status do agendamento para cancelado
         appointment.status = AppointmentStatus.CANCELED
