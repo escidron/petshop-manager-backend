@@ -1,0 +1,86 @@
+name: Cloud Run Business Hours Scheduler
+
+on:
+  schedule:
+    # 07:00 Horário de Brasília (10:00 UTC) - Segunda a Sexta: Acordar
+    - cron: '0 10 * * 1-5'
+    # 08:00 Horário de Brasília (11:00 UTC) - Sábado: Acordar
+    - cron: '0 11 * * 6'
+    # 20:00 Horário de Brasília (23:00 UTC) - Segunda a Sexta: Dormir
+    - cron: '0 23 * * 1-5'
+    # 18:00 Horário de Brasília (21:00 UTC) - Sábado: Dormir
+    - cron: '0 21 * * 6'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Ação manual (ou auto para seguir o horário atual)'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - 'auto'
+          - 'wake (min-instances=1)'
+          - 'sleep (min-instances=0)'
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: petcontrole-backend-prod
+  REGION: us-east1
+
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Calculate Target Min Instances
+        id: calc
+        run: |
+          ACTION="${{ inputs.action }}"
+          
+          if [ "$ACTION" = "wake (min-instances=1)" ]; then
+            TARGET=1
+            REASON="Acionamento manual para acordar"
+          elif [ "$ACTION" = "sleep (min-instances=0)" ]; then
+            TARGET=0
+            REASON="Acionamento manual para dormir"
+          else
+            # Horário de Brasília (UTC-3)
+            HOUR=$(TZ="America/Sao_Paulo" date +'%H')
+            DOW=$(TZ="America/Sao_Paulo" date +'%u') # 1=Segunda, ..., 6=Sábado, 7=Domingo
+            
+            echo "Hora atual em Brasília: $HOUR:00 (Dia da semana: $DOW)"
+            
+            # Segunda a Sexta das 07h às 19h59
+            if [ "$DOW" -ge 1 ] && [ "$DOW" -le 5 ] && [ "$HOUR" -ge 7 ] && [ "$HOUR" -lt 20 ]; then
+              TARGET=1
+              REASON="Horário comercial (Segunda a Sexta 07h-20h)"
+            # Sábado das 08h às 17h59
+            elif [ "$DOW" -eq 6 ] && [ "$HOUR" -ge 8 ] && [ "$HOUR" -lt 18 ]; then
+              TARGET=1
+              REASON="Horário comercial (Sábado 08h-18h)"
+            # Fora do horário (noite ou domingo)
+            else
+              TARGET=0
+              REASON="Fora do horário comercial (Noite/Domingo)"
+            fi
+          fi
+          
+          echo "TARGET=$TARGET" >> $GITHUB_ENV
+          echo "REASON=$REASON" >> $GITHUB_ENV
+          echo "Decisão: min-instances=$TARGET ($REASON)"
+
+      - name: Google Auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Update Cloud Run Min Instances
+        run: |
+          echo "Atualizando ${{ env.SERVICE_NAME }} para min-instances=${{ env.TARGET }}..."
+          gcloud run services update ${{ env.SERVICE_NAME }} \
+            --min-instances=${{ env.TARGET }} \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }}
+          echo "Sucesso! Serviço agora está com min-instances=${{ env.TARGET }}."

@@ -41,6 +41,20 @@ jobs:
           # Envia a imagem para o Artifact Registry
           docker push us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-production:${{ github.sha }}
 
+      - name: Determine Target Min Instances
+        run: |
+          HOUR=$(TZ="America/Sao_Paulo" date +'%H')
+          DOW=$(TZ="America/Sao_Paulo" date +'%u')
+          if [ "$DOW" -ge 1 ] && [ "$DOW" -le 5 ] && [ "$HOUR" -ge 7 ] && [ "$HOUR" -lt 20 ]; then
+            MIN_INSTANCES=1
+          elif [ "$DOW" -eq 6 ] && [ "$HOUR" -ge 8 ] && [ "$HOUR" -lt 18 ]; then
+            MIN_INSTANCES=1
+          else
+            MIN_INSTANCES=0
+          fi
+          echo "MIN_INSTANCES=$MIN_INSTANCES" >> $GITHUB_ENV
+          echo "Deploying with min-instances=$MIN_INSTANCES (Hour: $HOUR, DOW: $DOW)"
+
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
         with:
@@ -48,7 +62,7 @@ jobs:
           region: ${{ env.REGION }}
           image: us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-production:${{ github.sha }}
           flags: |
-            --min-instances=1
+            --min-instances=${{ env.MIN_INSTANCES }}
             --max-instances=10
             --allow-unauthenticated
           env_vars: |
