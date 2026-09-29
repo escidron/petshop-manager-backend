@@ -32,8 +32,8 @@ jobs:
           PERCENT=$((SIZE_MB * 100 / 500))
           echo "-> Tamanho do banco: ${SIZE_MB} MB / 500 MB (${PERCENT}% da cota gratuita)"
           
-          if [ "$SIZE_MB" -ge 15 ]; then
-            echo "-> Alerta de cota atingido (Modo Teste >= 15MB)! Enviando notificação para o Sentry..."
+          if [ "$SIZE_MB" -ge 350 ]; then
+            echo "-> Alerta de cota atingido (>= 350 MB / 70%)! Enviando notificação para o Sentry..."
             pip install --quiet sentry-sdk
             SIZE_MB="$SIZE_MB" PERCENT="$PERCENT" python3 -c "import textwrap; exec(textwrap.dedent('''
                 import os, sentry_sdk
@@ -42,11 +42,11 @@ jobs:
                 percent = int(os.getenv('PERCENT', '0'))
                 if dsn:
                     sentry_sdk.init(dsn=dsn, traces_sample_rate=1.0)
-                    level = 'error' if size_mb >= 20 else 'warning'
-                    prefix = '[TESTE DE ALERTA] URGENTE' if size_mb >= 20 else '[TESTE DE ALERTA] AVISO'
+                    level = 'error' if size_mb >= 425 else 'warning'
+                    prefix = 'URGENTE' if size_mb >= 425 else 'AVISO DE COTA'
                     msg = f'{prefix}: Banco de dados em {size_mb} MB ({percent}% da cota gratuita de 500 MB).'
-                    if size_mb >= 20:
-                        msg += ' Risco iminente de limite atingido! Faça upgrade para o plano Pro.'
+                    if size_mb >= 425:
+                        msg += ' Risco iminente de limite atingido! Faça upgrade para o plano Pro imediatamente.'
                     else:
                         msg += ' Planeje o upgrade para o plano Pro ou limpeza de dados.'
                     sentry_sdk.set_tag('component', 'database-quota')
@@ -59,7 +59,7 @@ jobs:
                     print('AVISO: SENTRY_DSN não encontrado nos secrets do GitHub!')
             '''))"
           else
-            echo "-> Tamanho dentro da margem segura (< 15 MB em teste). Nenhum alerta necessário."
+            echo "-> Tamanho dentro da margem segura (< 70% / 350 MB). Nenhum alerta necessário."
           fi
         else
           echo "Aviso: Não foi possível obter o tamanho do banco."
