@@ -35,27 +35,26 @@ jobs:
           if [ "$SIZE_MB" -ge 350 ]; then
             echo "-> Alerta de cota atingido! Enviando notificação para o Sentry..."
             pip install --quiet sentry-sdk
-            python3 -c "
-import os, sentry_sdk
-dsn = os.getenv('SENTRY_DSN')
-size_mb = int('${SIZE_MB}')
-percent = int('${PERCENT}')
-
-if dsn:
-    sentry_sdk.init(dsn=dsn, traces_sample_rate=1.0)
-    level = 'error' if size_mb >= 425 else 'warning'
-    prefix = 'URGENTE' if size_mb >= 425 else 'AVISO'
-    msg = f'{prefix}: Banco de dados em {size_mb} MB ({percent}% da cota gratuita de 500 MB).'
-    if size_mb >= 425:
-        msg += ' Risco iminente de limite atingido! Faça upgrade para o plano Pro.'
-    else:
-        msg += ' Planeje o upgrade para o plano Pro ou limpeza de dados.'
-    sentry_sdk.set_tag('component', 'database-quota')
-    sentry_sdk.set_tag('database_size_mb', str(size_mb))
-    sentry_sdk.set_tag('quota_percent', f'{percent}%')
-    sentry_sdk.capture_message(msg, level=level)
-    print('Alerta enviado com sucesso ao Sentry!')
-"
+            SIZE_MB="$SIZE_MB" PERCENT="$PERCENT" python3 -c "import textwrap; exec(textwrap.dedent('''
+                import os, sentry_sdk
+                dsn = os.getenv('SENTRY_DSN')
+                size_mb = int(os.getenv('SIZE_MB', '0'))
+                percent = int(os.getenv('PERCENT', '0'))
+                if dsn:
+                    sentry_sdk.init(dsn=dsn, traces_sample_rate=1.0)
+                    level = 'error' if size_mb >= 425 else 'warning'
+                    prefix = 'URGENTE' if size_mb >= 425 else 'AVISO'
+                    msg = f'{prefix}: Banco de dados em {size_mb} MB ({percent}% da cota gratuita de 500 MB).'
+                    if size_mb >= 425:
+                        msg += ' Risco iminente de limite atingido! Faça upgrade para o plano Pro.'
+                    else:
+                        msg += ' Planeje o upgrade para o plano Pro ou limpeza de dados.'
+                    sentry_sdk.set_tag('component', 'database-quota')
+                    sentry_sdk.set_tag('database_size_mb', str(size_mb))
+                    sentry_sdk.set_tag('quota_percent', f'{percent}%')
+                    sentry_sdk.capture_message(msg, level=level)
+                    print('Alerta enviado com sucesso ao Sentry!')
+            '''))"
           else
             echo "-> Tamanho dentro da margem segura (< 70%). Nenhum alerta necessário."
           fi
