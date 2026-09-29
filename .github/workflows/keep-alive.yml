@@ -14,12 +14,14 @@ jobs:
 
     steps:
       - name: Ping Production API (/health/db-quota)
+        env:
+          PRODUCTION_API_URL: ${{ secrets.PRODUCTION_API_URL }}
         run: |
           echo "🐾 Pinging Production API to keep Supabase Prod alive..."
           
           RESPONSE=$(curl --silent --show-error --max-time 30 \
             --write-out "\n%{http_code}" \
-            "${{ secrets.PRODUCTION_API_URL }}/health/db-quota")
+            "${PRODUCTION_API_URL}/health/db-quota")
           
           HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
           HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
@@ -35,13 +37,19 @@ jobs:
           echo "✅ Supabase Prod is alive and responding!"
 
       - name: Ping Staging API (/health/db-quota)
-        if: "${{ secrets.STAGING_API_URL != '' }}"
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
         run: |
+          if [ -z "$STAGING_API_URL" ]; then
+            echo "ℹ️ Secret STAGING_API_URL não configurado. Pulando ping de staging."
+            exit 0
+          fi
+          
           echo "🐾 Pinging Staging API to keep Supabase Staging alive..."
           
           RESPONSE=$(curl --silent --show-error --max-time 30 \
             --write-out "\n%{http_code}" \
-            "${{ secrets.STAGING_API_URL }}/health/db-quota")
+            "${STAGING_API_URL}/health/db-quota")
           
           HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
           HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
