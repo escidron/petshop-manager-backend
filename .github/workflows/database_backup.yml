@@ -19,6 +19,50 @@ jobs:
         echo "DAY_OF_WEEK=$(date +'%u')" >> $GITHUB_ENV  # 1=Segunda, ..., 7=Domingo
         echo "DAY_OF_MONTH=$(date +'%d')" >> $GITHUB_ENV # 01 a 31
 
+    - name: Check Database Size & Alert Sentry
+      env:
+        DATABASE_URL: ${{ secrets.DB_BACKUP_URL }}
+        SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      run: |
+        echo "Consultando tamanho do banco no Supabase..."
+        SIZE_BYTES=$(docker run --rm postgres:17 psql "$DATABASE_URL" -t -A -c "SELECT pg_database_size(current_database());" 2>/dev/null || echo "0")
+        
+        if [ "$SIZE_BYTES" -gt 0 ]; then
+          SIZE_MB=$((SIZE_BYTES / 1024 / 1024))
+          PERCENT=$((SIZE_MB * 100 / 500))
+          echo "-> Tamanho do banco: ${SIZE_MB} MB / 500 MB (${PERCENT}% da cota gratuita)"
+          
+          if [ "$SIZE_MB" -ge 350 ]; then
+            echo "-> Alerta de cota atingido! Enviando notificação para o Sentry..."
+            pip install --quiet sentry-sdk
+            python3 -c "
+import os, sentry_sdk
+dsn = os.getenv('SENTRY_DSN')
+size_mb = int('${SIZE_MB}')
+percent = int('${PERCENT}')
+
+if dsn:
+    sentry_sdk.init(dsn=dsn, traces_sample_rate=1.0)
+    level = 'error' if size_mb >= 425 else 'warning'
+    prefix = 'URGENTE' if size_mb >= 425 else 'AVISO'
+    msg = f'{prefix}: Banco de dados em {size_mb} MB ({percent}% da cota gratuita de 500 MB).'
+    if size_mb >= 425:
+        msg += ' Risco iminente de limite atingido! Faça upgrade para o plano Pro.'
+    else:
+        msg += ' Planeje o upgrade para o plano Pro ou limpeza de dados.'
+    sentry_sdk.set_tag('component', 'database-quota')
+    sentry_sdk.set_tag('database_size_mb', str(size_mb))
+    sentry_sdk.set_tag('quota_percent', f'{percent}%')
+    sentry_sdk.capture_message(msg, level=level)
+    print('Alerta enviado com sucesso ao Sentry!')
+"
+          else
+            echo "-> Tamanho dentro da margem segura (< 70%). Nenhum alerta necessário."
+          fi
+        else
+          echo "Aviso: Não foi possível obter o tamanho do banco."
+        fi
+
     - name: Dump Supabase Database
       env:
         # A URL de conexao do banco de producao (PORTA 5432) guardada nos Secrets
