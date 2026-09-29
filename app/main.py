@@ -62,6 +62,40 @@ def create_app() -> FastAPI:
     def health_check():
         return {"status": "ok"}
 
+    @app.get("/health/db-quota")
+    def db_quota_check():
+        from sqlalchemy import text
+        from app.config.database import SessionLocal
+
+        session = SessionLocal()
+        try:
+            size_bytes = session.execute(text("SELECT pg_database_size(current_database());")).scalar() or 0
+            size_mb = round(size_bytes / (1024 * 1024), 2)
+            quota_mb = 500.0
+            percent_used = round((size_mb / quota_mb) * 100, 1)
+
+            if percent_used >= 85:
+                sentry_sdk.capture_message(
+                    f"URGENTE: Banco de dados com {size_mb} MB ({percent_used}% da cota de {quota_mb} MB). Necessário upgrade para o plano Pro!",
+                    level="error",
+                )
+            elif percent_used >= 70:
+                sentry_sdk.capture_message(
+                    f"AVISO DE COTA: Banco de dados com {size_mb} MB ({percent_used}% da cota de {quota_mb} MB).",
+                    level="warning",
+                )
+
+            return {
+                "status": "warning" if percent_used >= 70 else "ok",
+                "database_size_mb": size_mb,
+                "free_quota_mb": quota_mb,
+                "percent_used": percent_used,
+            }
+        except Exception as exc:
+            return {"status": "error", "detail": str(exc)}
+        finally:
+            session.close()
+
     return app
 
 app = create_app()
