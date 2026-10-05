@@ -252,7 +252,7 @@ class ProductService:
             if val is None or str(val).strip() == "":
                 return None
             if isinstance(val, (int, float)):
-                return int(round(val * 100))
+                return round(float(val), 2)
             try:
                 cleaned = str(val).replace("R$", "").strip()
                 if "," in cleaned and "." in cleaned:
@@ -262,7 +262,7 @@ class ProductService:
                         cleaned = cleaned.replace(",", "")
                 elif "," in cleaned:
                     cleaned = cleaned.replace(",", ".")
-                return int(round(float(cleaned) * 100))
+                return round(float(cleaned), 2)
             except (ValueError, TypeError):
                 return None
 
