@@ -18,25 +18,44 @@ def reset_database():
     print("[RESET] Iniciando limpeza do banco de dados...")
     db = SessionLocal()
     try:
-        # Para SQLite, desabilitar foreign keys temporariamente facilita
-        if engine.url.drivername == "sqlite":
-            db.execute(text("PRAGMA foreign_keys = OFF;"))
-        
         # Tabelas que não devem ser limpas (configurações do sistema)
-        EXCLUDE_TABLES = ["plans", "tenant_types"]
+        EXCLUDE_TABLES = {"plans", "tenant_types", "whatsapp_templates"}
         
-        # Deleta dados de todas as tabelas registradas no Base.metadata
-        # Iteramos em ordem reversa de dependência para evitar erros de FK (mesmo com PRAGMA OFF é boa prática)
-        for table in reversed(Base.metadata.sorted_tables):
-            if table.name in EXCLUDE_TABLES:
-                print(f"   [SKIP] Tabela protegida: {table.name}")
-                continue
-                
-            print(f"   Limpando: {table.name}")
-            db.execute(table.delete())
+        driver = engine.url.drivername
         
-        if engine.url.drivername == "sqlite":
+        if "postgresql" in driver:
+            # No PostgreSQL, usamos TRUNCATE em lote com CASCADE e RESTART IDENTITY.
+            # É instantâneo (milissegundos) e reseta os contadores de autoincremento (IDs).
+            tables_to_truncate = [
+                f'"{table.name}"'
+                for table in Base.metadata.sorted_tables
+                if table.name not in EXCLUDE_TABLES
+            ]
+            
+            for table in Base.metadata.sorted_tables:
+                if table.name in EXCLUDE_TABLES:
+                    print(f"   [SKIP] Tabela protegida: {table.name}")
+
+            if tables_to_truncate:
+                print(f"   [TRUNCATE] Limpando {len(tables_to_truncate)} tabelas simultaneamente...")
+                truncate_sql = f"TRUNCATE TABLE {', '.join(tables_to_truncate)} RESTART IDENTITY CASCADE;"
+                db.execute(text(truncate_sql))
+        elif driver == "sqlite":
+            db.execute(text("PRAGMA foreign_keys = OFF;"))
+            for table in reversed(Base.metadata.sorted_tables):
+                if table.name in EXCLUDE_TABLES:
+                    print(f"   [SKIP] Tabela protegida: {table.name}")
+                    continue
+                print(f"   Limpando: {table.name}")
+                db.execute(table.delete())
             db.execute(text("PRAGMA foreign_keys = ON;"))
+        else:
+            for table in reversed(Base.metadata.sorted_tables):
+                if table.name in EXCLUDE_TABLES:
+                    print(f"   [SKIP] Tabela protegida: {table.name}")
+                    continue
+                print(f"   Limpando: {table.name}")
+                db.execute(table.delete())
         
         db.commit()
         print("[OK] Banco de dados limpo com sucesso!")

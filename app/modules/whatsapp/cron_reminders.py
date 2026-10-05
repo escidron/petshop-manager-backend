@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.modules.appointments.models import Appointment, AppointmentStatus
 from app.modules.whatsapp.models import WhatsAppMessage
 from app.modules.whatsapp.service import WhatsAppService
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,10 @@ def send_reminder_notifications(db: Session) -> int:
     com status 'pending' ou 'confirmed' que ainda não receberam lembrete, e dispara as mensagens.
     Retorna o número total de lembretes enviados.
     """
+    if not getattr(settings, "whatsapp_enabled", True):
+        logger.info("Envio de lembretes de WhatsApp desativado nas configurações (WHATSAPP_ENABLED=False).")
+        return 0
+
     now = datetime.now()
     start_range = now + timedelta(hours=20)
     end_range = now + timedelta(hours=30)

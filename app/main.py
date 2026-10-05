@@ -76,12 +76,12 @@ def create_app() -> FastAPI:
 
             if percent_used >= 85:
                 sentry_sdk.capture_message(
-                    f"URGENTE: Banco de dados com {size_mb} MB ({percent_used}% da cota de {quota_mb} MB). Necessário upgrade para o plano Pro!",
+                    f"URGENTE: Banco de dados com {size_mb} MB ({percent_used}% da cota de {quota_mb} MB). Risco iminente de limite atingido! Faça upgrade para o plano Pro imediatamente.",
                     level="error",
                 )
             elif percent_used >= 70:
                 sentry_sdk.capture_message(
-                    f"AVISO DE COTA: Banco de dados com {size_mb} MB ({percent_used}% da cota de {quota_mb} MB).",
+                    f"AVISO DE COTA: Banco de dados com {size_mb} MB ({percent_used}% da cota de {quota_mb} MB). Planeje upgrade ou limpeza de dados.",
                     level="warning",
                 )
 

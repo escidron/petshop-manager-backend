@@ -100,6 +100,19 @@ class WhatsAppService:
             ).first()
 
         if not template:
+            # Auto-healing: tenta popular os templates globais caso o banco tenha sido resetado
+            try:
+                from app.config.seeds import seed_whatsapp_templates
+                seed_whatsapp_templates(db)
+                template = db.query(WhatsAppTemplate).filter(
+                    WhatsAppTemplate.tenant_id.is_(None),
+                    WhatsAppTemplate.trigger_type == trigger_type,
+                    WhatsAppTemplate.is_active == True
+                ).first()
+            except Exception as ex:
+                logger.warning(f"Falha ao auto-semear templates de WhatsApp: {ex}")
+
+        if not template:
             raise ValueError(f"Template ativo não encontrado para o gatilho '{trigger_type}'")
 
         text = template.message_template
@@ -112,6 +125,20 @@ class WhatsAppService:
         """
         Carrega o template e envia a notificação transacional.
         """
+        if not getattr(settings, "whatsapp_enabled", True):
+            logger.info("Envio de WhatsApp desativado globalmente (WHATSAPP_ENABLED=False).")
+            return
+
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        if not tenant:
+            return
+
+        # Verifica se o tenant desativou WhatsApp em preferências ou feature_flags
+        if tenant.preferences and tenant.preferences.get("whatsapp_notifications_enabled") is False:
+            return
+        if tenant.feature_flags and tenant.feature_flags.get("whatsapp_enabled") is False:
+            return
+
         appointment = db.query(Appointment).filter(
             Appointment.id == appointment_id,
             Appointment.tenant_id == tenant_id
@@ -122,7 +149,6 @@ class WhatsAppService:
             return
 
         client = db.query(Client).filter(Client.id == appointment.client_id).first()
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
 
         if not client or not client.phone:
             logger.warning(f"Cliente do agendamento {appointment_id} não possui telefone válido para WhatsApp")
@@ -211,6 +237,8 @@ class WhatsAppService:
         """
         Dispara a confirmação instantânea
         """
+        if not getattr(settings, "whatsapp_enabled", True):
+            return
         self.send_whatsapp_notification(db, tenant_id, appointment_id, "instant_confirmation")
 
     def process_incoming_message(self, db: Session, from_number: str, text: str, button_payload: str = None) -> WhatsAppMessage:
