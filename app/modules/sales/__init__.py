@@ -1,6 +1,4 @@
-from .models import Sale, SaleItem
+from .models import Sale, SaleItem, Comanda, ComandaItem
 from .schemas import SaleResponse, SaleCreate
-from .service import SalesService
-from .router import router
 
-__all__ = ["Sale", "SaleItem", "SaleResponse", "SaleCreate", "SalesService", "router"]
+__all__ = ["Sale", "SaleItem", "Comanda", "ComandaItem", "SaleResponse", "SaleCreate"]

@@ -22,7 +22,35 @@ from app.config.database import Base
 from sqlalchemy import (
     Column,
     Integer,
+    ForeignKeyConstraint,
 )
+
+class AppointmentItemServiceEmployee(Base):
+    __tablename__ = "appointment_item_service_employees"
+
+    appointment_item_id: Mapped[int] = mapped_column(
+        ForeignKey("appointment_items.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    service_id: Mapped[int] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["appointment_item_id", "service_id"],
+            ["appointment_item_services.appointment_item_id", "appointment_item_services.service_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    employee = relationship("Employee")
+
 
 class AppointmentItemService(Base):
     __tablename__ = "appointment_item_services"
@@ -59,6 +87,11 @@ class AppointmentItemService(Base):
     )
 
     removed_by_user = relationship("app.modules.users.models.User", foreign_keys=[removed_by_user_id])
+    assigned_employees = relationship(
+        "AppointmentItemServiceEmployee",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
 
 class AppointmentAuditLog(Base):

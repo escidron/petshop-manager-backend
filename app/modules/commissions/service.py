@@ -53,6 +53,7 @@ class CommissionService:
         sale_id: int | None = None,
         sale_item_id: int | None = None,
         appointment_item_id: int | None = None,
+        split_count: int = 1,
     ) -> CommissionEntry | None:
         rule = self.rule_repo.resolve(
             db, tenant_id, employee_id, service_id, item_type, ref_date
@@ -60,10 +61,11 @@ class CommissionService:
         if not rule:
             return None
 
+        divisor = Decimal(str(max(1, split_count)))
         if rule.commission_type == "percentage":
             amount = subtotal * rule.value / Decimal("100")
         else:
-            amount = rule.value
+            amount = rule.value / divisor
 
         entry = CommissionEntry(
             tenant_id=tenant_id,

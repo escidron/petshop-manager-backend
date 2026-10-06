@@ -571,6 +571,12 @@ class AppointmentService:
             from app.modules.commissions.models import CommissionEntry
 
             for assignment in assignments:
+                emp_ids = getattr(assignment, "employee_ids", None)
+                if emp_ids is None:
+                    emp_ids = [assignment.employee_id] if assignment.employee_id else []
+
+                primary_emp_id = emp_ids[0] if emp_ids else None
+
                 sale_items = (
                     db.query(SaleItem)
                     .join(Sale)
@@ -584,28 +590,32 @@ class AppointmentService:
                     .all()
                 )
                 for si in sale_items:
-                    si.employee_id = assignment.employee_id
+                    si.employee_id = primary_emp_id
                     db.query(CommissionEntry).filter(
                         CommissionEntry.sale_item_id == si.id
                     ).delete(synchronize_session=False)
 
-                    if assignment.employee_id:
-                        try:
-                            subtotal_price = Decimal(str(si.unit_price)) if si.subtotal == 0 else Decimal(str(si.subtotal))
-                            self.commission_service.generate_entry(
-                                db=db,
-                                tenant_id=tenant_id,
-                                sale_id=si.sale_id,
-                                sale_item_id=si.id,
-                                employee_id=assignment.employee_id,
-                                service_id=assignment.service_id,
-                                item_type="service",
-                                subtotal=subtotal_price,
-                                ref_date=appointment.scheduled_at.date(),
-                                appointment_item_id=assignment.appointment_item_id,
-                            )
-                        except Exception:
-                            pass
+                    if emp_ids:
+                        split_count = len(emp_ids)
+                        base_val = Decimal(str(si.unit_price)) if si.subtotal == 0 else Decimal(str(si.subtotal))
+                        split_subtotal = base_val / Decimal(str(split_count))
+                        for emp_id in emp_ids:
+                            try:
+                                self.commission_service.generate_entry(
+                                    db=db,
+                                    tenant_id=tenant_id,
+                                    sale_id=si.sale_id,
+                                    sale_item_id=si.id,
+                                    employee_id=emp_id,
+                                    service_id=assignment.service_id,
+                                    item_type="service",
+                                    subtotal=split_subtotal,
+                                    ref_date=appointment.scheduled_at.date(),
+                                    appointment_item_id=assignment.appointment_item_id,
+                                    split_count=split_count,
+                                )
+                            except Exception:
+                                pass
             db.commit()
 
         return result
@@ -631,7 +641,7 @@ class AppointmentService:
         from app.modules.client_packages.models import ClientPackageCredit, ClientPackageUsage
         from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
         from app.modules.commissions.models import CommissionEntry
-        from app.modules.appointments.models import AppointmentItemService
+        from app.modules.appointments.models import AppointmentItemService, AppointmentItemServiceEmployee
 
         db.flush()
         db.expire(appointment)
@@ -654,17 +664,39 @@ class AppointmentService:
         for (pet_id, s_id), (new_it, new_s) in new_items_by_pair.items():
             if (pet_id, s_id) in old_services_map:
                 old_emp_id = old_services_map[(pet_id, s_id)].get("employee_id")
-                if old_emp_id:
+                old_emp_ids = old_services_map[(pet_id, s_id)].get("employee_ids") or ([old_emp_id] if old_emp_id else [])
+                if old_emp_ids:
                     db.query(AppointmentItemService).filter(
                         AppointmentItemService.appointment_item_id == new_it.id,
                         AppointmentItemService.service_id == s_id,
-                    ).update({"employee_id": old_emp_id}, synchronize_session=False)
+                    ).update({"employee_id": old_emp_ids[0]}, synchronize_session=False)
+
+                    db.query(AppointmentItemServiceEmployee).filter(
+                        AppointmentItemServiceEmployee.appointment_item_id == new_it.id,
+                        AppointmentItemServiceEmployee.service_id == s_id,
+                    ).delete(synchronize_session=False)
+
+                    for o_eid in old_emp_ids:
+                        db.add(
+                            AppointmentItemServiceEmployee(
+                                appointment_item_id=new_it.id,
+                                service_id=s_id,
+                                employee_id=o_eid,
+                            )
+                        )
 
         db.flush()
         appointment_full = self.repo.get_with_relations(db, appointment.id)
 
         item_emp_maps = {
             item.id: {ais.service_id: ais.employee_id for ais in item.item_services}
+            for item in appointment_full.items
+        }
+        item_emp_ids_maps = {
+            item.id: {
+                ais.service_id: [e.employee_id for e in getattr(ais, "assigned_employees", [])] or ([ais.employee_id] if ais.employee_id else [])
+                for ais in item.item_services
+            }
             for item in appointment_full.items
         }
 
@@ -772,6 +804,10 @@ class AppointmentService:
             # Adiciona serviços cobertos por pacote com subtotal 0,00 na pos_sale
             for it, s in covered_services:
                 emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                emp_ids = item_emp_ids_maps.get(it.id, {}).get(s.id, [])
+                if not emp_ids and emp_id:
+                    emp_ids = [emp_id]
+                primary_emp_id = emp_ids[0] if emp_ids else None
                 real_price = Decimal(s.price_cents) / Decimal("100")
                 sale_item = SaleItem(
                     sale_id=pos_sale.id,
@@ -781,7 +817,7 @@ class AppointmentService:
                     quantity=1,
                     unit_price=real_price,
                     subtotal=Decimal("0"),
-                    employee_id=emp_id,
+                    employee_id=primary_emp_id,
                     appointment_id=appointment_full.id,
                 )
                 db.add(sale_item)
@@ -789,26 +825,34 @@ class AppointmentService:
                     pos_sale.items.append(sale_item)
                 db.flush()
 
-                if emp_id:
-                    try:
-                        self.commission_service.generate_entry(
-                            db=db,
-                            tenant_id=tenant_id,
-                            sale_id=pos_sale.id,
-                            sale_item_id=sale_item.id,
-                            employee_id=emp_id,
-                            service_id=s.id,
-                            item_type="service",
-                            subtotal=real_price,
-                            ref_date=appointment_full.scheduled_at.date(),
-                            appointment_item_id=it.id,
-                        )
-                    except Exception:
-                        pass
+                if emp_ids:
+                    split_count = len(emp_ids)
+                    split_subtotal = real_price / Decimal(str(split_count))
+                    for assigned_emp_id in emp_ids:
+                        try:
+                            self.commission_service.generate_entry(
+                                db=db,
+                                tenant_id=tenant_id,
+                                sale_id=pos_sale.id,
+                                sale_item_id=sale_item.id,
+                                employee_id=assigned_emp_id,
+                                service_id=s.id,
+                                item_type="service",
+                                subtotal=split_subtotal,
+                                ref_date=appointment_full.scheduled_at.date(),
+                                appointment_item_id=it.id,
+                                split_count=split_count,
+                            )
+                        except Exception:
+                            pass
 
             # Adiciona serviços avulsos na pos_sale
             for it, s in uncovered_services:
                 emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                emp_ids = item_emp_ids_maps.get(it.id, {}).get(s.id, [])
+                if not emp_ids and emp_id:
+                    emp_ids = [emp_id]
+                primary_emp_id = emp_ids[0] if emp_ids else None
                 price = Decimal(s.price_cents) / Decimal("100")
                 sale_item = SaleItem(
                     sale_id=pos_sale.id,
@@ -818,7 +862,7 @@ class AppointmentService:
                     quantity=1,
                     unit_price=price,
                     subtotal=price,
-                    employee_id=emp_id,
+                    employee_id=primary_emp_id,
                     appointment_id=appointment_full.id,
                 )
                 db.add(sale_item)
@@ -826,22 +870,26 @@ class AppointmentService:
                     pos_sale.items.append(sale_item)
                 db.flush()
 
-                if emp_id:
-                    try:
-                        self.commission_service.generate_entry(
-                            db=db,
-                            tenant_id=tenant_id,
-                            sale_id=pos_sale.id,
-                            sale_item_id=sale_item.id,
-                            employee_id=emp_id,
-                            service_id=s.id,
-                            item_type="service",
-                            subtotal=price,
-                            ref_date=appointment_full.scheduled_at.date(),
-                            appointment_item_id=it.id,
-                        )
-                    except Exception:
-                        pass
+                if emp_ids:
+                    split_count = len(emp_ids)
+                    split_subtotal = price / Decimal(str(split_count))
+                    for assigned_emp_id in emp_ids:
+                        try:
+                            self.commission_service.generate_entry(
+                                db=db,
+                                tenant_id=tenant_id,
+                                sale_id=pos_sale.id,
+                                sale_item_id=sale_item.id,
+                                employee_id=assigned_emp_id,
+                                service_id=s.id,
+                                item_type="service",
+                                subtotal=split_subtotal,
+                                ref_date=appointment_full.scheduled_at.date(),
+                                appointment_item_id=it.id,
+                                split_count=split_count,
+                            )
+                        except Exception:
+                            pass
 
             db.flush()
             current_sale_items = db.query(SaleItem).filter(SaleItem.sale_id == pos_sale.id).all()
@@ -888,6 +936,10 @@ class AppointmentService:
 
                 for it, s in covered_services:
                     emp_id = item_emp_maps.get(it.id, {}).get(s.id)
+                    emp_ids = item_emp_ids_maps.get(it.id, {}).get(s.id, [])
+                    if not emp_ids and emp_id:
+                        emp_ids = [emp_id]
+                    primary_emp_id = emp_ids[0] if emp_ids else None
                     real_price = Decimal(s.price_cents) / Decimal("100")
                     sale_item = SaleItem(
                         sale_id=package_sale.id,
@@ -897,28 +949,32 @@ class AppointmentService:
                         quantity=1,
                         unit_price=real_price,
                         subtotal=Decimal("0"),
-                        employee_id=emp_id,
+                        employee_id=primary_emp_id,
                         appointment_id=appointment_full.id,
                     )
                     db.add(sale_item)
                     db.flush()
 
-                    if emp_id:
-                        try:
-                            self.commission_service.generate_entry(
-                                db=db,
-                                tenant_id=tenant_id,
-                                sale_id=package_sale.id,
-                                sale_item_id=sale_item.id,
-                                employee_id=emp_id,
-                                service_id=s.id,
-                                item_type="service",
-                                subtotal=real_price,
-                                ref_date=appointment_full.scheduled_at.date(),
-                                appointment_item_id=it.id,
-                            )
-                        except Exception:
-                            pass
+                    if emp_ids:
+                        split_count = len(emp_ids)
+                        split_subtotal = real_price / Decimal(str(split_count))
+                        for assigned_emp_id in emp_ids:
+                            try:
+                                self.commission_service.generate_entry(
+                                    db=db,
+                                    tenant_id=tenant_id,
+                                    sale_id=package_sale.id,
+                                    sale_item_id=sale_item.id,
+                                    employee_id=assigned_emp_id,
+                                    service_id=s.id,
+                                    item_type="service",
+                                    subtotal=split_subtotal,
+                                    ref_date=appointment_full.scheduled_at.date(),
+                                    appointment_item_id=it.id,
+                                    split_count=split_count,
+                                )
+                            except Exception:
+                                pass
             elif package_sale:
                 for old_si in list(package_sale.items):
                     db.query(CommissionEntry).filter(CommissionEntry.sale_item_id == old_si.id).delete(synchronize_session=False)
@@ -1173,6 +1229,13 @@ class AppointmentService:
                 item.id: {ais.service_id: ais.employee_id for ais in item.item_services}
                 for item in appointment_full.items
             }
+            item_emp_ids_maps = {
+                item.id: {
+                    ais.service_id: [e.employee_id for e in getattr(ais, "assigned_employees", [])] or ([ais.employee_id] if ais.employee_id else [])
+                    for ais in item.item_services
+                }
+                for item in appointment_full.items
+            }
 
             # Consome créditos e registra coverages; rastreia quais pares foram cobertos
             covered_pairs: set[tuple[int, int]] = set()
@@ -1243,7 +1306,11 @@ class AppointmentService:
                     db.flush()
 
                     for item, service in covered_services:
-                        employee_id = item_emp_maps[item.id].get(service.id)
+                        emp_id = item_emp_maps[item.id].get(service.id)
+                        emp_ids = item_emp_ids_maps.get(item.id, {}).get(service.id, [])
+                        if not emp_ids and emp_id:
+                            emp_ids = [emp_id]
+                        primary_emp_id = emp_ids[0] if emp_ids else None
                         real_price = Decimal(service.price_cents) / Decimal("100")
                         sale_item = SaleItem(
                             sale_id=package_sale.id,
@@ -1253,28 +1320,32 @@ class AppointmentService:
                             quantity=1,
                             unit_price=real_price,
                             subtotal=Decimal("0"),
-                            employee_id=employee_id,
+                            employee_id=primary_emp_id,
                             appointment_id=appointment_full.id,
                         )
                         db.add(sale_item)
                         db.flush()
 
-                        if employee_id:
-                            try:
-                                self.commission_service.generate_entry(
-                                    db=db,
-                                    tenant_id=tenant_id,
-                                    sale_id=package_sale.id,
-                                    sale_item_id=sale_item.id,
-                                    employee_id=employee_id,
-                                    service_id=service.id,
-                                    item_type="service",
-                                    subtotal=real_price,
-                                    ref_date=appointment_full.scheduled_at.date(),
-                                    appointment_item_id=item.id,
-                                )
-                            except Exception:
-                                pass
+                        if emp_ids:
+                            split_count = len(emp_ids)
+                            split_subtotal = real_price / Decimal(str(split_count))
+                            for assigned_emp_id in emp_ids:
+                                try:
+                                    self.commission_service.generate_entry(
+                                        db=db,
+                                        tenant_id=tenant_id,
+                                        sale_id=package_sale.id,
+                                        sale_item_id=sale_item.id,
+                                        employee_id=assigned_emp_id,
+                                        service_id=service.id,
+                                        item_type="service",
+                                        subtotal=split_subtotal,
+                                        ref_date=appointment_full.scheduled_at.date(),
+                                        appointment_item_id=item.id,
+                                        split_count=split_count,
+                                    )
+                                except Exception:
+                                    pass
 
                 # 2. Se há serviços não cobertos (a pagar), adiciona APENAS os não cobertos à comanda aberta
                 if uncovered_services:
@@ -1415,12 +1486,31 @@ class AppointmentService:
                 db.flush()
 
         # 3. Vincular funcionário se fornecido
-        if data.employee_id:
-            from app.modules.appointments.models import AppointmentItemService
+        emp_ids = getattr(data, "employee_ids", None)
+        if emp_ids is None:
+            emp_ids = [data.employee_id] if data.employee_id else []
+
+        if emp_ids:
+            from app.modules.appointments.models import AppointmentItemService, AppointmentItemServiceEmployee
+            primary_emp_id = emp_ids[0]
             db.query(AppointmentItemService).filter(
                 AppointmentItemService.appointment_item_id == target_item.id,
                 AppointmentItemService.service_id == service.id,
-            ).update({"employee_id": data.employee_id}, synchronize_session=False)
+            ).update({"employee_id": primary_emp_id}, synchronize_session=False)
+
+            db.query(AppointmentItemServiceEmployee).filter(
+                AppointmentItemServiceEmployee.appointment_item_id == target_item.id,
+                AppointmentItemServiceEmployee.service_id == service.id,
+            ).delete(synchronize_session=False)
+
+            for emp_id in emp_ids:
+                db.add(
+                    AppointmentItemServiceEmployee(
+                        appointment_item_id=target_item.id,
+                        service_id=service.id,
+                        employee_id=emp_id,
+                    )
+                )
 
         # 4. Se o agendamento já estava COMPLETED, sincroniza com comanda aberta se houver
         if appointment.status == AppointmentStatus.COMPLETED:
@@ -1443,7 +1533,7 @@ class AppointmentService:
                     quantity=1,
                     unit_price=real_price,
                     subtotal=real_price,
-                    employee_id=data.employee_id,
+                    employee_id=emp_ids[0] if emp_ids else None,
                     pet_ids=[data.pet_id],
                     unit="UN",
                     appointment_id=appointment.id,

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy import func
 
-from .models import Appointment, AppointmentItem, AppointmentPackageCoverage
+from .models import Appointment, AppointmentItem, AppointmentPackageCoverage, AppointmentItemService
 from app.modules.tenant_services.models import Service
 from app.modules.client_packages.models import ClientPackage
 from app.modules.pets.models import Pet
@@ -25,7 +25,8 @@ def _eager_options():
         selectinload(Appointment.items)
             .selectinload(AppointmentItem.coverages),            # one-to-many → selectinload
         selectinload(Appointment.items)
-            .selectinload(AppointmentItem.item_services),        # employee_id por serviço
+            .selectinload(AppointmentItem.item_services)
+            .selectinload(AppointmentItemService.assigned_employees), # multi-funcionários por serviço
     ]
 
 
@@ -236,12 +237,35 @@ class AppointmentRepository:
         appointment_id: int,
         assignments: list,
     ) -> Appointment:
-        from .models import AppointmentItemService
+        from .models import AppointmentItemService, AppointmentItemServiceEmployee
         for assignment in assignments:
+            emp_ids = getattr(assignment, "employee_ids", None)
+            if emp_ids is None:
+                if assignment.employee_id is not None:
+                    emp_ids = [assignment.employee_id]
+                else:
+                    emp_ids = []
+
+            primary_emp_id = emp_ids[0] if emp_ids else None
+
             db.query(AppointmentItemService).filter(
                 AppointmentItemService.appointment_item_id == assignment.appointment_item_id,
                 AppointmentItemService.service_id == assignment.service_id,
-            ).update({"employee_id": assignment.employee_id}, synchronize_session=False)
+            ).update({"employee_id": primary_emp_id}, synchronize_session=False)
+
+            db.query(AppointmentItemServiceEmployee).filter(
+                AppointmentItemServiceEmployee.appointment_item_id == assignment.appointment_item_id,
+                AppointmentItemServiceEmployee.service_id == assignment.service_id,
+            ).delete(synchronize_session=False)
+
+            for emp_id in emp_ids:
+                db.add(
+                    AppointmentItemServiceEmployee(
+                        appointment_item_id=assignment.appointment_item_id,
+                        service_id=assignment.service_id,
+                        employee_id=emp_id,
+                    )
+                )
         db.commit()
         return self.get_with_relations(db, appointment_id)
         
