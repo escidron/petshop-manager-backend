@@ -96,7 +96,12 @@ class FinancialService:
                         # Contas normais: Contas pagas (Regime de Caixa) + Ajustes manuais
                         bills_val = paid_bills_data.get(acc.id, {}).get(m, 0.0)
                         manual_val = entries_map.get(acc.id, {}).get(m, 0.0)
-                        val = bills_val + manual_val
+                        if acc.system_source and acc.system_source.startswith("payroll_"):
+                            # Para contas de folha gerenciadas pelo módulo de folha,
+                            # se houver lançamento sincronizado da folha (manual_val), utiliza-o diretamente para não duplicar com Contas a Pagar.
+                            val = manual_val if manual_val > 0 else bills_val
+                        else:
+                            val = bills_val + manual_val
 
                     monthly_amounts[m] = round(val, 2)
                     group_monthly_totals[group_type][m] += val
