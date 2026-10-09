@@ -54,9 +54,10 @@ class CommissionService:
         sale_item_id: int | None = None,
         appointment_item_id: int | None = None,
         split_count: int = 1,
+        product_id: int | None = None,
     ) -> CommissionEntry | None:
         rule = self.rule_repo.resolve(
-            db, tenant_id, employee_id, service_id, item_type, ref_date
+            db, tenant_id, employee_id, service_id, item_type, ref_date, product_id=product_id
         )
         if not rule:
             return None
@@ -95,6 +96,7 @@ class CommissionService:
         sale_id: int | None = None,
         sale_item_id: int | None = None,
         appointment_item_id: int | None = None,
+        product_id: int | None = None,
     ) -> CommissionEntry | None:
         if self.entry_repo.exists_for_sale_item(db, sale_item_id):
             raise HTTPException(
@@ -103,7 +105,7 @@ class CommissionService:
             )
         entry = self.generate_entry(
             db, tenant_id, employee_id, service_id, item_type, subtotal, ref_date,
-            sale_id=sale_id, sale_item_id=sale_item_id
+            sale_id=sale_id, sale_item_id=sale_item_id, product_id=product_id
         )
         db.commit()
         return entry

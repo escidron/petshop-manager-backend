@@ -28,11 +28,21 @@ class CommissionRuleServiceInfo(BaseModel):
         from_attributes = True
 
 
+class CommissionRuleProductInfo(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
 class CommissionRuleBase(BaseModel):
     name: str
     employee_id: Optional[int] = None
     employee_ids: List[int] = []
+    roles: List[str] = []
     service_ids: List[int] = []
+    product_ids: List[int] = []
     applies_to: AppliesTo = "service"
     commission_type: CommissionType
     value: Decimal
@@ -49,7 +59,9 @@ class CommissionRuleUpdate(BaseModel):
     name: Optional[str] = None
     employee_id: Optional[int] = None
     employee_ids: Optional[List[int]] = None  # None = não altera; [] = limpa todos
+    roles: Optional[List[str]] = None  # None = não altera; [] = limpa todos
     service_ids: Optional[List[int]] = None  # None = não altera; [] = limpa todos
+    product_ids: Optional[List[int]] = None  # None = não altera; [] = limpa todos
     applies_to: Optional[AppliesTo] = None
     commission_type: Optional[CommissionType] = None
     value: Optional[Decimal] = None
@@ -65,6 +77,7 @@ class CommissionRuleResponse(CommissionRuleBase):
     employee_name: Optional[str] = None
     employees: List[CommissionRuleEmployeeInfo] = []
     services: List[CommissionRuleServiceInfo] = []
+    products: List[CommissionRuleProductInfo] = []
 
     class Config:
         from_attributes = True
@@ -79,16 +92,22 @@ class CommissionRuleResponse(CommissionRuleBase):
         employee_name = ", ".join(employee_names) if employee_names else None
         employee_ids = [e.id for e in employees]
         services = getattr(data, "services", [])
+        roles = getattr(data, "roles", []) or []
+        product_ids = getattr(data, "product_ids", []) or []
+        products = getattr(data, "products", []) or []
         return {
             "id": data.id,
             "tenant_id": data.tenant_id,
             "name": data.name,
             "employee_id": employee_ids[0] if employee_ids else None,
             "employee_ids": employee_ids,
+            "roles": roles,
             "employee_name": employee_name,
             "employees": employees,
             "service_ids": [s.id for s in services],
             "services": services,
+            "product_ids": product_ids,
+            "products": products,
             "applies_to": data.applies_to,
             "commission_type": data.commission_type,
             "value": data.value,

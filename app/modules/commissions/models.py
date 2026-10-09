@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from sqlalchemy import (
     String, Boolean, ForeignKey, DateTime, Date,
-    Numeric, func, Enum as SAEnum, Table, Column,
+    Numeric, func, Enum as SAEnum, Table, Column, JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +54,9 @@ class CommissionRule(Base):
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    roles: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=list)
+    product_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True, default=list)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
