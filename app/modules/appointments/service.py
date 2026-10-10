@@ -1013,9 +1013,10 @@ class AppointmentService:
                         db.add(c_item)
 
                     db.flush()
-                    remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
-                    comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
-                    if not comanda.items or len(comanda.items) == 0:
+                    active_items = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
+                    remaining_subtotal = sum(Decimal(str(ci.subtotal)) for ci in active_items)
+                    comanda.total_amount = max(0.0, float(remaining_subtotal - Decimal(str(comanda.discount_amount))))
+                    if not active_items or len(active_items) == 0:
                         comanda.status = "canceled"
                         comanda.total_amount = 0.0
 
@@ -1364,7 +1365,6 @@ class AppointmentService:
                         db.flush()
                     else:
                         comanda = existing_comanda
-                        comanda.total_amount = float(Decimal(str(comanda.total_amount)) + extra_total)
                         if not comanda.appointment_id:
                             comanda.appointment_id = appointment_full.id
 
@@ -1386,6 +1386,11 @@ class AppointmentService:
                             appointment_id=appointment_full.id,
                         )
                         db.add(c_item)
+
+                    db.flush()
+                    active_items = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
+                    remaining_subtotal = sum(Decimal(str(ci.subtotal)) for ci in active_items)
+                    comanda.total_amount = max(0.0, float(remaining_subtotal - Decimal(str(comanda.discount_amount or 0))))
 
             db.commit()
 
@@ -1539,7 +1544,10 @@ class AppointmentService:
                     appointment_id=appointment.id,
                 )
                 db.add(c_item)
-                comanda.total_amount = max(0.0, float(Decimal(str(comanda.total_amount)) + Decimal(str(real_price))))
+                db.flush()
+                active_items = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
+                remaining_subtotal = sum(Decimal(str(ci.subtotal)) for ci in active_items)
+                comanda.total_amount = max(0.0, float(remaining_subtotal - Decimal(str(comanda.discount_amount or 0))))
 
         db.commit()
         return self._attach_recurrence_info(db, self.repo.get_with_relations(db, appointment.id))
@@ -1680,10 +1688,11 @@ class AppointmentService:
             db.flush()
 
             active_items = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
-            remaining_subtotal = sum(ci.subtotal for ci in active_items)
-            comanda.total_amount = max(0.0, float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount))))
+            remaining_subtotal = sum(Decimal(str(ci.subtotal)) for ci in active_items)
+            comanda.total_amount = max(0.0, float(remaining_subtotal - Decimal(str(comanda.discount_amount))))
             if not active_items or len(active_items) == 0:
                 comanda.status = "canceled"
+                comanda.total_amount = 0.0
 
         # Se NÃO for agendamento finalizado, verificar se deve ser cancelado automaticamente
         if not is_completed:
@@ -1915,16 +1924,17 @@ class AppointmentService:
             db.flush()
 
             # Se a comanda era vinculada a este agendamento, desvincula se não houver mais serviços dele
+            active_items = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
             if comanda.appointment_id == appointment.id:
-                other_appt_id = next((ci.appointment_id for ci in comanda.items if ci.appointment_id), None)
+                other_appt_id = next((ci.appointment_id for ci in active_items if ci.appointment_id), None)
                 comanda.appointment_id = other_appt_id
 
-            remaining_subtotal = sum(ci.subtotal for ci in comanda.items)
+            remaining_subtotal = sum(Decimal(str(ci.subtotal)) for ci in active_items)
             comanda.total_amount = max(
                 0.0,
-                float(Decimal(str(remaining_subtotal)) - Decimal(str(comanda.discount_amount or 0))),
+                float(remaining_subtotal - Decimal(str(comanda.discount_amount or 0))),
             )
-            if not comanda.items or len(comanda.items) == 0:
+            if not active_items or len(active_items) == 0:
                 comanda.status = "canceled"
                 comanda.total_amount = 0.0
             db.add(comanda)

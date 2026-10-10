@@ -527,7 +527,7 @@ class SalesService:
                     db.add(ci)
 
                     # Recalcular total da comanda
-                    active_items = [c for c in comanda.items if getattr(c, "status", "active") != "canceled"]
+                    active_items = [c for c in comanda.items if getattr(c, "status", "active") == "active"]
                     ci_subtotal = sum(Decimal(str(c.subtotal)) for c in active_items)
                     comanda.total_amount = max(0.0, float(ci_subtotal - Decimal(str(comanda.discount_amount or 0))))
                     db.add(comanda)
@@ -671,7 +671,7 @@ class SalesService:
                         db.add(ci)
                     db.flush()
 
-                    active_ci = [ci for ci in comanda.items if getattr(ci, "status", "active") != "canceled"]
+                    active_ci = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
                     if comanda.appointment_id == appointment.id:
                         other_appt_id = next((ci.appointment_id for ci in active_ci if ci.appointment_id), None)
                         comanda.appointment_id = other_appt_id
@@ -1029,14 +1029,14 @@ class SalesService:
                 items_changed = True
 
             if comanda.appointment_id and comanda.appointment_id not in completed_appt_ids:
-                other_appt_id = next((ci.appointment_id for ci in comanda.items if ci.appointment_id), None)
+                other_appt_id = next((ci.appointment_id for ci in comanda.items if ci.appointment_id and getattr(ci, "status", "active") == "active"), None)
                 comanda.appointment_id = other_appt_id
                 items_changed = True
 
             existing_keys = {
                 (ci.appointment_id, ci.item_id)
                 for ci in comanda.items
-                if ci.appointment_id and ci.item_type == "service"
+                if ci.appointment_id and ci.item_type == "service" and getattr(ci, "status", "active") == "active"
             }
 
         items_added = False
@@ -1095,13 +1095,14 @@ class SalesService:
         if comanda:
             db.flush()
             db.refresh(comanda, ["items"])
-            if not comanda.items or len(comanda.items) == 0:
+            active_items = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
+            if not active_items or len(active_items) == 0:
                 comanda.status = "canceled"
                 comanda.total_amount = 0.0
                 db.commit()
                 return None
             elif items_added or items_changed:
-                total = sum(Decimal(str(ci.subtotal)) for ci in comanda.items)
+                total = sum(Decimal(str(ci.subtotal)) for ci in active_items)
                 comanda.total_amount = max(0.0, float(total - Decimal(str(comanda.discount_amount or 0))))
                 db.commit()
 
