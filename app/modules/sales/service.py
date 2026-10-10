@@ -1,12 +1,13 @@
 from __future__ import annotations
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
-from typing import List
+from sqlalchemy import or_, func
+from sqlalchemy.orm import Session, selectinload
 
 from .models import Sale, SaleItem, Comanda, ComandaItem
-from .schemas import SaleCreate, ComandaSaveRequest
+from .schemas import SaleCreate, ComandaSaveRequest, SalePaymentCreate
 from .repository import SalesRepository
 from app.modules.products.service import ProductService
 from app.modules.appointments.service import AppointmentService
@@ -14,6 +15,28 @@ from app.modules.packages.service import PackageService
 from app.modules.client_packages.service import ClientPackageService
 from app.modules.client_packages.schemas import ClientPackageSellRequest
 from app.modules.commissions.service import CommissionService
+
+from app.modules.tenants.models import Tenant
+from app.modules.clients.models import Client
+from app.modules.tenant_services.models import Service
+from app.modules.cash_register.repository import CashRegisterRepository
+from app.modules.cash_register.models import CashMovement
+from app.modules.appointments.models import (
+    Appointment,
+    AppointmentItem,
+    AppointmentItemService,
+    AppointmentItemServiceEmployee,
+    AppointmentPackageCoverage,
+    AppointmentAuditLog,
+    AppointmentStatus,
+)
+from app.modules.appointments.schemas import AppointmentResponse
+from app.modules.client_packages.models import (
+    ClientPackage,
+    ClientPackageCredit,
+    ClientPackageUsage,
+)
+from app.modules.commissions.models import CommissionEntry
 
 class SalesService:
     def __init__(self):
@@ -26,7 +49,6 @@ class SalesService:
 
     def create_sale(self, db: Session, tenant_id: int, data: SaleCreate) -> Sale:
         # 0. Validate that cash register is open
-        from app.modules.cash_register.repository import CashRegisterRepository
         cash_repo = CashRegisterRepository()
         active_session = cash_repo.get_active_session(db, tenant_id)
         if not active_session:
@@ -48,7 +70,6 @@ class SalesService:
              )
 
         if data.discount_amount > 0:
-            from app.modules.tenants.models import Tenant
             tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
             if not tenant:
                 raise HTTPException(status_code=400, detail="Tenant não encontrado.")
@@ -137,7 +158,6 @@ class SalesService:
             data.payment_method = data.payments[0].payment_method
             data.payments[0].amount = data.total_amount
         elif not data.payments:
-            from .schemas import SalePaymentCreate
             data.payments = [SalePaymentCreate(payment_method=data.payment_method, amount=data.total_amount)]
 
         # 2. If everything is fine, create the sale in db (which marks comanda completed if linked)
@@ -145,9 +165,6 @@ class SalesService:
 
         # 2.1 Link with active CashSession if available
         try:
-            from app.modules.cash_register.repository import CashRegisterRepository
-            from app.modules.cash_register.models import CashMovement
-
             cash_repo = CashRegisterRepository()
             active_session = cash_repo.get_active_session(db, tenant_id, data.cash_register_id)
             if active_session:
@@ -211,30 +228,52 @@ class SalesService:
 
         # 4. Generate commission entries for items with employee_id
         for item in sale.items:
-            if not item.employee_id:
+            assigned_emp_ids = []
+            if item.appointment_id and item.item_type == "service":
+                ais_emps = (
+                    db.query(AppointmentItemServiceEmployee.employee_id)
+                    .filter(
+                        AppointmentItemServiceEmployee.service_id == item.item_id,
+                        AppointmentItemServiceEmployee.appointment_item_id.in_(
+                            db.query(AppointmentItem.id).filter(AppointmentItem.appointment_id == item.appointment_id)
+                        )
+                    )
+                    .all()
+                )
+                assigned_emp_ids = [r[0] for r in ais_emps]
+
+            if not assigned_emp_ids and item.employee_id:
+                assigned_emp_ids = [item.employee_id]
+
+            if not assigned_emp_ids:
                 continue
+
             try:
                 comm_subtotal = Decimal(str(item.subtotal))
                 if item.item_type == "service" and comm_subtotal <= Decimal("0"):
                     if item.unit_price and Decimal(str(item.unit_price)) > Decimal("0"):
                         comm_subtotal = Decimal(str(item.unit_price))
                     elif item.item_id:
-                        from app.modules.services.models import Service
                         svc = db.query(Service).filter(Service.id == item.item_id).first()
                         if svc:
                             comm_subtotal = Decimal(svc.price_cents) / Decimal("100")
 
-                self.commission_service.generate_entry(
-                    db=db,
-                    tenant_id=tenant_id,
-                    sale_id=sale.id,
-                    sale_item_id=item.id,
-                    employee_id=item.employee_id,
-                    service_id=item.item_id if item.item_type == "service" else None,
-                    item_type=item.item_type,
-                    subtotal=comm_subtotal,
-                    ref_date=sale.created_at.date(),
-                )
+                split_count = len(assigned_emp_ids)
+                split_subtotal = comm_subtotal / Decimal(str(split_count))
+                for assigned_emp_id in assigned_emp_ids:
+                    self.commission_service.generate_entry(
+                        db=db,
+                        tenant_id=tenant_id,
+                        sale_id=sale.id,
+                        sale_item_id=item.id,
+                        employee_id=assigned_emp_id,
+                        service_id=item.item_id if item.item_type == "service" else None,
+                        product_id=item.item_id if item.item_type == "product" else None,
+                        item_type=item.item_type,
+                        subtotal=split_subtotal,
+                        ref_date=sale.created_at.date(),
+                        split_count=split_count,
+                    )
             except Exception:
                 pass  # Não bloqueia a venda se a geração de comissão falhar
 
@@ -300,6 +339,7 @@ class SalesService:
                 sale_item_id=item.id,
                 employee_id=employee_id,
                 service_id=item.item_id if item.item_type == "service" else None,
+                product_id=item.item_id if item.item_type == "product" else None,
                 item_type=item.item_type,
                 subtotal=Decimal(str(item.subtotal)),
                 ref_date=sale.created_at.date(),
@@ -312,9 +352,6 @@ class SalesService:
         return sale
 
     def _revert_package_credits_for_item(self, db: Session, tenant_id: int, sale: Sale, item, reason: str | None = None) -> None:
-        from app.modules.client_packages.models import ClientPackage, ClientPackageCredit, ClientPackageUsage
-        from app.modules.appointments.models import AppointmentPackageCoverage, AppointmentItem
-
         if item.item_type == "package" and sale.client_id:
             client_pkg = (
                 db.query(ClientPackage)
@@ -415,16 +452,6 @@ class SalesService:
         AppointmentAuditLog) e com a comanda fechada (ComandaItem), aplicando soft-delete (status='canceled')
         sem hard-delete para preservar auditoria e histórico.
         """
-        from datetime import datetime, timezone
-        from decimal import Decimal
-        from app.modules.appointments.models import (
-            Appointment,
-            AppointmentItem,
-            AppointmentItemService,
-            AppointmentAuditLog,
-        )
-        from app.modules.sales.models import Comanda, ComandaItem
-
         now = datetime.now(timezone.utc)
         clean_reason = reason.strip() if (reason and reason.strip()) else ""
         cancel_note = f"Cancelado na Venda #{sale.id}" + (f": {clean_reason}" if clean_reason else "")
@@ -500,7 +527,7 @@ class SalesService:
                     db.add(ci)
 
                     # Recalcular total da comanda
-                    active_items = [c for c in comanda.items if getattr(c, "status", "active") != "canceled"]
+                    active_items = [c for c in comanda.items if getattr(c, "status", "active") == "active"]
                     ci_subtotal = sum(Decimal(str(c.subtotal)) for c in active_items)
                     comanda.total_amount = max(0.0, float(ci_subtotal - Decimal(str(comanda.discount_amount or 0))))
                     db.add(comanda)
@@ -520,13 +547,6 @@ class SalesService:
         Preserves completed status if appointment was already completed, clearing is_paid.
         Uses soft-delete on comanda items.
         """
-        from datetime import datetime, timezone
-        from decimal import Decimal
-        from sqlalchemy import or_, func
-        from app.modules.appointments.models import Appointment, AppointmentStatus, AppointmentPackageCoverage
-        from app.modules.commissions.models import CommissionEntry
-        from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
-
         now = datetime.now(timezone.utc)
 
         for apt_id in appt_ids:
@@ -651,7 +671,7 @@ class SalesService:
                         db.add(ci)
                     db.flush()
 
-                    active_ci = [ci for ci in comanda.items if getattr(ci, "status", "active") != "canceled"]
+                    active_ci = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
                     if comanda.appointment_id == appointment.id:
                         other_appt_id = next((ci.appointment_id for ci in active_ci if ci.appointment_id), None)
                         comanda.appointment_id = other_appt_id
@@ -722,9 +742,6 @@ class SalesService:
 
         if money_amount > 0 and sale.cash_session_id:
             try:
-                from app.modules.cash_register.repository import CashRegisterRepository
-                from app.modules.cash_register.models import CashMovement
-
                 cash_repo = CashRegisterRepository()
                 session = cash_repo.get_active_session(db, tenant_id) or cash_repo.get_session(db, tenant_id, sale.cash_session_id)
                 if session and session.status == "open":
@@ -749,7 +766,6 @@ class SalesService:
 
         # 4. Remove commissions for this sale
         try:
-            from app.modules.commissions.models import CommissionEntry
             db.query(CommissionEntry).filter(
                 CommissionEntry.tenant_id == tenant_id,
                 CommissionEntry.sale_id == sale.id,
@@ -837,9 +853,6 @@ class SalesService:
 
         if money_amount > 0 and sale.cash_session_id:
             try:
-                from app.modules.cash_register.repository import CashRegisterRepository
-                from app.modules.cash_register.models import CashMovement
-
                 cash_repo = CashRegisterRepository()
                 session = cash_repo.get_active_session(db, tenant_id) or cash_repo.get_session(db, tenant_id, sale.cash_session_id)
                 if session and session.status == "open":
@@ -864,7 +877,6 @@ class SalesService:
 
         # 4. Remove commission specific to this item
         try:
-            from app.modules.commissions.models import CommissionEntry
             query = db.query(CommissionEntry).filter(
                 CommissionEntry.tenant_id == tenant_id,
                 CommissionEntry.sale_id == sale.id,
@@ -931,7 +943,6 @@ class SalesService:
         if not data.client_id:
             raise HTTPException(status_code=400, detail="É necessário informar um cliente para criar uma comanda em aberto.")
 
-        from app.modules.clients.models import Client
         client = db.query(Client).filter(Client.id == data.client_id, Client.tenant_id == tenant_id).first()
         if not client:
             raise HTTPException(status_code=404, detail="Cliente não encontrado.")
@@ -939,7 +950,6 @@ class SalesService:
         # Discount validation if > 0
         items_subtotal = sum(item.subtotal for item in data.items)
         if data.discount_amount > 0:
-            from app.modules.tenants.models import Tenant
             tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
             if tenant and not tenant.allow_discount:
                 raise HTTPException(status_code=400, detail="Descontos estão desativados para esta empresa.")
@@ -961,14 +971,8 @@ class SalesService:
         return comanda
 
     def sync_client_open_comanda(self, db: Session, tenant_id: int, client_id: int) -> Comanda | None:
-        from app.modules.appointments.models import Appointment, AppointmentItem
-        from app.modules.appointments.schemas import AppointmentResponse
-        from sqlalchemy.orm import selectinload
-
         comanda = self.repository.get_client_open_comanda(db, tenant_id, client_id)
 
-        from datetime import datetime, timezone, timedelta
-        from sqlalchemy import or_
         cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         appt_filters = [
             Appointment.tenant_id == tenant_id,
@@ -1025,14 +1029,14 @@ class SalesService:
                 items_changed = True
 
             if comanda.appointment_id and comanda.appointment_id not in completed_appt_ids:
-                other_appt_id = next((ci.appointment_id for ci in comanda.items if ci.appointment_id), None)
+                other_appt_id = next((ci.appointment_id for ci in comanda.items if ci.appointment_id and getattr(ci, "status", "active") == "active"), None)
                 comanda.appointment_id = other_appt_id
                 items_changed = True
 
             existing_keys = {
                 (ci.appointment_id, ci.item_id)
                 for ci in comanda.items
-                if ci.appointment_id and ci.item_type == "service"
+                if ci.appointment_id and ci.item_type == "service" and getattr(ci, "status", "active") == "active"
             }
 
         items_added = False
@@ -1091,13 +1095,14 @@ class SalesService:
         if comanda:
             db.flush()
             db.refresh(comanda, ["items"])
-            if not comanda.items or len(comanda.items) == 0:
+            active_items = [ci for ci in comanda.items if getattr(ci, "status", "active") == "active"]
+            if not active_items or len(active_items) == 0:
                 comanda.status = "canceled"
                 comanda.total_amount = 0.0
                 db.commit()
                 return None
             elif items_added or items_changed:
-                total = sum(Decimal(str(ci.subtotal)) for ci in comanda.items)
+                total = sum(Decimal(str(ci.subtotal)) for ci in active_items)
                 comanda.total_amount = max(0.0, float(total - Decimal(str(comanda.discount_amount or 0))))
                 db.commit()
 

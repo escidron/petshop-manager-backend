@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal, Any
 
 from app.modules.clients.schemas import ClientResponse
@@ -147,8 +148,13 @@ class ComandaResponse(BaseModel):
 
     @model_validator(mode="after")
     def filter_active_items(self) -> "ComandaResponse":
-        if self.items:
+        if self.items is not None:
+            had_items = len(self.items) > 0
             self.items = [i for i in self.items if getattr(i, "status", "active") == "active"]
+            if had_items:
+                active_subtotal = sum((Decimal(str(i.subtotal)) for i in self.items), Decimal("0"))
+                discount = Decimal(str(self.discount_amount or 0.0))
+                self.total_amount = max(0.0, float(round(active_subtotal - discount, 2)))
         return self
 
 class PaginatedComandasResponse(BaseModel):

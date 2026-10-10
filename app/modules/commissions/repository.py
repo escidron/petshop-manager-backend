@@ -10,11 +10,20 @@ from app.modules.employees.models import Employee
 
 
 def _specificity(rule: CommissionRule) -> int:
-    """employee+services=3, só employee=2, só services=1, global=0"""
+    """
+    employee + services/products = 5
+    employee only = 4
+    role + services/products = 3
+    role only = 2
+    services/products only = 1
+    global = 0
+    """
     score = 0
     if rule.employees:
+        score += 4
+    elif rule.roles:
         score += 2
-    if rule.services:
+    if rule.services or (getattr(rule, "product_ids", None) and rule.product_ids):
         score += 1
     return score
 
@@ -82,6 +91,9 @@ class CommissionRuleRepository:
         if "service_ids" in data.model_fields_set:
             rule.services = self._load_services(db, data.service_ids or [])
 
+        if "product_ids" in data.model_fields_set:
+            rule.product_ids = data.product_ids or []
+
         db.commit()
         db.refresh(rule)
         return rule
@@ -98,7 +110,20 @@ class CommissionRuleRepository:
         service_id: int | None,
         item_type: str,
         ref_date: date,
+        product_id: int | None = None,
     ) -> CommissionRule | None:
+        employee = (
+            db.query(Employee)
+            .filter(Employee.id == employee_id, Employee.tenant_id == tenant_id)
+            .first()
+        )
+        if not employee:
+            return None
+
+        emp_role = (
+            employee.role.value if hasattr(employee.role, "value") else str(employee.role or "")
+        ).strip().lower()
+
         candidates = (
             db.query(CommissionRule)
             .options(
@@ -114,15 +139,34 @@ class CommissionRuleRepository:
             .all()
         )
 
-        matching = [
-            r for r in candidates
-            if (not r.employees or employee_id in {e.id for e in r.employees})
-            and (
-                not r.services
-                or (service_id is not None and service_id in {s.id for s in r.services})
-            )
-            and (r.applies_to == "both" or r.applies_to == item_type)
-        ]
+        matching = []
+        for r in candidates:
+            # 1. Se a regra tiver funcionários específicos, o funcionário precisa estar nela
+            # 2. Senão, se a regra tiver cargos (roles), o cargo do funcionário precisa estar em r.roles
+            # 3. Senão (sem funcionários e sem cargos), a regra é global e atende a todos
+            rule_roles = [str(x).strip().lower() for x in (r.roles or []) if str(x).strip()]
+            if r.employees:
+                if employee_id not in {e.id for e in r.employees}:
+                    continue
+            elif rule_roles:
+                if emp_role not in rule_roles:
+                    continue
+
+            # Validação de serviço ou produto conforme o item da venda
+            if item_type == "service":
+                if r.services:
+                    if service_id is None or service_id not in {s.id for s in r.services}:
+                        continue
+            elif item_type == "product":
+                if getattr(r, "product_ids", None):
+                    if product_id is None or product_id not in (r.product_ids or []):
+                        continue
+
+            # Validação de abrangência (service / product / both)
+            if r.applies_to != "both" and r.applies_to != item_type:
+                continue
+
+            matching.append(r)
 
         if not matching:
             return None

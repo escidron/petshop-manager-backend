@@ -33,6 +33,7 @@ class ServiceInAppointmentResponse(BaseModel):
     removed_at: datetime | None = None
     removal_reason: str | None = None
     employee_id: int | None = None
+    employee_ids: List[int] = Field(default_factory=list)
     species: str | None = None
     size: str | None = None
     coat_type: str | None = None
@@ -54,7 +55,7 @@ class AppointmentItemResponse(BaseModel):
     def attach_coverage(cls, data):
         if isinstance(data, dict):
             return data
-        # ORM object: injeta is_package_covered e employee_id em cada serviço
+        # ORM object: injeta is_package_covered e employee_id/employee_ids em cada serviço
         covered_ids = {c.service_id for c in getattr(data, "coverages", [])}
 
         # Se ainda não foi finalizado/coberto, verifica se o pet possui créditos ativos de pacote para o serviço
@@ -81,6 +82,12 @@ class AppointmentItemResponse(BaseModel):
 
         item_services = getattr(data, "item_services", []) or []
         emp_map = {item_svc.service_id: item_svc.employee_id for item_svc in item_services}
+        emp_ids_map = {
+            item_svc.service_id: [
+                ae.employee_id for ae in getattr(item_svc, "assigned_employees", [])
+            ] or ([item_svc.employee_id] if item_svc.employee_id else [])
+            for item_svc in item_services
+        }
         status_map = {item_svc.service_id: getattr(item_svc, "status", "active") for item_svc in item_services}
         removed_at_map = {item_svc.service_id: getattr(item_svc, "removed_at", None) for item_svc in item_services}
         removal_reason_map = {item_svc.service_id: getattr(item_svc, "removal_reason", None) for item_svc in item_services}
@@ -97,6 +104,7 @@ class AppointmentItemResponse(BaseModel):
                 "removed_at": removed_at_map.get(svc.id),
                 "removal_reason": removal_reason_map.get(svc.id),
                 "employee_id": emp_map.get(svc.id),
+                "employee_ids": emp_ids_map.get(svc.id, []),
                 "species": getattr(svc, "species", None),
                 "size": getattr(svc, "size", None),
             }
@@ -223,7 +231,8 @@ class AppointmentActionRequest(BaseModel):
 class ServiceEmployeeAssignment(BaseModel):
     appointment_item_id: int
     service_id: int
-    employee_id: int | None
+    employee_id: int | None = None
+    employee_ids: Optional[List[int]] = None
 
 class AppointmentEmployeeAssignmentRequest(BaseModel):
     assignments: List[ServiceEmployeeAssignment]
@@ -237,3 +246,4 @@ class AddAppointmentServiceRequest(BaseModel):
     pet_id: int
     service_id: int
     employee_id: Optional[int] = None
+    employee_ids: Optional[List[int]] = None
