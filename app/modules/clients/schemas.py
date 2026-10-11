@@ -91,6 +91,16 @@ class ClientSummaryResponse(BaseModel):
     created_at: datetime
     pet_names: List[str] = []
 
+    # Documento e dados pessoais
+    document_type: Optional[str] = None
+    document: Optional[str] = None
+    birth_date: Optional[date] = None
+
+    # Redes sociais
+    instagram: Optional[str] = None
+    facebook: Optional[str] = None
+    x: Optional[str] = None
+
     # Endereço
     cep: Optional[str] = None
     street: Optional[str] = None
@@ -119,6 +129,12 @@ class ClientSummaryResponse(BaseModel):
             is_active=client.is_active,
             created_at=client.created_at,
             pet_names=[p.name for p in pets if p.name and not p.is_deceased],
+            document_type=getattr(client, "document_type", None),
+            document=getattr(client, "document", None),
+            birth_date=getattr(client, "birth_date", None),
+            instagram=getattr(client, "instagram", None),
+            facebook=getattr(client, "facebook", None),
+            x=getattr(client, "x", None),
             cep=getattr(client, "cep", None),
             street=getattr(client, "street", None),
             number=getattr(client, "number", None),
