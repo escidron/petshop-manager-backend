@@ -13,8 +13,9 @@ from app.modules.plans.repository import PlanRepository
 from app.modules.tenants.service import TenantService
 from app.modules.users.models import TenantUser, User
 from app.modules.users.service import UserService
-from app.modules.auth.models import PasswordResetOTP
+from app.modules.auth.models import PasswordResetOTP, EmailVerificationOTP
 from app.services.email.service import EmailService
+from app.utils.timezone import get_utc_now
 import secrets
 import string
 from datetime import datetime, timedelta
@@ -63,14 +64,13 @@ class AuthService:
             except Exception as e:
                 print(f"Error sending welcome email: {e}")
 
-            # 6️⃣ Gerar e enviar OTP de verificação de e-mail
+            # 6️⃣ Gerar e enviar OTP de verificação de e-mail (expira em 24 horas)
             try:
                 otp_code = "".join(secrets.choice(string.digits) for _ in range(6))
-                from app.modules.auth.models import EmailVerificationOTP
                 new_otp = EmailVerificationOTP(
                     user_id=user.id,
                     otp_code=otp_code,
-                    expires_at=datetime.utcnow() + timedelta(minutes=15)
+                    expires_at=get_utc_now() + timedelta(hours=24)
                 )
                 db.add(new_otp)
                 db.commit()
@@ -125,7 +125,7 @@ class AuthService:
         new_otp = PasswordResetOTP(
             user_id=user.id,
             otp_code=otp_code,
-            expires_at=datetime.utcnow() + timedelta(minutes=15)
+            expires_at=get_utc_now() + timedelta(minutes=15)
         )
         db.add(new_otp)
         db.commit()
@@ -216,7 +216,7 @@ class AuthService:
         new_otp = EmailVerificationOTP(
             user_id=user_id,
             otp_code=otp_code,
-            expires_at=datetime.utcnow() + timedelta(hours=24)
+            expires_at=get_utc_now() + timedelta(hours=24)
         )
         db.add(new_otp)
         db.commit()

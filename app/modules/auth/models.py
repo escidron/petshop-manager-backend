@@ -3,6 +3,7 @@ from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config.database import Base
+from app.utils.timezone import get_utc_now, to_utc_datetime
 
 class PasswordResetOTP(Base):
     __tablename__ = "password_reset_otps"
@@ -22,7 +23,9 @@ class PasswordResetOTP(Base):
 
     @property
     def is_expired(self) -> bool:
-        return datetime.now(self.expires_at.tzinfo) > self.expires_at
+        if not self.expires_at:
+            return True
+        return get_utc_now() > to_utc_datetime(self.expires_at)
 
 
 class EmailVerificationOTP(Base):
@@ -43,5 +46,7 @@ class EmailVerificationOTP(Base):
 
     @property
     def is_expired(self) -> bool:
-        return datetime.now(self.expires_at.tzinfo) > self.expires_at
+        if not self.expires_at:
+            return True
+        return get_utc_now() > to_utc_datetime(self.expires_at)
 
