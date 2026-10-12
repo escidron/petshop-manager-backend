@@ -94,8 +94,8 @@ def create_my_tenant(
         key=settings.COOKIE_ACCESS_NAME,
         value=create_access_token(token_data),
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -103,8 +103,8 @@ def create_my_tenant(
         key=settings.COOKIE_REFRESH_NAME,
         value=create_refresh_token(token_data),
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )

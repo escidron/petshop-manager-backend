@@ -47,8 +47,8 @@ def signup(
         key=settings.COOKIE_ACCESS_NAME,
         value=result["access_token"],
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -57,8 +57,8 @@ def signup(
         key=settings.COOKIE_REFRESH_NAME,
         value=result["refresh_token"],
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )
@@ -93,8 +93,8 @@ def login(
         key=settings.COOKIE_ACCESS_NAME,
         value=result["access_token"],
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -104,8 +104,8 @@ def login(
         key=settings.COOKIE_REFRESH_NAME,
         value=result["refresh_token"],
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )
@@ -146,8 +146,8 @@ def refresh_token(
         key=settings.COOKIE_ACCESS_NAME,
         value=new_access_token,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -200,8 +200,8 @@ def select_tenant(
         key=settings.COOKIE_ACCESS_NAME,
         value=create_access_token(token_data),
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -209,8 +209,8 @@ def select_tenant(
         key=settings.COOKIE_REFRESH_NAME,
         value=create_refresh_token(token_data),
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )
@@ -264,8 +264,8 @@ def switch_tenant(
         key=settings.COOKIE_ACCESS_NAME,
         value=create_access_token(token_data),
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -273,8 +273,8 @@ def switch_tenant(
         key=settings.COOKIE_REFRESH_NAME,
         value=create_refresh_token(token_data),
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )
@@ -296,15 +296,15 @@ def logout(response: Response):
         key=settings.COOKIE_ACCESS_NAME,
         path="/",
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
     )
     response.delete_cookie(
         key=settings.COOKIE_REFRESH_NAME,
         path="/",
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
     )
     return {"ok": True}
 
@@ -317,15 +317,15 @@ def logout_get(response: Response):
         key=settings.COOKIE_ACCESS_NAME,
         path="/",
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
     )
     response.delete_cookie(
         key=settings.COOKIE_REFRESH_NAME,
         path="/",
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
     )
     return {"ok": True, "message": "Sessão limpa com sucesso. Você pode tentar o login agora."}
 
