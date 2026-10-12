@@ -16,6 +16,20 @@ def get_brazil_today() -> date:
     return get_brazil_now().date()
 
 
+def get_utc_now() -> datetime:
+    """Retorna datetime atual com fuso UTC (timezone-aware)."""
+    return datetime.now(timezone.utc)
+
+
+def to_utc_datetime(dt: Optional[datetime]) -> Optional[datetime]:
+    """Converte qualquer datetime (naive em UTC ou tz-aware) para datetime no fuso UTC (timezone-aware)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def to_brazil_datetime(dt: Optional[datetime]) -> Optional[datetime]:
     """Converte qualquer datetime (naive em UTC ou tz-aware) para datetime no fuso de Brasília."""
     if dt is None:

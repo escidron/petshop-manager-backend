@@ -78,29 +78,35 @@ class SalesService:
                 raise HTTPException(status_code=400, detail="Descontos estão desativados para esta empresa.")
             
             if items_subtotal > 0:
-                discount_percentage = (data.discount_amount / items_subtotal) * 100
                 max_discount = float(tenant.max_discount_percentage) if tenant.max_discount_percentage is not None else 100.0
-                # Float comparisons with small buffer
-                if discount_percentage > (max_discount + 0.01):
+                sent_cents = round(data.discount_amount * 100)
+                max_allowed_cents = round((max_discount / 100.0) * items_subtotal * 100)
+                discount_percentage = (data.discount_amount / items_subtotal) * 100
+                # Float comparisons with small buffer and cents check (supports <= max discount)
+                if sent_cents > max_allowed_cents and discount_percentage > (max_discount + 0.05):
                     raise HTTPException(
                         status_code=400,
                         detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite máximo permitido de {max_discount:.2f}%."
                     )
-        
-        # 1. First, validate stock and lower the stock for products BEFORE creating the sale
+          # 1. First, validate stock and lower the stock for products BEFORE creating the sale
         for item in data.items:
             if item.item_type == "product":
                 product = self.product_service.get_product(db, tenant_id, item.item_id)
                 if not product:
                     raise HTTPException(status_code=400, detail=f"Produto com ID {item.item_id} não encontrado.")
                 
-                # Low stock is handled by adjust_stock which will raise exception if new quantity < 0
+                if float(item.quantity) > float(product.quantity or 0.0):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Estoque insuficiente para '{product.name}'. Disponível: {product.quantity}, solicitado: {item.quantity}."
+                    )
+                
                 try:
                     self.product_service.adjust_stock(
                         db=db,
                         tenant_id=tenant_id,
                         product_id=item.item_id,
-                        quantity_change=-item.quantity,
+                        quantity_change=-float(item.quantity),
                         change_type="sale",
                         notes=f"Venda no PDV"
                     )
@@ -125,7 +131,13 @@ class SalesService:
 
                 for p_item in package.items:
                     if p_item.product_id:
-                        total_qty = p_item.quantity * item.quantity
+                        total_qty = float(p_item.quantity) * float(item.quantity)
+                        p_prod = self.product_service.get_product(db, tenant_id, p_item.product_id)
+                        if p_prod and total_qty > float(p_prod.quantity or 0.0):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Estoque insuficiente no pacote '{package.name}' para o produto '{p_prod.name}'. Disponível: {p_prod.quantity}, solicitado: {total_qty}."
+                            )
                         try:
                             self.product_service.adjust_stock(
                                 db=db,
@@ -954,9 +966,11 @@ class SalesService:
             if tenant and not tenant.allow_discount:
                 raise HTTPException(status_code=400, detail="Descontos estão desativados para esta empresa.")
             if tenant and items_subtotal > 0:
-                discount_percentage = (data.discount_amount / items_subtotal) * 100
                 max_discount = float(tenant.max_discount_percentage) if tenant.max_discount_percentage is not None else 100.0
-                if discount_percentage > (max_discount + 0.01):
+                sent_cents = round(data.discount_amount * 100)
+                max_allowed_cents = round((max_discount / 100.0) * items_subtotal * 100)
+                discount_percentage = (data.discount_amount / items_subtotal) * 100
+                if sent_cents > max_allowed_cents and discount_percentage > (max_discount + 0.05):
                     raise HTTPException(
                         status_code=400,
                         detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite permitido ({max_discount:.2f}%)."

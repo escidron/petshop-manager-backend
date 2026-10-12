@@ -12,12 +12,17 @@ class Settings(BaseSettings):
     # Cookies
     COOKIE_ACCESS_NAME: str = "access_token"
     COOKIE_REFRESH_NAME: str = "refresh_token"
+    COOKIE_SECURE: bool = False
+    COOKIE_SAMESITE: str = "lax"
     CEP_BASE_URL: str
 
     # Pagar.me
     PAGARME_SECRET_KEY: str = ""
     PAGARME_PUBLIC_KEY: str = ""
     PAGARME_WEBHOOK_SECRET: str = ""
+
+    # Billing & Free Trial (default 30 dias, configurável via ENV para 60, 90, etc.)
+    DEFAULT_TRIAL_DAYS: int = 30
 
     # Email (Resend)
     RESEND_KEY: str = ""

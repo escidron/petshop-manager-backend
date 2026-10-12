@@ -68,7 +68,7 @@ class EmailService:
             user_name=user_name,
             otp_code=otp_code
         )
-        text_content = f"Olá {user_name}, seu código de verificação é: {otp_code}. Ele expira em 15 minutos."
+        text_content = f"Olá {user_name}, seu código de verificação é: {otp_code}. Ele expira em 24 horas."
 
         self._send_async(
             to=to_email,

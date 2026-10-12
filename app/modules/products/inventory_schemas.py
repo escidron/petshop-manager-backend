@@ -5,7 +5,7 @@ from typing import Optional
 class InventoryLogResponse(BaseModel):
     id: int
     product_id: int
-    quantity_changed: int = Field(validation_alias=AliasChoices("quantity_changed", "quantity_change"))
+    quantity_changed: float = Field(validation_alias=AliasChoices("quantity_changed", "quantity_change"))
     log_type: str = Field(validation_alias=AliasChoices("log_type", "change_type"))
     description: Optional[str] = Field(validation_alias=AliasChoices("description", "notes"))
     created_at: datetime
@@ -20,6 +20,6 @@ class GlobalInventoryLogResponse(InventoryLogResponse):
     product_sku: Optional[str] = None
 
 class StockAdjustmentRequest(BaseModel):
-    quantity_change: int
+    quantity_change: float
     change_type: str = "manual_adjustment"
     notes: Optional[str] = None

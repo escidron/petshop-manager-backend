@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, ForeignKey, Integer, DateTime, func
+from sqlalchemy import String, ForeignKey, Integer, Numeric, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.config.database import Base
 
@@ -17,7 +17,7 @@ class InventoryLog(Base):
         nullable=False,
         index=True,
     )
-    quantity_change: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity_change: Mapped[float] = mapped_column(Numeric(10, 3, asdecimal=False), nullable=False)
     change_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'sale', 'manual_adjustment', 'purchase'
     notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

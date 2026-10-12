@@ -43,8 +43,8 @@ class Product(Base):
         Numeric(10, 2), nullable=True
     )
 
-    quantity: Mapped[int] = mapped_column(
-        Integer, default=0
+    quantity: Mapped[float] = mapped_column(
+        Numeric(10, 3, asdecimal=False), default=0.0
     )
 
     barcode: Mapped[str | None] = mapped_column(
@@ -80,8 +80,8 @@ class Product(Base):
         nullable=True,
     )
 
-    min_stock: Mapped[int] = mapped_column(
-        Integer, default=0
+    min_stock: Mapped[float] = mapped_column(
+        Numeric(10, 3, asdecimal=False), default=0.0
     )
 
     is_active: Mapped[bool] = mapped_column(

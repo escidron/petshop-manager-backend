@@ -139,6 +139,13 @@ class AppointmentRecurrence(BaseModel):
     frequency: str = Field(description="'weekly', 'biweekly', or 'monthly'")
     occurrences: int = Field(ge=2, le=52, description="Number of times to repeat")
 
+    @model_validator(mode="after")
+    def validate_occurrences_limit(self) -> "AppointmentRecurrence":
+        max_allowed = 52 if self.frequency == "weekly" else (26 if self.frequency == "biweekly" else 12)
+        if self.occurrences > max_allowed:
+            raise ValueError(f"Para frequência '{self.frequency}', o número máximo de repetições é {max_allowed} (1 ano)")
+        return self
+
 
 class AppointmentRecurrenceInfo(BaseModel):
     frequency: str = Field(description="'weekly', 'biweekly', or 'monthly'")
