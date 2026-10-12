@@ -78,10 +78,12 @@ class SalesService:
                 raise HTTPException(status_code=400, detail="Descontos estão desativados para esta empresa.")
             
             if items_subtotal > 0:
-                discount_percentage = (data.discount_amount / items_subtotal) * 100
                 max_discount = float(tenant.max_discount_percentage) if tenant.max_discount_percentage is not None else 100.0
-                # Float comparisons with small buffer
-                if discount_percentage > (max_discount + 0.01):
+                sent_cents = round(data.discount_amount * 100)
+                max_allowed_cents = round((max_discount / 100.0) * items_subtotal * 100)
+                discount_percentage = (data.discount_amount / items_subtotal) * 100
+                # Float comparisons with small buffer and cents check (supports <= max discount)
+                if sent_cents > max_allowed_cents and discount_percentage > (max_discount + 0.05):
                     raise HTTPException(
                         status_code=400,
                         detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite máximo permitido de {max_discount:.2f}%."
@@ -964,9 +966,11 @@ class SalesService:
             if tenant and not tenant.allow_discount:
                 raise HTTPException(status_code=400, detail="Descontos estão desativados para esta empresa.")
             if tenant and items_subtotal > 0:
-                discount_percentage = (data.discount_amount / items_subtotal) * 100
                 max_discount = float(tenant.max_discount_percentage) if tenant.max_discount_percentage is not None else 100.0
-                if discount_percentage > (max_discount + 0.01):
+                sent_cents = round(data.discount_amount * 100)
+                max_allowed_cents = round((max_discount / 100.0) * items_subtotal * 100)
+                discount_percentage = (data.discount_amount / items_subtotal) * 100
+                if sent_cents > max_allowed_cents and discount_percentage > (max_discount + 0.05):
                     raise HTTPException(
                         status_code=400,
                         detail=f"Desconto de R$ {data.discount_amount:.2f} ({discount_percentage:.2f}%) excede o limite permitido ({max_discount:.2f}%)."

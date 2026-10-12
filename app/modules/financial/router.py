@@ -1,3 +1,4 @@
+from app.modules.auth.dependencies import get_current_tenant
 from datetime import datetime, date
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Request, Query, HTTPException, status
@@ -36,16 +37,80 @@ from app.modules.financial.bills_schemas import (
 from app.modules.financial.service import FinancialService
 from app.modules.financial.bills_service import FinancialBillsService
 
+def require_dre_access(
+    request: Request,
+    context: dict = Depends(get_current_tenant),
+):
+    tenant_user = request.state.tenant_user
+    if tenant_user.role in ("owner", "admin"):
+        return context
+    permissions = tenant_user.permissions or []
+    if "dre" not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso não autorizado ao módulo DRE",
+        )
+    return context
+
+
+def require_operational_result_access(
+    request: Request,
+    context: dict = Depends(get_current_tenant),
+):
+    tenant_user = request.state.tenant_user
+    if tenant_user.role in ("owner", "admin"):
+        return context
+    permissions = tenant_user.permissions or []
+    if "operational-result" not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso não autorizado ao Resultado Operacional",
+        )
+    return context
+
+
+def require_bills_access(
+    request: Request,
+    context: dict = Depends(get_current_tenant),
+):
+    tenant_user = request.state.tenant_user
+    if tenant_user.role in ("owner", "admin"):
+        return context
+    permissions = tenant_user.permissions or []
+    if "financial-bills" not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso não autorizado ao módulo de Contas a Pagar e Receber",
+        )
+    return context
+
+
+def require_payroll_access(
+    request: Request,
+    context: dict = Depends(get_current_tenant),
+):
+    tenant_user = request.state.tenant_user
+    if tenant_user.role in ("owner", "admin"):
+        return context
+    permissions = tenant_user.permissions or []
+    if "dre" in permissions or "financial-bills" in permissions:
+        return context
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Acesso não autorizado à Folha de Pagamento",
+    )
+
+
 router = APIRouter(
     prefix="/financial/dre",
     tags=["Financial DRE"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_dre_access)],
 )
 
 operational_router = APIRouter(
     prefix="/financial/operational-result",
     tags=["Financial Operational Result"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_operational_result_access)],
 )
 
 
@@ -278,7 +343,7 @@ def export_dre_excel(
 payroll_router = APIRouter(
     prefix="/financial/payroll",
     tags=["Financial Payroll"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_payroll_access)],
 )
 
 
@@ -351,7 +416,7 @@ def sync_payroll_to_dre(
 bills_router = APIRouter(
     prefix="/financial/bills",
     tags=["Financial Bills"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_bills_access)],
 )
 
 
