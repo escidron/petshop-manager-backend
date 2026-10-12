@@ -44,15 +44,17 @@ class ProductService:
         db: Session, 
         tenant_id: int, 
         product_id: int, 
-        quantity_change: int, 
+        quantity_change: float, 
         change_type: str, 
         notes: str | None = None
     ):
         product = self.get_product(db, tenant_id, product_id)
-        product.quantity += quantity_change
+        current_qty = float(product.quantity or 0.0)
+        qty_change = float(quantity_change or 0.0)
+        product.quantity = round(current_qty + qty_change, 3)
         
         self.inventory_repository.create_log(
-            db, tenant_id, product_id, quantity_change, change_type, notes
+            db, tenant_id, product_id, qty_change, change_type, notes
         )
         return product
 
@@ -318,14 +320,14 @@ class ProductService:
                 unit = parse_unit(row.get("unidade"))
 
                 try:
-                    quantity = int(row.get("quantidade") or 0)
+                    quantity = float(str(row.get("quantidade") or "0").replace(",", "."))
                 except (ValueError, TypeError):
-                    quantity = 0
+                    quantity = 0.0
 
                 try:
-                    min_stock = int(row.get("estoque_minimo") or 0)
+                    min_stock = float(str(row.get("estoque_minimo") or "0").replace(",", "."))
                 except (ValueError, TypeError):
-                    min_stock = 0
+                    min_stock = 0.0
 
                 # Match existing product
                 product = None

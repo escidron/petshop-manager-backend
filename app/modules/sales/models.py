@@ -131,8 +131,8 @@ class SaleItem(Base):
         String(150), nullable=False
     )  # Snapshot of the name at the time of sale
 
-    quantity: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=1
+    quantity: Mapped[float] = mapped_column(
+        Numeric(10, 3, asdecimal=False), nullable=False, default=1.0
     )
 
     unit_price: Mapped[float] = mapped_column(
@@ -294,8 +294,8 @@ class ComandaItem(Base):
         String(150), nullable=False
     )
 
-    quantity: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=1
+    quantity: Mapped[float] = mapped_column(
+        Numeric(10, 3, asdecimal=False), nullable=False, default=1.0
     )
 
     unit_price: Mapped[float] = mapped_column(

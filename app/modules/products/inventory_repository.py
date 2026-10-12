@@ -8,7 +8,7 @@ class InventoryRepository:
         db: Session, 
         tenant_id: int, 
         product_id: int, 
-        quantity_change: int, 
+        quantity_change: float, 
         change_type: str, 
         notes: str | None = None
     ) -> InventoryLog:

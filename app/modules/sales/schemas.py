@@ -17,7 +17,7 @@ class SaleItemBase(BaseModel):
     item_type: Literal["product", "service", "package"]
     item_id: int
     name: str
-    quantity: int = Field(gt=0)
+    quantity: float = Field(gt=0)
     unit_price: float = Field(ge=0)
     subtotal: float = Field(ge=0)
     employee_id: int | None = None

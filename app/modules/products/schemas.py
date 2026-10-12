@@ -20,8 +20,8 @@ class ProductBase(BaseModel):
     category: Optional[str] = None
     price: float
     cost: Optional[float] = None
-    quantity: int = 0
-    min_stock: int = 0
+    quantity: float = 0.0
+    min_stock: float = 0.0
     
     barcode: Optional[str] = None
     ncm: Optional[str] = None
@@ -46,6 +46,18 @@ class ProductBase(BaseModel):
             # Se o cliente enviar cost_cents em vez de cost
             if "cost_cents" in data and data["cost_cents"] is not None and "cost" not in data:
                 data["cost"] = round(float(data["cost_cents"]) / 100.0, 2)
+            # Normalizar quantity com vírgula se for string
+            if "quantity" in data and isinstance(data["quantity"], str):
+                try:
+                    data["quantity"] = float(data["quantity"].replace(",", "."))
+                except ValueError:
+                    pass
+            # Normalizar min_stock com vírgula se for string
+            if "min_stock" in data and isinstance(data["min_stock"], str):
+                try:
+                    data["min_stock"] = float(data["min_stock"].replace(",", "."))
+                except ValueError:
+                    pass
         return data
 
 
@@ -60,8 +72,8 @@ class ProductUpdate(BaseModel):
     category: Optional[str] = None
     price: Optional[float] = None
     cost: Optional[float] = None
-    quantity: Optional[int] = None
-    min_stock: Optional[int] = None
+    quantity: Optional[float] = None
+    min_stock: Optional[float] = None
     
     barcode: Optional[str] = None
     ncm: Optional[str] = None
@@ -84,6 +96,16 @@ class ProductUpdate(BaseModel):
                 data["price"] = round(float(data["price_cents"]) / 100.0, 2)
             if "cost_cents" in data and data["cost_cents"] is not None and "cost" not in data:
                 data["cost"] = round(float(data["cost_cents"]) / 100.0, 2)
+            if "quantity" in data and isinstance(data["quantity"], str):
+                try:
+                    data["quantity"] = float(data["quantity"].replace(",", "."))
+                except ValueError:
+                    pass
+            if "min_stock" in data and isinstance(data["min_stock"], str):
+                try:
+                    data["min_stock"] = float(data["min_stock"].replace(",", "."))
+                except ValueError:
+                    pass
         return data
 
 
