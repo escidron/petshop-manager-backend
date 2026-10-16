@@ -986,6 +986,18 @@ class SalesService:
 
     def sync_client_open_comanda(self, db: Session, tenant_id: int, client_id: int) -> Comanda | None:
         comanda = self.repository.get_client_open_comanda(db, tenant_id, client_id)
+        if comanda:
+            completed_sale = db.query(Sale).filter(
+                Sale.comanda_id == comanda.id,
+                Sale.tenant_id == tenant_id,
+                Sale.status == "completed",
+            ).first()
+            has_remainder = any(ci.name == "Saldo em Aberto (Comanda)" for ci in (comanda.items or []))
+            if completed_sale and not has_remainder:
+                comanda.status = "completed"
+                db.add(comanda)
+                db.commit()
+                comanda = None
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         appt_filters = [

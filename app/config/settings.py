@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     # Cookies
     COOKIE_ACCESS_NAME: str = "access_token"
     COOKIE_REFRESH_NAME: str = "refresh_token"
-    COOKIE_SECURE: bool = False
-    COOKIE_SAMESITE: str = "lax"
+    COOKIE_SECURE: bool = True
+    COOKIE_SAMESITE: str = "none"
     CEP_BASE_URL: str
 
     # Pagar.me

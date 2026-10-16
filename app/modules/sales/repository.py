@@ -198,6 +198,23 @@ class SalesRepository:
                 Comanda.id == data.comanda_id,
                 Comanda.tenant_id == tenant_id,
             ).first()
+            if comanda:
+                # Se a comanda já foi finalizada ou cancelada, não deve ser reaberta por requisições concorrentes ou atrasadas
+                if comanda.status in ("completed", "canceled"):
+                    return comanda
+
+                # Verifica se essa comanda já possui uma venda finalizada associada sem saldo restante em aberto
+                completed_sale = db.query(Sale).filter(
+                    Sale.comanda_id == comanda.id,
+                    Sale.tenant_id == tenant_id,
+                    Sale.status == "completed",
+                ).first()
+                has_remainder = any(ci.name == "Saldo em Aberto (Comanda)" for ci in getattr(comanda, "items", []))
+                if completed_sale and not has_remainder:
+                    comanda.status = "completed"
+                    db.add(comanda)
+                    db.commit()
+                    return comanda
 
         if not comanda and data.client_id:
             comanda = db.query(Comanda).filter(
@@ -218,6 +235,20 @@ class SalesRepository:
         removed_appointment_services: list[tuple[int, int, list[int] | None]] = []
 
         if not comanda:
+            # Se for vinculado a um agendamento que já está finalizado, não deve criar nova comanda aberta duplicada
+            if data.appointment_id:
+                appt = db.query(Appointment).filter(
+                    Appointment.id == data.appointment_id,
+                    Appointment.tenant_id == tenant_id,
+                ).first()
+                if appt and getattr(appt.status, "value", str(appt.status)) == "completed":
+                    completed_comanda = db.query(Comanda).filter(
+                        Comanda.appointment_id == data.appointment_id,
+                        Comanda.tenant_id == tenant_id,
+                    ).order_by(desc(Comanda.id)).first()
+                    if completed_comanda:
+                        return completed_comanda
+
             comanda = Comanda(
                 tenant_id=tenant_id,
                 client_id=data.client_id,
@@ -245,6 +276,7 @@ class SalesRepository:
                     item.item_type,
                     item.item_id,
                     getattr(item, "appointment_id", None) if item.item_type == "service" else None,
+                    tuple(sorted(item.pet_ids or [])) if hasattr(item, "pet_ids") else (),
                 )
                 for item in data.items
             }
@@ -252,7 +284,12 @@ class SalesRepository:
             for existing_item in list(comanda.items):
                 if getattr(existing_item, "status", "active") == "active":
                     apt_id = existing_item.appointment_id
-                    key = (existing_item.item_type, existing_item.item_id, apt_id if existing_item.item_type == "service" else None)
+                    key = (
+                        existing_item.item_type,
+                        existing_item.item_id,
+                        apt_id if existing_item.item_type == "service" else None,
+                        tuple(sorted(existing_item.pet_ids or [])),
+                    )
                     if key not in incoming_keys:
                         existing_item.status = "removed"
                         existing_item.removed_at = now
@@ -280,19 +317,40 @@ class SalesRepository:
             return comanda
 
         # Add new items or update existing active items
+        used_ci_ids: set[int] = set()
         for item in data.items:
             apt_id = getattr(item, "appointment_id", None) if item.item_type == "service" else None
+            item_pet_ids = sorted(item.pet_ids or [])
+
+            # Match priority 1: exact same pet_ids and not used yet in this save
             existing = next(
                 (
                     ci for ci in comanda.items
-                    if getattr(ci, "status", "active") == "active"
+                    if ci.id not in used_ci_ids
+                    and getattr(ci, "status", "active") == "active"
                     and ci.item_type == item.item_type
                     and ci.item_id == item.item_id
                     and (ci.appointment_id == apt_id or (not ci.appointment_id and not apt_id))
+                    and sorted(ci.pet_ids or []) == item_pet_ids
                 ),
                 None
             )
+            # Match priority 2: if pet_ids empty or legacy, match any unused ci of same item
+            if not existing and not item_pet_ids:
+                existing = next(
+                    (
+                        ci for ci in comanda.items
+                        if ci.id not in used_ci_ids
+                        and getattr(ci, "status", "active") == "active"
+                        and ci.item_type == item.item_type
+                        and ci.item_id == item.item_id
+                        and (ci.appointment_id == apt_id or (not ci.appointment_id and not apt_id))
+                    ),
+                    None
+                )
+
             if existing:
+                used_ci_ids.add(existing.id)
                 existing.name = item.name
                 existing.quantity = item.quantity
                 existing.unit_price = item.unit_price
@@ -319,6 +377,8 @@ class SalesRepository:
                     status="active",
                 )
                 db.add(c_item)
+                db.flush()
+                used_ci_ids.add(c_item.id)
 
         db.commit()
         return self.get_comanda(db, tenant_id, comanda.id)
@@ -417,7 +477,7 @@ class SalesRepository:
         ).first()
 
     def get_client_open_comanda(self, db: Session, tenant_id: int, client_id: int) -> Comanda | None:
-        return db.query(Comanda).options(
+        comanda = db.query(Comanda).options(
             selectinload(Comanda.client).selectinload(Client.pets),
             selectinload(Comanda.items).selectinload(ComandaItem.appointment),
             selectinload(Comanda.appointment),
@@ -428,6 +488,28 @@ class SalesRepository:
             Comanda.items.any(),
         ).order_by(desc(Comanda.updated_at)).first()
 
+        if comanda:
+            # Auto-heal: verify if this comanda is already paid by a completed sale without an unpaid remainder item
+            paid_sale = db.query(Sale).filter(
+                Sale.tenant_id == tenant_id,
+                Sale.comanda_id == comanda.id,
+                Sale.status == "completed",
+            ).first()
+            if paid_sale:
+                has_unpaid_item = any(
+                    ci.status == "active" and ci.name == "Saldo em Aberto (Comanda)"
+                    for ci in comanda.items
+                )
+                if not has_unpaid_item:
+                    from datetime import datetime, timezone
+                    comanda.status = "completed"
+                    comanda.updated_at = datetime.now(timezone.utc)
+                    db.add(comanda)
+                    db.commit()
+                    return None
+
+        return comanda
+
     def list_open_comandas(
         self,
         db: Session,
@@ -436,6 +518,30 @@ class SalesRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[Comanda], int]:
+        # Auto-heal: comandas vinculadas a uma venda finalizada (sem saldo restante em aberto)
+        # que permaneceram como 'open' devido a concorrência/auto-save no PDV.
+        stale_paid_comandas = (
+            db.query(Comanda)
+            .options(selectinload(Comanda.items))
+            .join(Sale, Sale.comanda_id == Comanda.id)
+            .filter(
+                Comanda.tenant_id == tenant_id,
+                Comanda.status == "open",
+                Sale.status == "completed",
+            )
+            .all()
+        )
+        if stale_paid_comandas:
+            healed = False
+            for sc in stale_paid_comandas:
+                has_remainder = any(ci.name == "Saldo em Aberto (Comanda)" for ci in (sc.items or []))
+                if not has_remainder:
+                    sc.status = "completed"
+                    db.add(sc)
+                    healed = True
+            if healed:
+                db.commit()
+
         q = db.query(Comanda).options(
             selectinload(Comanda.client).selectinload(Client.pets),
             selectinload(Comanda.items).selectinload(ComandaItem.appointment),

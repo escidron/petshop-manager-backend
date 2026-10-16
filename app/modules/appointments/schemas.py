@@ -34,7 +34,9 @@ class ServiceInAppointmentResponse(BaseModel):
     removal_reason: str | None = None
     employee_id: int | None = None
     employee_ids: List[int] = Field(default_factory=list)
-    species: str | None = None
+    species: str | list[str] | None = None
+    sizes: list[str] | None = None
+    coat_types: list[str] | None = None
     size: str | None = None
     coat_type: str | None = None
 
@@ -105,8 +107,11 @@ class AppointmentItemResponse(BaseModel):
                 "removal_reason": removal_reason_map.get(svc.id),
                 "employee_id": emp_map.get(svc.id),
                 "employee_ids": emp_ids_map.get(svc.id, []),
-                "species": getattr(svc, "species", None),
-                "size": getattr(svc, "size", None),
+                "species": ", ".join(svc.species) if isinstance(getattr(svc, "species", None), list) else getattr(svc, "species", None),
+                "sizes": getattr(svc, "sizes", None),
+                "coat_types": getattr(svc, "coat_types", None),
+                "size": ", ".join(svc.sizes) if isinstance(getattr(svc, "sizes", None), list) else getattr(svc, "size", None),
+                "coat_type": ", ".join(svc.coat_types) if isinstance(getattr(svc, "coat_types", None), list) else getattr(svc, "coat_type", None),
             }
             for svc in getattr(data, "services", [])
         ]

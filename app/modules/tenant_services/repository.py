@@ -1,4 +1,6 @@
+from __future__ import annotations
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from .models import Service
 from .schemas import ServiceCreate, ServiceUpdate
 
@@ -46,25 +48,19 @@ class ServiceRepository:
             .first()
         )
 
-    def get_by_attributes(
+    def get_by_name(
         self,
         db: Session,
         tenant_id: int,
         name: str,
-        species: str | None = None,
-        size: str | None = None,
-        coat_type: str | None = None,
-    ) -> Service | None:
+    ) -> list[Service]:
         return (
             db.query(Service)
             .filter(
                 Service.tenant_id == tenant_id,
-                Service.name == name,
-                Service.species == species,
-                Service.size == size,
-                Service.coat_type == coat_type,
+                func.lower(func.trim(Service.name)) == name.lower().strip(),
             )
-            .first()
+            .all()
         )
 
     def update(

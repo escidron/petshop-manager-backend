@@ -7,11 +7,11 @@ from sqlalchemy import (
     ForeignKey,
     func,
     Index,
+    JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config.database import Base
-from app.enums import PetSize, PetSpecies
 
 class Service(Base):
     __tablename__ = "services"
@@ -37,16 +37,18 @@ class Service(Base):
         nullable=True,
     )
 
-    species: Mapped[PetSpecies | None] = mapped_column(
+    species: Mapped[list[str] | None] = mapped_column(
+        JSON,
         nullable=True,
     )
 
-    size: Mapped[PetSize | None] = mapped_column(
+    sizes: Mapped[list[str] | None] = mapped_column(
+        JSON,
         nullable=True,
     )
 
-    coat_type: Mapped[str | None] = mapped_column(
-        String(50),
+    coat_types: Mapped[list[str] | None] = mapped_column(
+        JSON,
         nullable=True,
     )
 
@@ -71,3 +73,15 @@ class Service(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+    @property
+    def size(self) -> str | None:
+        if self.sizes:
+            return ", ".join(self.sizes)
+        return None
+
+    @property
+    def coat_type(self) -> str | None:
+        if self.coat_types:
+            return ", ".join(self.coat_types)
+        return None
