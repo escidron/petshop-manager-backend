@@ -14,23 +14,26 @@ def clean_str(val: Any) -> Optional[str]:
 def normalize_porte(val: Any) -> Optional[str]:
     if not val:
         return None
-    v = str(val).strip().lower()
-    if v in ["pp", "mini", "micro"]:
-        return "PP"
-    elif v in ["p", "pequeno", "peq"]:
-        return "P"
-    elif v in ["m", "medio", "médio"]:
-        return "M"
-    elif v in ["g", "grande"]:
-        return "G"
-    elif v in ["gg", "gigante", "extra grande"]:
-        return "GG"
-    if "(pp)" in v or "mini" in v: return "PP"
-    if "(p)" in v or "pequeno" in v: return "P"
-    if "(m)" in v or "médio" in v or "medio" in v: return "M"
-    if "(g)" in v or "grande" in v: return "G"
-    if "(gg)" in v or "gigante" in v: return "GG"
-    return None
+    import re
+    res = []
+    for item in re.split(r"[,;/&]|\se\s", str(val)):
+        item_str = item.strip()
+        v = item_str.lower()
+        if not v:
+            continue
+        if v in ["pp", "mini", "micro"] or "(pp)" in v:
+            if "PP" not in res: res.append("PP")
+        elif v in ["p", "pequeno", "peq"] or "(p)" in v:
+            if "P" not in res: res.append("P")
+        elif v in ["m", "medio", "médio"] or "(m)" in v:
+            if "M" not in res: res.append("M")
+        elif v in ["g", "grande"] or "(g)" in v:
+            if "G" not in res: res.append("G")
+        elif v in ["gg", "gigante", "extra grande"] or "(gg)" in v:
+            if "GG" not in res: res.append("GG")
+        elif item_str.upper() in ["PP", "P", "M", "G", "GG"]:
+            if item_str.upper() not in res: res.append(item_str.upper())
+    return ", ".join(res) if res else None
 
 
 def parse_num(val: Any) -> Optional[float]:

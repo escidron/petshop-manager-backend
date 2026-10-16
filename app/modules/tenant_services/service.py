@@ -11,21 +11,109 @@ class ServiceService:
     def __init__(self):
         self.repo = ServiceRepository()
 
+    def _validate_conflicts(
+        self,
+        db: Session,
+        tenant_id: int,
+        name: str,
+        species: list[str] | None,
+        sizes: list[str] | None,
+        coat_types: list[str] | None,
+        exclude_service_id: int | None = None,
+    ):
+        existing_services = self.repo.get_by_name(db, tenant_id, name)
+        
+        COAT_LABELS = {
+            "short": "Curta",
+            "medium": "Média",
+            "long": "Longa",
+            "double": "Dupla",
+            "hairless": "Sem Pelo",
+        }
+
+        for existing in existing_services:
+            if exclude_service_id and existing.id == exclude_service_id:
+                continue
+
+            # 1. Sobreposição de Espécie:
+            # Se algum dos dois for None/vazio, atende todas as espécies.
+            species_overlap = False
+            overlapping_species = []
+            if not species or not existing.species:
+                species_overlap = True
+                overlapping_species = species or existing.species or []
+            else:
+                common_species = set(species) & set(existing.species)
+                if common_species:
+                    species_overlap = True
+                    overlapping_species = sorted(list(common_species))
+
+            if not species_overlap:
+                continue
+
+            # 2. Sobreposição de Porte:
+            # Se algum dos dois for None/vazio, atende todos os portes.
+            size_overlap = False
+            overlapping_sizes = []
+            if not sizes or not existing.sizes:
+                size_overlap = True
+                overlapping_sizes = sizes or existing.sizes or []
+            else:
+                common_sizes = set(sizes) & set(existing.sizes)
+                if common_sizes:
+                    size_overlap = True
+                    overlapping_sizes = sorted(list(common_sizes))
+
+            if not size_overlap:
+                continue
+
+            # 3. Sobreposição de Pelagem:
+            # Se algum dos dois for None/vazio, atende todas as pelagens.
+            coat_overlap = False
+            overlapping_coats = []
+            if not coat_types or not existing.coat_types:
+                coat_overlap = True
+                overlapping_coats = coat_types or existing.coat_types or []
+            else:
+                common_coats = set(coat_types) & set(existing.coat_types)
+                if common_coats:
+                    coat_overlap = True
+                    overlapping_coats = sorted(list(common_coats))
+
+            if not coat_overlap:
+                continue
+
+            # Conflito detectado em todas as 3 dimensões! Montar mensagem clara:
+            details = []
+            if overlapping_sizes:
+                details.append(f"porte {', '.join(overlapping_sizes)}")
+            else:
+                details.append("todos os portes")
+
+            extras = []
+            if overlapping_species:
+                extras.append(f"Espécie: {', '.join(overlapping_species)}")
+            if overlapping_coats:
+                friendly_coats = [COAT_LABELS.get(c, c) for c in overlapping_coats]
+                extras.append(f"Pelagem: {', '.join(friendly_coats)}")
+
+            extra_str = f" ({', '.join(extras)})" if extras else ""
+            detail_msg = f"Já existe um serviço com o nome '{name.strip()}' cadastrado para o {', '.join(details)}{extra_str}."
+
+            raise HTTPException(
+                status_code=400,
+                detail=detail_msg,
+            )
+
     def create(self, db, tenant_id, data: ServiceCreate):
-        # Validar duplicidade
-        existing = self.repo.get_by_attributes(
+        self._validate_conflicts(
             db,
             tenant_id=tenant_id,
             name=data.name,
             species=data.species,
-            size=data.size,
-            coat_type=data.coat_type
+            sizes=data.sizes,
+            coat_types=data.coat_types,
         )
-        if existing:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Já existe um serviço com este nome e as mesmas variações (Espécie, Porte, Pelagem). Para preços diferentes, especifique as variações correspondentes."
-                )
             
         return self.repo.create(db, tenant_id, data)
 
@@ -43,27 +131,22 @@ class ServiceService:
     def update(self, db, tenant_id, service_id, data):
         service = self.get(db, tenant_id, service_id)
         
-        # Se algum campo identificador mudar, validar duplicidade
-        if any(v is not None for v in [data.name, data.species, data.size, data.coat_type]):
+        # Se algum campo identificador mudar, validar conflito
+        if any(v is not None for v in [data.name, data.species, data.sizes, data.coat_types]):
             new_name = data.name if data.name is not None else service.name
             new_species = data.species if data.species is not None else service.species
-            new_size = data.size if data.size is not None else service.size
-            new_coat = data.coat_type if data.coat_type is not None else service.coat_type
+            new_sizes = data.sizes if data.sizes is not None else service.sizes
+            new_coats = data.coat_types if data.coat_types is not None else service.coat_types
             
-            existing = self.repo.get_by_attributes(
+            self._validate_conflicts(
                 db,
                 tenant_id=tenant_id,
                 name=new_name,
                 species=new_species,
-                size=new_size,
-                coat_type=new_coat
+                sizes=new_sizes,
+                coat_types=new_coats,
+                exclude_service_id=service_id,
             )
-            
-            if existing and existing.id != service_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Já existe um serviço cadastrado com este nome e variações."
-                )
 
         return self.repo.update(db, service, data)
 
@@ -127,45 +210,18 @@ class ServiceService:
             cell.alignment = center_align
             cell.border = thin_border
 
-        base_services = ["Banho", "Tosa", "Banho & Tosa"]
-        species_list = ["Canino", "Felino"]
-        sizes_list = ["PP", "P", "M", "G", "GG"]
-        coat_types = [None, "Curta", "Média", "Longa", "Dupla"]
-        size_descriptions = {
-            "PP": "porte muito pequeno (PP)",
-            "P": "porte pequeno (P)",
-            "M": "porte médio (M)",
-            "G": "porte grande (G)",
-            "GG": "porte muito grande (GG)"
-        }
+        # Exemplos ilustrativos com suporte a multi-atributos
+        sample_rows = [
+            ["Banho P/M Pelo Curto", "60.00", "Canino", "P, M", "Curta", 45, "Banho para cães pequenos e médios de pelo curto"],
+            ["Banho Cães Grandes", "85.00", "Canino", "G, GG", "Curta, Média", 60, "Banho para portes grandes e gigantes"],
+            ["Banho Pelagem Longa", "75.00", "Canino", "P, M", "Longa, Dupla", 60, "Banho especial para pelos longos e duplos"],
+            ["Tosa Higiênica Geral", "45.00", "Canino, Felino", "PP, P, M, G, GG", "", 30, "Tosa higiênica (qualquer pelagem)"],
+            ["Banho Felino", "70.00", "Felino", "", "", 45, "Banho para gatos (porte e pelagem livres)"],
+            ["Corte de Unhas", "25.00", "", "", "", 15, "Corte de unhas (espécie, porte e pelagem livres)"],
+        ]
 
-        # Append predefined rows
-        for service in base_services:
-            for species in species_list:
-                for size in sizes_list:
-                    description = f"{service} para {species.lower()} de {size_descriptions[size]}"
-                    if species == "Canino":
-                        for coat in coat_types:
-                            coat_desc = f" com pelagem {coat.lower()}" if coat else ""
-                            ws.append([
-                                service,
-                                "", # preco *
-                                species,
-                                size,
-                                coat if coat else "",
-                                "", # duracao_minutos
-                                f"{description}{coat_desc}"
-                            ])
-                    else:
-                        ws.append([
-                            service,
-                            "", # preco *
-                            species,
-                            size,
-                            "",
-                            "", # duracao_minutos
-                            description
-                        ])
+        for row_data in sample_rows:
+            ws.append(row_data)
 
         # Format rows (starting at row 2 up to ws.max_row)
         for r_idx in range(2, ws.max_row + 1):
@@ -187,33 +243,30 @@ class ServiceService:
                 elif col_idx == 6: # duration
                     cell.number_format = "#,##0"
 
-        # Data Validations (Dropdowns)
-        # Species (Column 3)
-        dv_species = DataValidation(type="list", formula1=f'"{",".join(species_list)}"', allow_blank=True)
-        dv_species.error = 'Escolha uma espécie da lista (Canino ou Felino)'
-        dv_species.errorTitle = 'Espécie Inválida'
-        dv_species.prompt = 'Selecione a espécie atendida'
-        dv_species.promptTitle = 'Espécie'
+        # Data Validations (Dropdowns que auxiliam a escolha sem bloquear múltiplos valores separados por vírgula)
+        # 1. Species (Column 3)
+        dv_species = DataValidation(type="list", formula1='"Canino,Felino,Exotico"', allow_blank=True)
+        dv_species.showErrorMessage = False
+        dv_species.prompt = "Escolha da lista ou digite vários separados por vírgula (ex: Canino, Felino). Vazio = Todas."
+        dv_species.promptTitle = "Espécies"
         ws.add_data_validation(dv_species)
-        dv_species.add(f"C2:C{ws.max_row + 100}")
+        dv_species.add(f"C2:C{ws.max_row + 200}")
         
         # 2. Sizes (Column 4)
         dv_sizes = DataValidation(type="list", formula1='"PP,P,M,G,GG"', allow_blank=True)
-        dv_sizes.error = 'Escolha um porte da lista (PP, P, M, G ou GG)'
-        dv_sizes.errorTitle = 'Porte Inválido'
-        dv_sizes.prompt = 'Selecione o porte atendido'
-        dv_sizes.promptTitle = 'Porte'
+        dv_sizes.showErrorMessage = False
+        dv_sizes.prompt = "Escolha da lista ou digite vários separados por vírgula (ex: P, M, G). Vazio = Todos."
+        dv_sizes.promptTitle = "Portes"
         ws.add_data_validation(dv_sizes)
-        dv_sizes.add(f"D2:D{ws.max_row + 100}")
+        dv_sizes.add(f"D2:D{ws.max_row + 200}")
 
         # 3. Coat Types (Column 5)
         dv_coats = DataValidation(type="list", formula1='"Curta,Média,Longa,Dupla,Sem Pelo"', allow_blank=True)
-        dv_coats.error = 'Escolha uma pelagem da lista'
-        dv_coats.errorTitle = 'Pelagem Inválida'
-        dv_coats.prompt = 'Selecione o tipo de pelagem (opcional)'
-        dv_coats.promptTitle = 'Pelagem'
+        dv_coats.showErrorMessage = False
+        dv_coats.prompt = "Escolha da lista ou digite várias separadas por vírgula (ex: Curta, Longa). Vazio = Todas."
+        dv_coats.promptTitle = "Pelagens"
         ws.add_data_validation(dv_coats)
-        dv_coats.add(f"E2:E{ws.max_row + 100}")
+        dv_coats.add(f"E2:E{ws.max_row + 200}")
 
         # Auto-fit column widths
         for col in ws.columns:
@@ -288,9 +341,9 @@ class ServiceService:
         existing_services: dict[tuple, Service] = {
             (
                 s.name.lower().strip(),
-                (s.species or "").lower().strip(),
-                (s.size or "").upper().strip(),
-                (s.coat_type or "").lower().strip()
+                tuple(sorted((s.species or []))),
+                tuple(sorted((s.sizes or []))),
+                tuple(sorted((s.coat_types or []))),
             ): s for s in existing_services_q
         }
 
@@ -322,51 +375,72 @@ class ServiceService:
                 return None
             return str(val).strip()
 
+        import re
+
         def parse_species(val):
             if val is None or str(val).strip() == "":
                 return None
-            cleaned = str(val).strip().lower()
-            if "canino" in cleaned or "cão" in cleaned or "cao" in cleaned or "cachorro" in cleaned:
-                return "Canino"
-            if "felino" in cleaned or "gato" in cleaned:
-                return "Felino"
-            if "exotico" in cleaned or "exótico" in cleaned:
-                return "Exoticos"
-            return None
+            res = []
+            for item in re.split(r"[,;/&]|\se\s", str(val)):
+                cleaned = item.strip().lower()
+                if not cleaned:
+                    continue
+                if cleaned in ("todos", "todas", "qualquer", "todas as espécies", "todos os animais"):
+                    return None
+                if "canino" in cleaned or "cão" in cleaned or "cao" in cleaned or "cachorro" in cleaned:
+                    if "Canino" not in res: res.append("Canino")
+                elif "felino" in cleaned or "gato" in cleaned:
+                    if "Felino" not in res: res.append("Felino")
+                elif "exotico" in cleaned or "exótico" in cleaned:
+                    if "Exotico" not in res: res.append("Exotico")
+            return res if res else None
 
-        def parse_size(val):
+        def parse_sizes(val):
             if val is None or str(val).strip() == "":
                 return None
-            v = str(val).strip().lower()
-            if v in ["pp", "mini", "micro"]:
-                return "PP"
-            elif v in ["p", "pequeno", "peq"]:
-                return "P"
-            elif v in ["m", "medio", "médio"]:
-                return "M"
-            elif v in ["g", "grande"]:
-                return "G"
-            elif v in ["gg", "gigante", "extra grande"]:
-                return "GG"
-            if "(pp)" in v or "mini" in v: return "PP"
-            if "(p)" in v or "pequeno" in v: return "P"
-            if "(m)" in v or "médio" in v or "medio" in v: return "M"
-            if "(g)" in v or "grande" in v: return "G"
-            if "(gg)" in v or "gigante" in v: return "GG"
-            cleaned = str(val).strip().upper()
-            if cleaned in ["PP", "P", "M", "G", "GG"]:
-                return cleaned
-            return None
+            res = []
+            for item in re.split(r"[,;/&]|\se\s", str(val)):
+                item_cleaned = item.strip()
+                v = item_cleaned.lower()
+                if not v:
+                    continue
+                if v in ("todos", "todas", "qualquer", "todos os portes", "qualquer porte"):
+                    return None
+                if v in ["pp", "mini", "micro"] or "(pp)" in v:
+                    if "PP" not in res: res.append("PP")
+                elif v in ["p", "pequeno", "peq"] or "(p)" in v:
+                    if "P" not in res: res.append("P")
+                elif v in ["m", "medio", "médio"] or "(m)" in v:
+                    if "M" not in res: res.append("M")
+                elif v in ["g", "grande"] or "(g)" in v:
+                    if "G" not in res: res.append("G")
+                elif v in ["gg", "gigante", "extra grande"] or "(gg)" in v:
+                    if "GG" not in res: res.append("GG")
+                elif item_cleaned.upper() in ["PP", "P", "M", "G", "GG"]:
+                    if item_cleaned.upper() not in res: res.append(item_cleaned.upper())
+            return res if res else None
 
-        def parse_coat_type(val):
+        def parse_coat_types(val):
             if val is None or str(val).strip() == "":
                 return None
-            cleaned = str(val).strip().lower()
+            res = []
             coat_map = {
-                "curta": "short", "média": "medium", "media": "medium",
-                "longa": "long", "dupla": "double", "sem pelo": "hairless"
+                "curta": "short", "curto": "short", "short": "short",
+                "média": "medium", "media": "medium", "médio": "medium", "medio": "medium", "medium": "medium",
+                "longa": "long", "longo": "long", "long": "long",
+                "dupla": "double", "duplo": "double", "double": "double",
+                "sem pelo": "hairless", "sem pelagem": "hairless", "hairless": "hairless"
             }
-            return coat_map.get(cleaned, None)
+            for item in re.split(r"[,;/&]|\se\s", str(val)):
+                cleaned = item.strip().lower()
+                if not cleaned:
+                    continue
+                if cleaned in ("todas", "todos", "qualquer", "todas as pelagens"):
+                    return None
+                mapped = coat_map.get(cleaned)
+                if mapped and mapped not in res:
+                    res.append(mapped)
+            return res if res else None
 
         CHUNK_SIZE = 200
         new_services: list[Service] = []
@@ -391,10 +465,10 @@ class ServiceService:
                 especie = parse_species(especie_val) if especie_val else None
 
                 porte_val = clean_str(row.get("porte"))
-                porte = parse_size(porte_val) if porte_val else None
+                porte = parse_sizes(porte_val) if porte_val else None
 
                 coat_val = clean_str(row.get("pelagem"))
-                coat_type = parse_coat_type(coat_val)
+                coat_type = parse_coat_types(coat_val)
 
                 raw_price = row.get("preco")
                 price_cents = parse_money(raw_price)
@@ -413,9 +487,9 @@ class ServiceService:
 
                 key = (
                     servico.lower().strip(),
-                    (especie or "").lower().strip(),
-                    (porte or "").upper().strip(),
-                    (coat_type or "").lower().strip()
+                    tuple(sorted(especie or [])),
+                    tuple(sorted(porte or [])),
+                    tuple(sorted(coat_type or [])),
                 )
 
                 service_obj = existing_services.get(key)
@@ -425,8 +499,8 @@ class ServiceService:
                         name=servico,
                         description=desc,
                         species=especie,
-                        size=porte,
-                        coat_type=coat_type,
+                        sizes=porte,
+                        coat_types=coat_type,
                         price_cents=price_cents,
                         duration_minutes=duration_minutes,
                         is_active=True
@@ -529,12 +603,13 @@ class ServiceService:
             "short": "Curta",
             "medium": "Média",
             "long": "Longa",
+            "double": "Dupla",
             "hairless": "Sem Pelo"
         }
         for s in services:
-            species_val = s.species.value if hasattr(s.species, "value") else (s.species or "Todos")
-            size_val = s.size.value if hasattr(s.size, "value") else (s.size or "Todos")
-            coat_val = coat_map.get(s.coat_type, s.coat_type) if s.coat_type else "Todos"
+            species_val = ", ".join(s.species) if s.species else "Todos"
+            size_val = ", ".join(s.sizes) if s.sizes else "Todos"
+            coat_val = ", ".join(coat_map.get(c, c) for c in s.coat_types) if s.coat_types else "Todos"
             
             ws.append([
                 s.id, s.name, species_val, size_val, coat_val,

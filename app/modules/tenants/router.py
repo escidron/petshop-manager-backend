@@ -135,18 +135,20 @@ def create_tenant(
         key=settings.COOKIE_ACCESS_NAME,
         value=create_access_token(token_data),
         httponly=True,
-        secure=False,  # True em prod
-        samesite="lax",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
     response.set_cookie(
         key=settings.COOKIE_REFRESH_NAME,
         value=create_refresh_token(token_data),
         httponly=True,
-        secure=False,  # True em prod
-        samesite="lax",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
         path="/",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
     )
     return result
 
