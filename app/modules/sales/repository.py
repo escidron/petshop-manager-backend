@@ -198,6 +198,23 @@ class SalesRepository:
                 Comanda.id == data.comanda_id,
                 Comanda.tenant_id == tenant_id,
             ).first()
+            if comanda:
+                # Se a comanda já foi finalizada ou cancelada, não deve ser reaberta por requisições concorrentes ou atrasadas
+                if comanda.status in ("completed", "canceled"):
+                    return comanda
+
+                # Verifica se essa comanda já possui uma venda finalizada associada sem saldo restante em aberto
+                completed_sale = db.query(Sale).filter(
+                    Sale.comanda_id == comanda.id,
+                    Sale.tenant_id == tenant_id,
+                    Sale.status == "completed",
+                ).first()
+                has_remainder = any(ci.name == "Saldo em Aberto (Comanda)" for ci in getattr(comanda, "items", []))
+                if completed_sale and not has_remainder:
+                    comanda.status = "completed"
+                    db.add(comanda)
+                    db.commit()
+                    return comanda
 
         if not comanda and data.client_id:
             comanda = db.query(Comanda).filter(
@@ -218,6 +235,20 @@ class SalesRepository:
         removed_appointment_services: list[tuple[int, int, list[int] | None]] = []
 
         if not comanda:
+            # Se for vinculado a um agendamento que já está finalizado, não deve criar nova comanda aberta duplicada
+            if data.appointment_id:
+                appt = db.query(Appointment).filter(
+                    Appointment.id == data.appointment_id,
+                    Appointment.tenant_id == tenant_id,
+                ).first()
+                if appt and getattr(appt.status, "value", str(appt.status)) == "completed":
+                    completed_comanda = db.query(Comanda).filter(
+                        Comanda.appointment_id == data.appointment_id,
+                        Comanda.tenant_id == tenant_id,
+                    ).order_by(desc(Comanda.id)).first()
+                    if completed_comanda:
+                        return completed_comanda
+
             comanda = Comanda(
                 tenant_id=tenant_id,
                 client_id=data.client_id,
@@ -436,6 +467,30 @@ class SalesRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[Comanda], int]:
+        # Auto-heal: comandas vinculadas a uma venda finalizada (sem saldo restante em aberto)
+        # que permaneceram como 'open' devido a concorrência/auto-save no PDV.
+        stale_paid_comandas = (
+            db.query(Comanda)
+            .options(selectinload(Comanda.items))
+            .join(Sale, Sale.comanda_id == Comanda.id)
+            .filter(
+                Comanda.tenant_id == tenant_id,
+                Comanda.status == "open",
+                Sale.status == "completed",
+            )
+            .all()
+        )
+        if stale_paid_comandas:
+            healed = False
+            for sc in stale_paid_comandas:
+                has_remainder = any(ci.name == "Saldo em Aberto (Comanda)" for ci in (sc.items or []))
+                if not has_remainder:
+                    sc.status = "completed"
+                    db.add(sc)
+                    healed = True
+            if healed:
+                db.commit()
+
         q = db.query(Comanda).options(
             selectinload(Comanda.client).selectinload(Client.pets),
             selectinload(Comanda.items).selectinload(ComandaItem.appointment),
