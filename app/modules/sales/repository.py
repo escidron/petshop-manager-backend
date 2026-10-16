@@ -129,11 +129,31 @@ class SalesRepository:
                 subtotal=remainder_val,
             )
             db.add(c_item)
-            db_sale.comanda_id = target_comanda.id
         elif target_comanda:
+            from datetime import datetime, timezone
+            now_utc = datetime.now(timezone.utc)
             target_comanda.status = "completed"
+            target_comanda.updated_at = now_utc
             db_sale.comanda_id = target_comanda.id
             db.add(target_comanda)
+
+            # Close any duplicate/sibling open comanda of this client without unpaid remainder
+            if data.client_id:
+                sibling_comandas = db.query(Comanda).filter(
+                    Comanda.client_id == data.client_id,
+                    Comanda.tenant_id == tenant_id,
+                    Comanda.status == "open",
+                    Comanda.id != target_comanda.id,
+                ).all()
+                for sc in sibling_comandas:
+                    has_unpaid = any(
+                        ci.status == "active" and ci.name == "Saldo em Aberto (Comanda)"
+                        for ci in sc.items
+                    )
+                    if not has_unpaid:
+                        sc.status = "completed"
+                        sc.updated_at = now_utc
+                        db.add(sc)
 
         db.commit()
         db.refresh(db_sale)
@@ -379,6 +399,21 @@ class SalesRepository:
                 db.add(c_item)
                 db.flush()
                 used_ci_ids.add(c_item.id)
+
+        # Any existing active item that was NOT matched/used in the incoming cart items is removed (e.g. duplicate deletions)
+        for existing_item in comanda.items:
+            if existing_item.id not in used_ci_ids and getattr(existing_item, "status", "active") == "active":
+                existing_item.status = "removed"
+                existing_item.removed_at = now
+                existing_item.removed_by_user_id = user_id
+                existing_item.removal_reason = "Removido no carrinho/comanda do PDV"
+                db.add(existing_item)
+                apt_id = existing_item.appointment_id
+                if existing_item.item_type == "service" and apt_id:
+                    removed_appointment_services.append((apt_id, existing_item.item_id, existing_item.pet_ids))
+
+        if removed_appointment_services:
+            self._sync_removed_services_from_appointments(db, tenant_id, removed_appointment_services, user_id=user_id)
 
         db.commit()
         return self.get_comanda(db, tenant_id, comanda.id)
