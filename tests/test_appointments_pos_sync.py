@@ -478,3 +478,51 @@ def test_pos_delete_service_multi_pet_exact_single_audit_log(
     # O ID do item do pet1 não mudou (sem hard delete e recriação)
     assert synced_active[0].id == pet1_ci.id
 
+
+def test_unpaid_appointment_older_than_30_days_is_synced_to_comanda(
+    db: Session,
+    tenant_id: int,
+    test_client: Client,
+    test_pet: Pet,
+    test_service: Service,
+    appt_service: AppointmentService,
+    sales_repo: SalesRepository,
+):
+    """
+    Testa que um agendamento finalizado há mais de 30 dias (ex: 45 dias atrás)
+    e ainda NÃO pago nunca fica para trás: ele deve ser puxado para a comanda aberta do cliente.
+    """
+    from app.modules.sales.service import SalesService
+
+    past_date = datetime.now(timezone.utc) - timedelta(days=45)
+    appointment = appt_service.create(
+        db,
+        tenant_id,
+        AppointmentCreate(
+            client_id=test_client.id,
+            scheduled_at=past_date,
+            items=[
+                AppointmentItemCreate(
+                    pet_id=test_pet.id,
+                    service_ids=[test_service.id],
+                )
+            ],
+        ),
+    )
+    appt_service.apply_action(db, tenant_id, appointment.id, AppointmentAction.CONFIRM)
+    appt_service.apply_action(db, tenant_id, appointment.id, AppointmentAction.START)
+    appt_service.apply_action(db, tenant_id, appointment.id, AppointmentAction.COMPLETE)
+
+    assert appointment.is_paid is False
+
+    # Sincroniza a comanda do cliente
+    sales_service = SalesService()
+    comanda = sales_service.sync_client_open_comanda(db, tenant_id, test_client.id)
+
+    assert comanda is not None
+    assert comanda.status == "open"
+    active_items = [ci for ci in comanda.items if ci.status == "active"]
+    assert len(active_items) >= 1
+    assert any(ci.item_id == test_service.id and ci.appointment_id == appointment.id for ci in active_items)
+
+
