@@ -158,7 +158,10 @@ class AppointmentRepository:
                     ),
                     and_(
                         Appointment.status == "completed",
-                        Appointment.scheduled_at >= recent_past,
+                        or_(
+                            Appointment.is_paid == False,
+                            Appointment.scheduled_at >= recent_past,
+                        ),
                     ),
                 )
             )
