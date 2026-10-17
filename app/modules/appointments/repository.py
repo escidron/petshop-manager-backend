@@ -156,13 +156,7 @@ class AppointmentRepository:
                         Appointment.scheduled_at >= (now - timedelta(days=1)),
                         Appointment.scheduled_at <= max_future,
                     ),
-                    and_(
-                        Appointment.status == "completed",
-                        or_(
-                            Appointment.is_paid == False,
-                            Appointment.scheduled_at >= recent_past,
-                        ),
-                    ),
+                    Appointment.status == "completed",
                 )
             )
             q = q.order_by(Appointment.scheduled_at.asc())

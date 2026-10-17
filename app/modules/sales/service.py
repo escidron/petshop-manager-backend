@@ -999,19 +999,11 @@ class SalesService:
                 db.commit()
                 comanda = None
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         appt_filters = [
             Appointment.tenant_id == tenant_id,
             Appointment.client_id == client_id,
             Appointment.status == "completed",
         ]
-        comanda_appt_ids = {ci.appointment_id for ci in (comanda.items or []) if ci.appointment_id} if comanda else set()
-        if comanda and comanda.appointment_id:
-            comanda_appt_ids.add(comanda.appointment_id)
-        if comanda_appt_ids:
-            appt_filters.append(or_(Appointment.scheduled_at >= cutoff, Appointment.id.in_(comanda_appt_ids)))
-        else:
-            appt_filters.append(Appointment.scheduled_at >= cutoff)
 
         # Buscar agendamentos finalizados recentes do cliente para checar pendências
         appts = (
