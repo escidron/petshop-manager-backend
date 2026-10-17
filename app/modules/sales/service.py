@@ -1005,8 +1005,11 @@ class SalesService:
             Appointment.client_id == client_id,
             Appointment.status == "completed",
         ]
+        comanda_appt_ids = {ci.appointment_id for ci in (comanda.items or []) if ci.appointment_id} if comanda else set()
         if comanda and comanda.appointment_id:
-            appt_filters.append(or_(Appointment.scheduled_at >= cutoff, Appointment.id == comanda.appointment_id))
+            comanda_appt_ids.add(comanda.appointment_id)
+        if comanda_appt_ids:
+            appt_filters.append(or_(Appointment.scheduled_at >= cutoff, Appointment.id.in_(comanda_appt_ids)))
         else:
             appt_filters.append(Appointment.scheduled_at >= cutoff)
 
@@ -1028,30 +1031,37 @@ class SalesService:
 
         existing_keys = set()
         items_changed = False
-        completed_appt_ids = {a.id for a in appts}
+        comanda_appt_ids = {ci.appointment_id for ci in (comanda.items or []) if ci.appointment_id} if comanda else set()
+        completed_appt_ids = {a.id for a in appts}.union(comanda_appt_ids)
 
         removed_keys = set()
         for a in appts:
             for item in a.items:
                 for ais in getattr(item, "item_services", []):
                     if getattr(ais, "status", "active") == "removed":
-                        removed_keys.add((a.id, ais.service_id))
+                        removed_keys.add((a.id, ais.service_id, item.pet_id))
 
         if comanda and comanda.items:
             # Limpar serviços de agendamentos que não estão mais finalizados/ativos, foram dispensados da cobrança (removed)
             # ou serviços cobertos por pacotes (na comanda em aberto devem ficar apenas serviços a pagar)
-            stale_items = [
-                ci for ci in list(comanda.items)
-                if ci.item_type == "service" and (
-                    (ci.appointment_id and ci.appointment_id not in completed_appt_ids)
-                    or (((ci.appointment_id or comanda.appointment_id), ci.item_id) in removed_keys)
-                    or (ci.appointment_id and (float(ci.subtotal or 0) == 0.0 or "(via pacote)" in (ci.name or "")))
-                )
-            ]
+            stale_items = []
+            for ci in list(comanda.items):
+                if ci.item_type == "service" and getattr(ci, "status", "active") == "active":
+                    ci_pet_id = ci.pet_ids[0] if ci.pet_ids else None
+                    apt_id = ci.appointment_id or comanda.appointment_id
+                    is_stale_appt = ci.appointment_id and ci.appointment_id not in completed_appt_ids
+                    is_removed = (apt_id, ci.item_id, ci_pet_id) in removed_keys or (apt_id, ci.item_id, None) in removed_keys
+                    is_covered_or_zero = ci.appointment_id and (float(ci.subtotal or 0) == 0.0 or "(via pacote)" in (ci.name or ""))
+                    if is_stale_appt or is_removed or is_covered_or_zero:
+                        stale_items.append(ci)
+
             if stale_items:
+                now_utc = datetime.now(timezone.utc)
                 for si in stale_items:
-                    comanda.items.remove(si)
-                    db.delete(si)
+                    si.status = "removed"
+                    si.removed_at = now_utc
+                    si.removal_reason = "Sincronização com agendamento (removido ou coberto)"
+                    db.add(si)
                 items_changed = True
 
             if comanda.appointment_id and comanda.appointment_id not in completed_appt_ids:
@@ -1060,7 +1070,7 @@ class SalesService:
                 items_changed = True
 
             existing_keys = {
-                (ci.appointment_id, ci.item_id)
+                (ci.appointment_id, ci.item_id, (ci.pet_ids[0] if ci.pet_ids else None))
                 for ci in comanda.items
                 if ci.appointment_id and ci.item_type == "service" and getattr(ci, "status", "active") == "active"
             }
@@ -1077,12 +1087,13 @@ class SalesService:
                     emp_map[ais.service_id] = ais.employee_id
 
             for item_resp in resp.items:
+                pet_id = item_resp.pet.id if item_resp.pet else None
                 for s in item_resp.services:
                     if getattr(s, "is_removed", False):
                         continue
                     if getattr(s, "is_package_covered", False):
                         continue
-                    if (a.id, s.id) in existing_keys:
+                    if (a.id, s.id, pet_id) in existing_keys:
                         continue
 
                     if not comanda:
@@ -1108,14 +1119,14 @@ class SalesService:
                         unit_price=real_price,
                         subtotal=real_price,
                         employee_id=s.employee_id or emp_map.get(s.id),
-                        pet_ids=[item_resp.pet.id] if item_resp.pet else None,
+                        pet_ids=[pet_id] if pet_id else None,
                         unit="UN",
                         appointment_id=a.id,
                     )
                     db.add(c_item)
                     if comanda.items is not None:
                         comanda.items.append(c_item)
-                    existing_keys.add((a.id, s.id))
+                    existing_keys.add((a.id, s.id, pet_id))
                     items_added = True
 
         if comanda:

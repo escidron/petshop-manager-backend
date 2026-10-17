@@ -64,7 +64,7 @@ def get_pos_client_details(client_id: int, request: Request, db: Session = Depen
             db, tenant_id, client_id, active_only=True, include_usages=False
         ),
         client_appointments=AppointmentService().list_by_client(
-            db, tenant_id, client_id, limit=6, only_active_or_recent=True
+            db, tenant_id, client_id, limit=20, only_active_or_recent=True
         ),
         open_comandas=[client_comanda] if client_comanda else [],
     )

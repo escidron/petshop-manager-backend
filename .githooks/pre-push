@@ -1,0 +1,32 @@
+#!/bin/sh
+# Git pre-push hook: Executa os testes unitários antes de permitir o push (subir para o repositório)
+
+echo "========================================================"
+echo "🚀 [PRE-PUSH] Executando testes unitários antes do push..."
+echo "========================================================"
+
+if [ -f "./.venv/Scripts/pytest.exe" ]; then
+    PYTEST_CMD="./.venv/Scripts/pytest.exe"
+elif [ -f "./.venv/bin/pytest" ]; then
+    PYTEST_CMD="./.venv/bin/pytest"
+elif command -v pytest >/dev/null 2>&1; then
+    PYTEST_CMD="pytest"
+else
+    echo "⚠️  [AVISO] Ambiente virtual ou pytest não encontrado em .venv."
+    exit 0
+fi
+
+$PYTEST_CMD -p no:warnings -q
+TEST_EXIT_CODE=$?
+
+if [ $TEST_EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "❌ [PRE-PUSH BLOQUEADO] Testes falharam! O envio (push) foi cancelado."
+    echo "Corrija os erros antes de subir ou use 'git push --no-verify' em caso de emergência."
+    echo "========================================================"
+    exit 1
+fi
+
+echo "✅ [PRE-PUSH APROVADO] Todos os testes passaram! Subindo alterações..."
+echo "========================================================"
+exit 0

@@ -78,6 +78,27 @@ class OperationalResultRepository:
 
         return code, "other", "Outros Serviços"
 
+    @staticmethod
+    def _format_json_field(val: Any) -> str | None:
+        if not val:
+            return None
+        if isinstance(val, (list, tuple, set)):
+            items = [str(x).strip() for x in val if x]
+            return ", ".join(items) if items else None
+        if isinstance(val, str):
+            val_str = val.strip()
+            if val_str.startswith("[") and val_str.endswith("]"):
+                import json
+                try:
+                    parsed = json.loads(val_str)
+                    if isinstance(parsed, list):
+                        items = [str(x).strip() for x in parsed if x]
+                        return ", ".join(items) if items else None
+                except Exception:
+                    pass
+            return val_str or None
+        return str(val)
+
     def is_tenant_closed_on_date(self, working_hours: Any, dt: date) -> bool:
         """
         Verifica se o petshop está fechado na data informada,
@@ -144,8 +165,8 @@ class OperationalResultRepository:
         service_id_to_name: Dict[int, str] = {}
 
         for s in tenant_services:
-            size_val = s.size.value if hasattr(s.size, "value") else (str(s.size) if s.size else None)
-            species_val = s.species.value if hasattr(s.species, "value") else (str(s.species) if s.species else None)
+            size_val = self._format_json_field(s.sizes) or (s.size if hasattr(s, "size") and isinstance(s.size, str) else None)
+            species_val = self._format_json_field(s.species)
             code, g_key, g_name = self.generate_service_code_and_group(s.name, size_val, species_val)
 
             # Monta nome de exibição (adiciona porte se não estiver já no nome)
@@ -174,7 +195,7 @@ class OperationalResultRepository:
                 EXTRACT(day FROM a.scheduled_at) AS day_num,
                 s.id AS service_id,
                 s.name AS service_name,
-                s.size AS service_size,
+                s.sizes AS service_sizes,
                 s.species AS service_species,
                 COALESCE(s.price_cents, 0) AS price_cents
             FROM appointments a
@@ -199,8 +220,8 @@ class OperationalResultRepository:
 
             if not row_key or row_key not in rows_map:
                 # Caso o serviço tenha sido executado mas não esteja ativo
-                size_val = str(r.service_size) if r.service_size else None
-                species_val = str(r.service_species) if r.service_species else None
+                size_val = self._format_json_field(r.service_sizes)
+                species_val = self._format_json_field(r.service_species)
                 code, g_key, g_name = self.generate_service_code_and_group(
                     r.service_name, size_val, species_val
                 )
@@ -235,7 +256,7 @@ class OperationalResultRepository:
                 si.name AS service_name,
                 si.quantity AS quantity,
                 si.subtotal AS subtotal,
-                srv.size AS service_size,
+                srv.sizes AS service_sizes,
                 srv.species AS service_species
             FROM sales s
             JOIN sale_items si ON si.sale_id = s.id AND COALESCE(si.status, 'active') != 'canceled'
@@ -261,8 +282,8 @@ class OperationalResultRepository:
             row_key = service_id_to_key.get(srv_id)
 
             if not row_key or row_key not in rows_map:
-                size_val = str(r.service_size) if r.service_size else None
-                species_val = str(r.service_species) if r.service_species else None
+                size_val = self._format_json_field(r.service_sizes)
+                species_val = self._format_json_field(r.service_species)
                 code, g_key, g_name = self.generate_service_code_and_group(
                     r.service_name, size_val, species_val
                 )
