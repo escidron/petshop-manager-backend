@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Union
 from pydantic import BaseModel, model_validator
 
 
@@ -20,7 +20,9 @@ class CommissionRuleEmployeeInfo(BaseModel):
 class CommissionRuleServiceInfo(BaseModel):
     id: int
     name: str
-    species: Optional[str] = None
+    species: Optional[Union[List[str], str]] = None
+    sizes: Optional[List[str]] = None
+    coat_types: Optional[List[str]] = None
     size: Optional[str] = None
     coat_type: Optional[str] = None
 
