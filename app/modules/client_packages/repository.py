@@ -191,7 +191,10 @@ class ClientPackageRepository:
 
     def consume_credit(
         self, db: Session, credit: ClientPackageCredit, notes: str | None = None
-    ) -> None:
+    ) -> bool:
+        if credit.used_qty >= credit.total_qty:
+            return False
+
         credit.used_qty += 1
         db.add(credit)
         
@@ -205,9 +208,12 @@ class ClientPackageRepository:
             notes=notes or "Consumido via agendamento",
         )
         db.add(usage)
+        db.flush()
 
         # Verifica se todos os créditos do pacote foram usados
-        db.refresh(client_pkg, ["credits"])
         if all(c.used_qty >= c.total_qty for c in client_pkg.credits):
             client_pkg.is_active = False
             db.add(client_pkg)
+            db.flush()
+
+        return True

@@ -34,6 +34,7 @@ from app.modules.sales.schemas import (
     ComandaSaveRequest,
 )
 from app.modules.sales.models import Comanda, Sale
+from app.modules.cash_register.models import CashSession
 
 
 @pytest.fixture
@@ -524,5 +525,159 @@ def test_unpaid_appointment_older_than_30_days_is_synced_to_comanda(
     active_items = [ci for ci in comanda.items if ci.status == "active"]
     assert len(active_items) >= 1
     assert any(ci.item_id == test_service.id and ci.appointment_id == appointment.id for ci in active_items)
+
+
+def test_appointment_multi_pet_package_consumption_split(
+    db: Session,
+    tenant_id: int,
+    test_client: Client,
+    test_pet: Pet,
+    test_service: Service,
+    appt_service: AppointmentService,
+):
+    """
+    Cenário reproduzido de produção:
+    - Cliente tem 2 pets e 2 pacotes idênticos compartilhados entre os pets.
+    - Pacote 1 (mais antigo) só tem 1 crédito restante (used_qty=3, total_qty=4).
+    - Pacote 2 tem 4 créditos disponíveis (used_qty=0, total_qty=4).
+    - Um agendamento com ambos os pets é finalizado (necessita 2 créditos).
+    - O sistema DEVE consumir 1 crédito do Pacote 1 (atingindo 4/4) e 1 crédito do Pacote 2 (atingindo 1/4).
+    - NUNCA deve sobrecarregar o Pacote 1 com 5/4 (-1 de saldo).
+    """
+    pet2 = Pet(
+        tenant_id=tenant_id,
+        client_id=test_client.id,
+        name="Pet Dois",
+        species="Canino",
+    )
+    db.add(pet2)
+    db.flush()
+
+    pkg1 = ClientPackage(
+        tenant_id=tenant_id,
+        client_id=test_client.id,
+        package_name="Pacote 1",
+        is_active=True,
+        is_paid=True,
+    )
+    db.add(pkg1)
+    db.flush()
+    db.add(ClientPackagePet(client_package_id=pkg1.id, pet_id=test_pet.id))
+    db.add(ClientPackagePet(client_package_id=pkg1.id, pet_id=pet2.id))
+
+    credit1 = ClientPackageCredit(
+        client_package_id=pkg1.id,
+        service_id=test_service.id,
+        service_name=test_service.name,
+        total_qty=4,
+        used_qty=3,
+    )
+    db.add(credit1)
+    db.flush()
+
+    pkg2 = ClientPackage(
+        tenant_id=tenant_id,
+        client_id=test_client.id,
+        package_name="Pacote 2",
+        is_active=True,
+        is_paid=True,
+    )
+    db.add(pkg2)
+    db.flush()
+    db.add(ClientPackagePet(client_package_id=pkg2.id, pet_id=test_pet.id))
+    db.add(ClientPackagePet(client_package_id=pkg2.id, pet_id=pet2.id))
+
+    credit2 = ClientPackageCredit(
+        client_package_id=pkg2.id,
+        service_id=test_service.id,
+        service_name=test_service.name,
+        total_qty=4,
+        used_qty=0,
+    )
+    db.add(credit2)
+    db.commit()
+
+    now = datetime.now(timezone.utc) + timedelta(days=1)
+    appointment = appt_service.create(
+        db,
+        tenant_id,
+        AppointmentCreate(
+            client_id=test_client.id,
+            scheduled_at=now,
+            items=[
+                AppointmentItemCreate(pet_id=test_pet.id, service_ids=[test_service.id]),
+                AppointmentItemCreate(pet_id=pet2.id, service_ids=[test_service.id]),
+            ],
+        ),
+    )
+    appt_service.apply_action(db, tenant_id, appointment.id, AppointmentAction.CONFIRM)
+    appt_service.apply_action(db, tenant_id, appointment.id, AppointmentAction.START)
+    appt_service.apply_action(db, tenant_id, appointment.id, AppointmentAction.COMPLETE)
+
+    db.refresh(credit1)
+    db.refresh(credit2)
+    db.refresh(pkg1)
+    db.refresh(pkg2)
+
+    assert credit1.used_qty == 4
+    assert credit2.used_qty == 1
+    assert pkg1.is_active is False
+    assert pkg2.is_active is True
+
+
+def test_create_sale_package_with_quantity_two(
+    db: Session,
+    tenant_id: int,
+    test_client: Client,
+    test_pet: Pet,
+    test_service: Service,
+    active_cash_session: CashSession,
+):
+    """
+    Testa a venda de múltiplos pacotes (ex: quantity=2) no mesmo item de venda do PDV.
+    Não deve lançar TypeError: 'float' object cannot be interpreted as an integer.
+    """
+    from app.modules.packages.models import Package, PackageItem
+    from app.modules.sales.service import SalesService
+    from app.modules.sales.schemas import SaleCreate, SaleItemCreate, SalePaymentCreate
+
+    pkg = Package(tenant_id=tenant_id, name="Pacote Banho Duplo", price_cents=5000, is_active=True)
+    db.add(pkg)
+    db.flush()
+    p_item = PackageItem(package_id=pkg.id, service_id=test_service.id, quantity=4)
+    db.add(p_item)
+    db.commit()
+
+    sale_data = SaleCreate(
+        client_id=test_client.id,
+        cash_register_id=active_cash_session.cash_register_id,
+        total_amount=100.0,
+        discount_amount=0.0,
+        payment_method="credit_card",
+        payments=[SalePaymentCreate(payment_method="credit_card", amount=100.0)],
+        items=[
+            SaleItemCreate(
+                item_type="package",
+                item_id=pkg.id,
+                name=pkg.name,
+                unit_price=50.0,
+                quantity=2.0,  # float quantity
+                subtotal=100.0,
+                pet_ids=[test_pet.id],
+            )
+        ],
+    )
+
+    sales_service = SalesService()
+    sale = sales_service.create_sale(db, tenant_id, sale_data)
+    assert sale.id is not None
+
+    client_pkgs = db.query(ClientPackage).filter(
+        ClientPackage.client_id == test_client.id,
+        ClientPackage.package_id == pkg.id,
+    ).all()
+    assert len(client_pkgs) == 2
+
+
 
 

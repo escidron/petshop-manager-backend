@@ -225,7 +225,7 @@ class SalesService:
                 elif item.pet_ids and data.client_id:
                     # Vendendo novos pacotes direto pelo PDV (nascem pagos)
                     # Cria a quantidade exata comprada (ex: quantity=2 cria 2 pacotes independentes)
-                    qty = max(1, getattr(item, "quantity", 1) or 1)
+                    qty = max(1, int(round(float(getattr(item, "quantity", 1) or 1))))
                     for _ in range(qty):
                         self.client_package_service.sell(
                             db=db,

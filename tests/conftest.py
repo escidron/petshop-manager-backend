@@ -93,7 +93,7 @@ def test_employee(db: Session, tenant_id: int) -> Employee:
         emp = Employee(
             tenant_id=tenant_id,
             name="Funcionario Teste",
-            role="Banhista",
+            role="bather",
             is_active=True,
         )
         db.add(emp)
