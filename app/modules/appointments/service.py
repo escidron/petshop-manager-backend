@@ -743,14 +743,14 @@ class AppointmentService:
                 credit = self.credit_repo.find_active_credit(db, tenant_id, pet_id, s.id)
                 if credit:
                     notes = f"Consumido via edição do agendamento #{appointment.id}"
-                    self.credit_repo.consume_credit(db, credit, notes=notes)
-                    self.repo.create_coverage(
-                        db,
-                        appointment_item_id=it.id,
-                        service_id=s.id,
-                        client_package_credit_id=credit.id,
-                    )
-                    new_covered_pairs.add((it.id, s.id))
+                    if self.credit_repo.consume_credit(db, credit, notes=notes):
+                        self.repo.create_coverage(
+                            db,
+                            appointment_item_id=it.id,
+                            service_id=s.id,
+                            client_package_credit_id=credit.id,
+                        )
+                        new_covered_pairs.add((it.id, s.id))
 
         db.flush()
 
@@ -1247,14 +1247,14 @@ class AppointmentService:
                     )
                     if credit:
                         notes = f"Consumido via agendamento - Pet: {item.pet.name}" if item.pet else "Consumido via agendamento"
-                        self.credit_repo.consume_credit(db, credit, notes=notes)
-                        self.repo.create_coverage(
-                            db,
-                            appointment_item_id=item.id,
-                            service_id=service.id,
-                            client_package_credit_id=credit.id,
-                        )
-                        covered_pairs.add((item.id, service.id))
+                        if self.credit_repo.consume_credit(db, credit, notes=notes):
+                            self.repo.create_coverage(
+                                db,
+                                appointment_item_id=item.id,
+                                service_id=service.id,
+                                client_package_credit_id=credit.id,
+                            )
+                            covered_pairs.add((item.id, service.id))
 
             db.flush()
 
