@@ -28,6 +28,9 @@ import app.modules.financial.models
 import sentry_sdk
 from app.config.database import SessionLocal
 from app.config.seeds import sync_all_seeds
+from app.config.settings import settings
+from sqlalchemy import text
+from app.config.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,6 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    from app.config.settings import settings
 
     app = FastAPI(title="Petshop API", lifespan=lifespan)
     app.state.limiter = limiter
@@ -91,8 +93,6 @@ def create_app() -> FastAPI:
 
     @app.get("/health/db-quota")
     def db_quota_check():
-        from sqlalchemy import text
-        from app.config.database import SessionLocal
 
         session = SessionLocal()
         try:
