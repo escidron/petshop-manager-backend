@@ -100,6 +100,9 @@ class Subscription(Base):
     whatsapp_package_id: Mapped[str | None] = mapped_column(
         String(50), nullable=True
     )
+    whatsapp_next_package_id: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
     whatsapp_package_status: Mapped[str] = mapped_column(
         String(30),
         nullable=False,

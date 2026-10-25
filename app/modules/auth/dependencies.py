@@ -101,7 +101,12 @@ def get_current_tenant(
     
     subscription_repo = SubscriptionRepository()
     subscription = subscription_repo.get_active_by_tenant(db, tenant_id)
-    if subscription and subscription.current_period_end:
+    if (
+        subscription 
+        and subscription.current_period_end 
+        and subscription.status not in ("canceled", "failed") 
+        and not subscription.canceled_at
+    ):
         period_end = subscription.current_period_end
         now_utc = datetime.now(timezone.utc)
         if period_end.tzinfo is None:
@@ -113,7 +118,7 @@ def get_current_tenant(
             # o status comercial é ACTIVE (nunca 'incomplete' que é termo interno de gateway)
             subscription = subscription_repo.update(db, subscription, {"status": "active"})
 
-    if subscription and subscription.status not in ("canceled",):
+    if subscription and subscription.status not in ("canceled",) and not subscription.canceled_at:
         trial_end = subscription.trial_ends_at
         now_utc = datetime.now(timezone.utc)
         if trial_end:

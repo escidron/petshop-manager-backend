@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,7 @@ from app.modules.subscriptions.schemas import (
     HirePackageRequest,
     PaymentMethodResponse,
     ProrationPreviewResponse,
+    ReactivateSubscriptionRequest,
     SubscriptionResponse,
     SubscriptionChargeResponse,
     UpdateChargeCardRequest,
@@ -65,7 +67,7 @@ def get_my_subscription(
     # Se o período expirou, marca como past_due para liberar novo pagamento
     # (em produção isso seria feito pelo webhook do Pagar.me)
     now_utc = datetime.now(timezone.utc)
-    if sub.status in ("active", "pending") and sub.current_period_end:
+    if sub.status in ("active", "pending") and sub.current_period_end and not sub.canceled_at and sub.status != "canceled":
         period_end = sub.current_period_end
         # Garante que period_end é timezone-aware para comparação segura
         if period_end.tzinfo is None:
@@ -74,7 +76,7 @@ def get_my_subscription(
             sub = _repo.update(db, sub, {"status": "past_due"})
 
     # Se a assinatura tem trial_ends_at e não foi cancelada
-    if sub.trial_ends_at and sub.status not in ("canceled",):
+    if sub.trial_ends_at and sub.status not in ("canceled",) and not sub.canceled_at:
         trial_end = sub.trial_ends_at
         if trial_end.tzinfo is None:
             trial_end = trial_end.replace(tzinfo=timezone.utc)
@@ -167,6 +169,18 @@ def refund_and_cancel(
     """Estorna a cobrança mais recente (se dentro de 7 dias do 1º pagamento) e cancela a assinatura."""
     tenant = ctx["tenant"]
     return service.refund_and_cancel_subscription(db, tenant)
+
+
+@router.post("/reactivate", response_model=SubscriptionResponse)
+def reactivate_subscription(
+    body: Optional[ReactivateSubscriptionRequest] = None,
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Reativa uma assinatura cancelada utilizando o cartão já cadastrado ou um cartão específico."""
+    tenant = ctx["tenant"]
+    card_id = body.card_id if body else None
+    return service.reactivate_subscription(db, tenant, card_id=card_id)
 
 
 @router.post("/payment-methods", response_model=PaymentMethodResponse)
@@ -359,6 +373,16 @@ def cancel_package(
     """Cancela a assinatura do pacote de WhatsApp no Pagar.me."""
     tenant = ctx["tenant"]
     return service.cancel_package(db, tenant)
+
+
+@router.post("/package/cancel-downgrade", response_model=dict)
+def cancel_scheduled_downgrade(
+    ctx: dict = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """Cancela o agendamento de alteração/downgrade do pacote de WhatsApp."""
+    tenant = ctx["tenant"]
+    return service.cancel_scheduled_downgrade(db, tenant)
 
 
 @router.post("/simulate-pix-paid", response_model=dict)

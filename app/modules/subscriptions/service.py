@@ -2,9 +2,13 @@ import calendar
 import hashlib
 import hmac
 import uuid
+import json
+import logging
+from typing import Optional
 from datetime import datetime, timezone, timedelta
 
 import httpx
+import sentry_sdk
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -16,16 +20,11 @@ from app.modules.subscriptions.repository import SubscriptionRepository, Subscri
 
 _repo = SubscriptionRepository()
 _charge_repo = SubscriptionChargeRepository()
+logger = logging.getLogger(__name__)
 
 
 PAGARME_BASE_URL = "https://api.pagar.me/core/v5"
 
-COMBO_MAP = {
-    "pkg_200": "combo_200",
-    "pkg_500": "combo_500",
-    "pkg_1000": "combo_1000",
-    "pkg_2000": "combo_2000",
-}
 
 
 def _pagarme_client() -> httpx.Client:
@@ -34,6 +33,75 @@ def _pagarme_client() -> httpx.Client:
         auth=(settings.PAGARME_SECRET_KEY, ""),
         timeout=30,
     )
+
+
+def _format_pagarme_error_detail(resp_text: str, default_prefix: str = "Erro ao processar dados no Pagar.me") -> str:
+    """Extrai e traduz amigavelmente erros retornados pela API do Pagar.me."""
+    try:
+        data = json.loads(resp_text)
+        errors = data.get("errors")
+        if isinstance(errors, dict):
+            for field, msgs in errors.items():
+                if isinstance(msgs, list) and msgs:
+                    msg_str = str(msgs[0]).lower()
+                    field_lower = str(field).lower()
+
+                    # Validade / Expirado (testa antes de número)
+                    if (
+                        "expired" in msg_str
+                        or "exp_month" in msg_str
+                        or "exp_year" in msg_str
+                        or "expiration" in msg_str
+                        or "exp_month" in field_lower
+                        or "exp_year" in field_lower
+                    ):
+                        if "expired" in msg_str:
+                            return "Cartão expirado. Verifique a data de validade informada."
+                        return "Data de validade do cartão inválida."
+
+                    # CVV
+                    if "cvv" in msg_str or "cvv" in field_lower:
+                        return "Código de segurança (CVV) inválido."
+
+                    # Número do cartão
+                    if (
+                        "not a valid card number" in msg_str
+                        or "invalid card number" in msg_str
+                        or "number" in msg_str
+                        or field_lower in ("card.number", "number", "card_number")
+                    ):
+                        return "Número de cartão inválido. Verifique os dígitos informados."
+
+                    # Titular
+                    if "holder" in msg_str or "holder_name" in field_lower:
+                        return "Nome impresso no cartão inválido ou incompleto."
+
+                    # Bandeira
+                    if "brand" in msg_str or "brand" in field_lower:
+                        return "Bandeira do cartão não suportada ou inválida."
+
+                    # CEP
+                    if "zip_code" in msg_str or "zip_code" in field_lower:
+                        return "CEP inválido no endereço de cobrança."
+
+                    # Documento
+                    if "document" in msg_str or "document" in field_lower:
+                        return "CPF ou CNPJ do titular inválido."
+
+        main_msg = str(data.get("message", "")).lower()
+        if "card expired" in main_msg or "expired" in main_msg:
+            return "Cartão expirado. Verifique a data de validade informada."
+        if "insufficient funds" in main_msg:
+            return "Saldo ou limite insuficiente no cartão."
+        if "card declined" in main_msg or "declined" in main_msg or "not authorized" in main_msg:
+            return "Transação não autorizada pela operadora do cartão."
+        if "card blocked" in main_msg:
+            return "Cartão bloqueado pelo banco emissor."
+        if "the request is invalid" in main_msg:
+            return "Dados do cartão inválidos. Verifique os números digitados."
+    except Exception:
+        pass
+    return f"{default_prefix}: {resp_text}"
 
 
 def _ensure_pagarme_customer(
@@ -236,7 +304,7 @@ def sync_subscription_from_pagarme(db: Session, sub: Subscription) -> Subscripti
                 sub = _repo.update(db, sub, updates)
                 db.commit()
     except Exception as e:
-        print(f"[WARN] Erro ao sincronizar subscription {sub.pagarme_subscription_id} com Pagar.me: {e}")
+        logger.warning(f"Erro ao sincronizar subscription {sub.pagarme_subscription_id} com Pagar.me: {e}")
 
     return sub
 
@@ -296,6 +364,25 @@ def _activate_or_extend_subscription(db: Session, sub: Subscription, payment_met
     if trial_end and trial_end <= now_utc:
         update_fields["trial_ends_at"] = None
 
+    # Se houver pacote de WhatsApp ativo, assegura que o período do pacote não termine antes do novo ciclo do plano base
+    if sub.whatsapp_package_id and sub.whatsapp_package_status == "active":
+        pkg_end = _normalize_dt(sub.whatsapp_period_end)
+        if not pkg_end or pkg_end < new_period_end:
+            update_fields["whatsapp_period_end"] = new_period_end
+
+            # Se havia um downgrade agendado para o próximo ciclo, efetiva agora na renovação
+            if sub.whatsapp_next_package_id:
+                active_pkg = sub.whatsapp_next_package_id
+                update_fields["whatsapp_package_id"] = active_pkg
+                update_fields["whatsapp_next_package_id"] = None
+            else:
+                active_pkg = sub.whatsapp_package_id
+
+            if active_pkg and sub.whatsapp_package_status == "active":
+                pkg_limit = PACKAGE_LIMITS.get(active_pkg, 200)
+                update_fields["whatsapp_messages_limit"] = pkg_limit
+                update_fields["whatsapp_messages_used"] = 0
+
     updated_sub = _repo.update(db, sub, update_fields)
     db.commit()
     return updated_sub
@@ -315,24 +402,39 @@ def create_checkout(
     start_at: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
-    if plan_code in ("PLAN_MONTHLY", "MONTHLY_PRO", "PRO", "pro"):
+    if plan_code in ("PLAN_MONTHLY", "MONTHLY_PRO", "PRO", "pro") or plan_code.startswith("combo_"):
         plan_code = "MONTHLY"
 
     existing_sub = _repo.get_active_by_tenant(db, tenant.id)
 
-    # Se estiver ativando o plano mensal e já tiver pacote de WhatsApp ativo, unifica no Combo
+    # Se estiver ativando o plano mensal e já tiver pacote de WhatsApp ativo
+    amount_override = None
+    package_already_paid_for_current_cycle = False
+
     if plan_code == "MONTHLY" and existing_sub and existing_sub.whatsapp_package_id and existing_sub.whatsapp_package_status == "active":
-        combo_code = COMBO_MAP.get(existing_sub.whatsapp_package_id)
-        if combo_code:
-            combo_plan = db.query(Plan).filter(Plan.code == combo_code, Plan.is_active == True).first()
-            if combo_plan and combo_plan.pagarme_plan_id:
-                plan_code = combo_code
-                if existing_sub.pagarme_whatsapp_subscription_id:
-                    try:
-                        with _pagarme_client() as client:
-                            client.delete(f"/subscriptions/{existing_sub.pagarme_whatsapp_subscription_id}")
-                    except Exception as e:
-                        print(f"[WARN] Erro ao cancelar assinatura avulsa de WhatsApp: {e}")
+        now_utc = datetime.now(timezone.utc)
+        pkg_period_end = _normalize_dt(existing_sub.whatsapp_period_end)
+
+        # Se o pacote já está ativo e foi pago e ainda é válido além dos próximos 5 dias,
+        # o valor a ser cobrado HOJE deve ser apenas o Plano Base (R$ 149,90) para não cobrar o pacote 2 vezes!
+        if pkg_period_end and pkg_period_end > (now_utc + timedelta(days=5)):
+            package_already_paid_for_current_cycle = True
+            base_monthly_plan = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
+            if base_monthly_plan:
+                amount_override = base_monthly_plan.price_cents
+        else:
+            # Ambos renovam juntos
+            base_monthly_plan = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
+            pkg_plan = db.query(Plan).filter(Plan.code == existing_sub.whatsapp_package_id, Plan.is_active == True).first()
+            if base_monthly_plan and pkg_plan:
+                amount_override = base_monthly_plan.price_cents + pkg_plan.price_cents
+
+        if existing_sub.pagarme_whatsapp_subscription_id:
+            try:
+                with _pagarme_client() as client:
+                    client.delete(f"/subscriptions/{existing_sub.pagarme_whatsapp_subscription_id}")
+            except Exception as e:
+                print(f"[WARN] Erro ao cancelar assinatura avulsa de WhatsApp: {e}")
 
     plan: Plan | None = db.query(Plan).filter(Plan.code == plan_code, Plan.is_active == True).first()
 
@@ -361,17 +463,16 @@ def create_checkout(
         db.commit()
         return {"status": "trialing", "trial_ends_at": trial_ends_at.isoformat()}
 
-    if payment_method != "pix" and not plan.pagarme_plan_id:
-        raise HTTPException(
-            status_code=422,
-            detail="Este plano ainda não possui um ID configurado no Pagar.me",
-        )
-
     customer_id = _ensure_pagarme_customer(db, tenant, user_email, user_name, document)
 
     # PIX: cobrança avulsa (Pagar.me não suporta PIX em subscriptions)
     if payment_method == "pix":
-        return _checkout_pix(db, tenant, customer_id, plan, idempotency_key)
+        if existing_sub and existing_sub.payment_method in ("card", "credit_card") and existing_sub.pagarme_subscription_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Sua assinatura está ativa no Cartão de Crédito com renovação automática. Para alterar sua modalidade para PIX, utilize a opção de trocar forma de pagamento."
+            )
+        return _checkout_pix(db, tenant, customer_id, plan, idempotency_key, amount_override=amount_override)
 
     # Cartão: cria subscription no Pagar.me
     if not card_token and not card_id:
@@ -395,16 +496,168 @@ def create_checkout(
                 json={"token": card_token, "billing_address": addr},
             )
             if card_resp.status_code not in (200, 201):
-                raise HTTPException(status_code=502, detail=f"Erro ao salvar cartão: {card_resp.text}")
+                raise HTTPException(status_code=400, detail=_format_pagarme_error_detail(card_resp.text, "Erro ao salvar cartão"))
             final_card_id = card_resp.json()["id"]
             # Registra o cartão como pertencente a este tenant
             _register_card_for_tenant(db, tenant.id, final_card_id)
 
+    # Anti-cobrança dupla no Cartão: se o pacote já foi pago para o ciclo atual, cobra avulso apenas o Plano Base hoje
+    # e agenda a assinatura Combo com start_at = próximo vencimento
+    if package_already_paid_for_current_cycle and existing_sub:
+        now_utc = datetime.now(timezone.utc)
+        pkg_period_end = _normalize_dt(existing_sub.whatsapp_period_end)
+        if pkg_period_end and pkg_period_end > now_utc:
+            next_billing_dt = pkg_period_end
+        else:
+            ref_bday = existing_sub.billing_day or now_utc.day
+            next_billing_dt = _add_month_preserving_billing_day(now_utc, ref_bday)
+
+        base_monthly_plan = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
+        base_charge_amount = base_monthly_plan.price_cents if base_monthly_plan else 14990
+
+        # 1. Cobrança avulsa do Plano Base hoje no cartão
+        charge_payload = {
+            "customer_id": customer_id,
+            "amount": base_charge_amount,
+            "payment": {
+                "payment_method": "credit_card",
+                "credit_card": {
+                    "card_id": final_card_id,
+                    "statement_descriptor": "DATAPET",
+                    "installments": 1,
+                },
+            },
+            "metadata": {
+                "tenant_id": str(tenant.id),
+                "tenant_name": tenant.name,
+                "type": "base_plan_activation",
+            },
+        }
+
+        with _pagarme_client() as client:
+            c_resp = client.post("/charges", json=charge_payload, headers={"Idempotency-Key": idempotency_key or str(uuid.uuid4())})
+            if c_resp.status_code not in (200, 201):
+                raise HTTPException(status_code=400, detail=_format_pagarme_error_detail(c_resp.text, "Erro ao processar cobrança do plano base"))
+            c_data = c_resp.json()
+            if c_data.get("status") not in ("paid", "captured"):
+                raise HTTPException(status_code=400, detail="Pagamento do cartão recusado. Verifique os dados.")
+
+            # Se já existia uma subscription anterior no Pagar.me, cancela para não duplicar
+            if existing_sub.pagarme_subscription_id and existing_sub.pagarme_subscription_id.startswith("sub_"):
+                try:
+                    client.delete(f"/subscriptions/{existing_sub.pagarme_subscription_id}")
+                except Exception as e:
+                    print(f"[WARN] Erro ao cancelar assinatura anterior no Pagar.me: {e}")
+
+            # 2. Cria assinatura unificada futura agendada para next_billing_dt (sem cobrança hoje)
+            sub_items = [
+                {
+                    "name": plan.name,
+                    "description": plan.name,
+                    "quantity": 1,
+                    "pricing_scheme": {
+                        "scheme_type": "unit",
+                        "price": plan.price_cents,
+                    },
+                }
+            ]
+            if existing_sub.whatsapp_package_id and existing_sub.whatsapp_package_status == "active":
+                active_pkg = db.query(Plan).filter(Plan.code == existing_sub.whatsapp_package_id, Plan.is_active == True).first()
+                if active_pkg:
+                    sub_items.append({
+                        "name": active_pkg.name,
+                        "description": active_pkg.name,
+                        "quantity": 1,
+                        "pricing_scheme": {
+                            "scheme_type": "unit",
+                            "price": active_pkg.price_cents,
+                        },
+                    })
+            sub_payload = {
+                "customer_id": customer_id,
+                "payment_method": "credit_card",
+                "card_id": final_card_id,
+                "interval": "month",
+                "interval_count": 1,
+                "billing_type": "prepaid",
+                "start_at": next_billing_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "items": sub_items,
+                "metadata": {
+                    "tenant_id": str(tenant.id),
+                    "tenant_name": tenant.name,
+                },
+            }
+            sub_resp = client.post("/subscriptions", json=sub_payload, headers={"Idempotency-Key": str(uuid.uuid4())})
+            if sub_resp.status_code not in (200, 201):
+                raise HTTPException(status_code=400, detail=_format_pagarme_error_detail(sub_resp.text, "Erro ao criar assinatura futura no Pagar.me"))
+            pagarme_sub = sub_resp.json()
+
+        # Registra a cobrança avulsa paga hoje
+        last_trans = c_data.get("last_transaction", {})
+        card_data = last_trans.get("card", {})
+        _charge_repo.create(
+            db=db,
+            tenant_id=tenant.id,
+            subscription_id=existing_sub.id,
+            pagarme_charge_id=c_data.get("id"),
+            amount=base_charge_amount,
+            status=c_data.get("status", "paid"),
+            payment_method="card",
+            card_brand=card_data.get("brand"),
+            card_last_four=card_data.get("last_four_digits"),
+        )
+
+        _repo.update(db, existing_sub, {
+            "plan_id": plan.id,
+            "status": "active",
+            "pagarme_subscription_id": pagarme_sub["id"],
+            "current_period_end": next_billing_dt,
+            "whatsapp_period_end": next_billing_dt,
+            "billing_day": next_billing_dt.day,
+            "trial_ends_at": None,
+            "canceled_at": None,
+            "payment_method": "card",
+        })
+        db.commit()
+
+        return {
+            "pagarme_subscription_id": pagarme_sub["id"],
+            "status": "active",
+            "amount": base_charge_amount,
+        }
+
+    sub_items = [
+        {
+            "name": plan.name,
+            "description": plan.name,
+            "quantity": 1,
+            "pricing_scheme": {
+                "scheme_type": "unit",
+                "price": plan.price_cents,
+            },
+        }
+    ]
+    if existing_sub and existing_sub.whatsapp_package_id and existing_sub.whatsapp_package_status == "active":
+        active_pkg = db.query(Plan).filter(Plan.code == existing_sub.whatsapp_package_id, Plan.is_active == True).first()
+        if active_pkg:
+            sub_items.append({
+                "name": active_pkg.name,
+                "description": active_pkg.name,
+                "quantity": 1,
+                "pricing_scheme": {
+                    "scheme_type": "unit",
+                    "price": active_pkg.price_cents,
+                },
+            })
+
     sub_payload: dict = {
         "customer_id": customer_id,
-        "plan_id": plan.pagarme_plan_id,
         "payment_method": "credit_card",
         "card_id": final_card_id,
+        "interval": "month",
+        "interval_count": 1,
+        "billing_type": "prepaid",
+        "items": sub_items,
         # Identifica o tenant no painel do Pagar.me (cada subscription mostra seu estabelecimento)
         "metadata": {
             "tenant_id": str(tenant.id),
@@ -415,7 +668,7 @@ def create_checkout(
         sub_payload["start_at"] = start_at
 
     # Se já existia uma subscription anterior no Pagar.me, cancela para não duplicar
-    if existing_sub and existing_sub.pagarme_subscription_id:
+    if existing_sub and existing_sub.pagarme_subscription_id and existing_sub.pagarme_subscription_id.startswith("sub_"):
         try:
             with _pagarme_client() as client:
                 client.delete(f"/subscriptions/{existing_sub.pagarme_subscription_id}")
@@ -431,7 +684,7 @@ def create_checkout(
         print("RESPONSE:", resp.text)
         print("============================")
         if resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"Erro ao criar assinatura no Pagar.me: {resp.text}")
+            raise HTTPException(status_code=400, detail=_format_pagarme_error_detail(resp.text, "Erro ao criar assinatura no Pagar.me"))
 
     pagarme_sub = resp.json()
     period_end = datetime.now(timezone.utc) + timedelta(days=30)
@@ -480,8 +733,8 @@ def create_checkout(
         now_check = datetime.now(timezone.utc)
         trial_end_check = _normalize_dt(existing.trial_ends_at)
         is_still_in_trial = bool(
-            (trial_end_check and trial_end_check > now_check)
-            or existing.status == "trialing"
+            existing.status == "trialing"
+            or (trial_end_check and trial_end_check > now_check and existing.status not in ("canceled", "active"))
         )
 
         if is_still_in_trial and trial_end_check and trial_end_check > now_check:
@@ -583,7 +836,14 @@ def create_checkout(
     }
 
 
-def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, idempotency_key: str | None = None) -> dict:
+def _checkout_pix(
+    db: Session,
+    tenant: Tenant,
+    customer_id: str,
+    plan: Plan,
+    idempotency_key: str | None = None,
+    amount_override: int | None = None,
+) -> dict:
     """Cria cobrança avulsa PIX (Pagar.me não suporta PIX em subscriptions)."""
     now_utc = datetime.now(timezone.utc)
     existing = _repo.get_active_by_tenant(db, tenant.id)
@@ -609,16 +869,17 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
                 detail=f"O pagamento do seu período atual já foi realizado e é válido até {formatted_date}. A fatura Pix para renovação estará disponível a partir de {available_date} (5 dias antes do vencimento).",
             )
 
-        # Se já existir uma cobrança PIX pendente e válida para esta assinatura, reutiliza
+        # Se já existir uma cobrança PIX pendente e válida para esta assinatura, reutiliza apenas se o valor bater exatamente
         pending_charge = db.query(SubscriptionCharge).filter(
             SubscriptionCharge.tenant_id == tenant.id,
             SubscriptionCharge.status == "pending",
             SubscriptionCharge.payment_method == "pix",
             SubscriptionCharge.pix_qr_code.isnot(None),
         ).order_by(SubscriptionCharge.id.desc()).first()
+        expected_amount = amount_override if amount_override is not None else plan.price_cents
         if pending_charge and pending_charge.pix_qr_code:
             exp = _normalize_dt(pending_charge.expires_at)
-            if not exp or exp > now_utc:
+            if (not exp or exp > now_utc) and pending_charge.amount == expected_amount:
                 return {
                     "charge_id": pending_charge.pagarme_charge_id,
                     "pix_qr_code": pending_charge.pix_qr_code,
@@ -628,17 +889,19 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
                     "status": "pending",
                 }
 
+    charge_amount = amount_override if amount_override is not None else plan.price_cents
     charge_payload = {
         "customer_id": customer_id,
         "payment": {
             "payment_method": "pix",
             "pix": {"expires_in": 1800},
         },
-        "amount": plan.price_cents,
+        "amount": charge_amount,
         "currency": plan.currency or "BRL",
         "metadata": {
             "tenant_id": str(tenant.id),
             "tenant_name": tenant.name,
+            "type": "base_plan_activation" if amount_override else "subscription",
         },
     }
 
@@ -671,7 +934,7 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
     if existing:
         trial_end = _normalize_dt(existing.trial_ends_at)
         curr_period_end = _normalize_dt(existing.current_period_end)
-        is_in_trial = bool((trial_end and trial_end > now_utc) or existing.status == "trialing")
+        is_in_trial = bool(existing.status == "trialing" or (trial_end and trial_end > now_utc and existing.status not in ("canceled", "active")))
         is_active = bool(curr_period_end and curr_period_end > now_utc and existing.status == "active")
 
         update_payload = {
@@ -696,10 +959,6 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
             # O período só avança 1 mês quando o Pix for efetivamente PAGO (webhook charge.paid).
             update_payload["status"] = existing.status or "pending"
 
-        # Se não tiver pagarme_subscription_id, registra o charge_id como referência
-        if not existing.pagarme_subscription_id:
-            update_payload["pagarme_subscription_id"] = charge_id
-
         sub = _repo.update(db, existing, update_payload)
     else:
         # Nova assinatura: criada como pending sem período pago até confirmação do pagamento
@@ -710,7 +969,7 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
             plan_id=plan.id,
             status="pending",
             current_period_end=None,
-            pagarme_subscription_id=charge_id,
+            pagarme_subscription_id=None,
             billing_day=ref_day,
         )
         _repo.update(db, sub, {"payment_method": "pix"})
@@ -728,7 +987,7 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
         tenant_id=tenant.id,
         subscription_id=sub.id,
         pagarme_charge_id=charge_id,
-        amount=plan.price_cents,
+        amount=charge_amount,
         status="pending",
         payment_method="pix",
         pix_qr_code=pix_data.get("qr_code"),
@@ -743,7 +1002,7 @@ def _checkout_pix(db: Session, tenant: Tenant, customer_id: str, plan: Plan, ide
         "pix_qr_code": pix_data.get("qr_code"),
         "pix_qr_code_url": pix_data.get("qr_code_url"),
         "expires_at": expires_at.isoformat() if expires_at else None,
-        "amount": plan.price_cents,
+        "amount": charge_amount,
         "status": "pending",
     }
 
@@ -766,16 +1025,16 @@ def simulate_pix_payment(db: Session, tenant: Tenant) -> dict:
         pending_charge.status = "paid"
         db.add(pending_charge)
         # Se o tenant tiver pacote pendente e o valor for de pacote avulso:
-        if sub.whatsapp_package_status == "pending_payment" and pending_charge.amount < 9990:
+        if sub.whatsapp_package_status == "pending_payment" and pending_charge.amount < 14990:
             is_package_charge = True
 
     if is_package_charge or (sub.whatsapp_package_status == "pending_payment" and not pending_charge):
         pkg_code = sub.whatsapp_package_id or "pkg_200"
-        pkg_limit = PACKAGE_LIMITS.get(pkg_code, sub.whatsapp_messages_limit or 200)
+        pkg_limit = PACKAGE_LIMITS.get(pkg_code, 200)
         updated_sub = _repo.update(db, sub, {
             "whatsapp_package_status": "active",
             "whatsapp_messages_limit": pkg_limit,
-            "whatsapp_messages_used": 0,
+            "whatsapp_messages_used": sub.whatsapp_messages_used or 0,
         })
         db.commit()
         return {
@@ -856,7 +1115,7 @@ def add_payment_method(
             json={"token": card_token, "billing_address": addr},
         )
         if resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"Erro ao salvar cartão: {resp.text}")
+            raise HTTPException(status_code=400, detail=_format_pagarme_error_detail(resp.text, "Erro ao salvar cartão"))
 
     card = resp.json()
     card_id = card["id"]
@@ -887,10 +1146,27 @@ def cancel_subscription(db: Session, tenant: Tenant) -> Subscription:
             if resp.status_code not in (200, 204, 400, 404):
                 raise HTTPException(status_code=502, detail=f"Erro ao cancelar no Pagar.me: {resp.text}")
 
+    if sub.pagarme_whatsapp_subscription_id:
+        try:
+            with _pagarme_client() as client:
+                resp = client.delete(f"/subscriptions/{sub.pagarme_whatsapp_subscription_id}")
+                if resp.status_code not in (200, 204, 400, 404):
+                    err_msg = f"Falha ao cancelar assinatura do pacote WhatsApp {sub.pagarme_whatsapp_subscription_id} no Pagar.me: HTTP {resp.status_code} - {resp.text}"
+                    logger.error(err_msg)
+                    sentry_sdk.capture_message(err_msg, level="error")
+        except Exception as e:
+            logger.exception(f"Erro ao cancelar assinatura do pacote WhatsApp {sub.pagarme_whatsapp_subscription_id} no Pagar.me: {e}")
+            sentry_sdk.capture_exception(e)
+
+    now_utc = datetime.now(timezone.utc)
     return _repo.update(db, sub, {
         "status": "canceled",
-        "canceled_at": datetime.now(timezone.utc),
+        "canceled_at": now_utc,
+        "trial_ends_at": now_utc if (sub.trial_ends_at and _normalize_dt(sub.trial_ends_at) > now_utc) else sub.trial_ends_at,
+        "current_period_end": now_utc if (sub.current_period_end and _normalize_dt(sub.current_period_end) > now_utc) else sub.current_period_end,
         "pagarme_subscription_id": None,
+        "whatsapp_package_status": "canceled",
+        "pagarme_whatsapp_subscription_id": None,
     })
 
 def is_subscription_eligible_for_refund(db: Session, sub: Subscription) -> bool:
@@ -922,21 +1198,51 @@ def refund_and_cancel_subscription(db: Session, tenant: Tenant) -> Subscription:
     if not sub:
         raise HTTPException(status_code=404, detail="Assinatura ativa não encontrada")
 
-    if not is_subscription_eligible_for_refund(db, sub):
-        raise HTTPException(status_code=400, detail="Prazo de 7 dias para estorno expirou ou estorno não aplicável.")
-
-    charge = _charge_repo.get_first_paid_charge(db, sub.id)
-    if not charge:
-        raise HTTPException(status_code=400, detail="Nenhum pagamento encontrado para estornar")
-
-    if charge.pagarme_charge_id and charge.status in ("paid", "captured"):
-        with _pagarme_client() as client:
-            resp = client.delete(f"/charges/{charge.pagarme_charge_id}")
-            if resp.status_code not in (200, 204):
-                raise HTTPException(status_code=502, detail=f"Erro ao estornar no Pagar.me: {resp.text}")
-        _charge_repo.update(db, charge, {"status": "refunded"})
+    if is_subscription_eligible_for_refund(db, sub):
+        charge = _charge_repo.get_first_paid_charge(db, sub.id)
+        if charge and charge.pagarme_charge_id and charge.status in ("paid", "captured"):
+            with _pagarme_client() as client:
+                resp = client.delete(f"/charges/{charge.pagarme_charge_id}")
+                if resp.status_code not in (200, 204):
+                    raise HTTPException(status_code=502, detail=f"Erro ao estornar no Pagar.me: {resp.text}")
+            _charge_repo.update(db, charge, {"status": "refunded"})
 
     return cancel_subscription(db, tenant)
+
+
+def reactivate_subscription(db: Session, tenant: Tenant, card_id: Optional[str] = None) -> Subscription:
+    sub = _repo.get_active_by_tenant(db, tenant.id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Assinatura não encontrada")
+
+    # 1. Busca o cartão para reativar
+    card_to_use = None
+    if card_id:
+        card_to_use = db.query(TenantCard).filter(
+            TenantCard.tenant_id == tenant.id,
+            TenantCard.pagarme_card_id == card_id,
+        ).first()
+        if not card_to_use:
+            raise HTTPException(status_code=404, detail="Cartão selecionado não encontrado")
+    else:
+        card_to_use = db.query(TenantCard).filter(
+            TenantCard.tenant_id == tenant.id,
+            TenantCard.is_default == True,
+        ).first() or db.query(TenantCard).filter(
+            TenantCard.tenant_id == tenant.id,
+        ).first()
+
+    if not card_to_use:
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhum cartão cadastrado. Adicione um cartão de crédito para reativar."
+        )
+
+    # set_default_payment_method cria a nova assinatura no Pagar.me,
+    # cobra o 1º ciclo imediatamente, limpa canceled_at e define status='active'
+    set_default_payment_method(db, tenant, card_to_use.pagarme_card_id)
+    db.refresh(sub)
+    return sub
 
 
 def list_payment_methods(db: Session, tenant: Tenant) -> list[dict]:
@@ -1006,16 +1312,9 @@ def set_default_payment_method(db: Session, tenant: Tenant, pm_id: str) -> None:
         sub.payment_method = "card"
         now = datetime.now(timezone.utc)
 
-        # Determina o plano base com ID Pagar.me (se tiver pacote ativo, usa o Combo correspondente)
-        plan_to_use = None
-        if sub.whatsapp_package_id and sub.whatsapp_package_status == "active":
-            combo_code = COMBO_MAP.get(sub.whatsapp_package_id)
-            if combo_code:
-                plan_to_use = db.query(Plan).filter(Plan.code == combo_code, Plan.is_active == True).first()
-
-        if not plan_to_use or not plan_to_use.pagarme_plan_id:
-            plan_to_use = sub.plan
-        if not plan_to_use or not plan_to_use.pagarme_plan_id:
+        # Determina o plano base
+        plan_to_use = sub.plan
+        if not plan_to_use or plan_to_use.code == "FREE_TRIAL":
             plan_to_use = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
 
         customer_id = tenant.pagarme_customer_id
@@ -1029,85 +1328,272 @@ def set_default_payment_method(db: Session, tenant: Tenant, pm_id: str) -> None:
 
         now = datetime.now(timezone.utc)
         trial_end = sub.trial_ends_at
-        if trial_end and trial_end.tzinfo is None:
-            trial_end = trial_end.replace(tzinfo=timezone.utc)
+        if trial_end:
+            if trial_end.tzinfo is None:
+                trial_end = trial_end.replace(tzinfo=timezone.utc)
+            else:
+                trial_end = trial_end.astimezone(timezone.utc)
 
-        is_trial_active = (sub.status == "trialing" or (trial_end and trial_end > now)) and sub.status not in ("canceled",)
+        curr_period_end = sub.current_period_end
+        if curr_period_end:
+            if curr_period_end.tzinfo is None:
+                curr_period_end = curr_period_end.replace(tzinfo=timezone.utc)
+            else:
+                curr_period_end = curr_period_end.astimezone(timezone.utc)
 
-        if is_trial_active:
-            # Caso 1: Trial ainda ativo no futuro -> Agenda assinatura futura no Pagar.me
-            if trial_end and trial_end > now:
+        # Se havia um charge_id indevidamente gravado como pagarme_subscription_id (legado de checkout PIX), limpa
+        if sub.pagarme_subscription_id and not sub.pagarme_subscription_id.startswith("sub_"):
+            sub.pagarme_subscription_id = None
+
+        has_pagarme_sub = bool(sub.pagarme_subscription_id and sub.pagarme_subscription_id.startswith("sub_"))
+
+        # 1. Se a assinatura já existe no Pagar.me (seja ativa ou futura agendada):
+        # Apenas atualiza o cartão da assinatura — NUNCA cria nova assinatura e NUNCA cobra novamente!
+        if has_pagarme_sub:
+            with _pagarme_client() as client:
+                client.patch(
+                    f"/subscriptions/{sub.pagarme_subscription_id}/card",
+                    json={"card_id": pm_id},
+                )
+
+        # 2. Se NÃO existe assinatura no Pagar.me, verificamos se há período futuro já pago ou trial em andamento:
+        else:
+            is_future_trial = trial_end and trial_end > now and sub.status not in ("canceled",)
+            is_future_period_paid = curr_period_end and curr_period_end > now and sub.status not in ("canceled",)
+
+            pkg_items = []
+            if sub.whatsapp_package_id and sub.whatsapp_package_status == "active":
+                active_pkg = db.query(Plan).filter(Plan.code == sub.whatsapp_package_id, Plan.is_active == True).first()
+                if active_pkg:
+                    pkg_items.append({
+                        "name": active_pkg.name,
+                        "description": active_pkg.name,
+                        "quantity": 1,
+                        "pricing_scheme": {
+                            "scheme_type": "unit",
+                            "price": active_pkg.price_cents,
+                        },
+                    })
+
+            base_item = {
+                "name": plan_to_use.name if plan_to_use else "Data Pet Pro",
+                "description": plan_to_use.name if plan_to_use else "Data Pet Pro",
+                "quantity": 1,
+                "pricing_scheme": {
+                    "scheme_type": "unit",
+                    "price": plan_to_use.price_cents if plan_to_use else 14990,
+                },
+            }
+            all_items = [base_item] + pkg_items
+
+            sub_metadata = {
+                "tenant_id": str(tenant.id),
+                "tenant_name": tenant.name,
+                "type": "unified_subscription" if sub.whatsapp_package_id else "base_subscription",
+            }
+            if sub.whatsapp_package_id and sub.whatsapp_package_status == "active":
+                sub_metadata["package_code"] = sub.whatsapp_package_id
+
+            # Cenário A: Trial ainda ativo no futuro -> Agenda cobrança futura para quando o trial acabar
+            if is_future_trial:
                 sub.status = "trialing"
-                if not sub.pagarme_subscription_id and plan_to_use and plan_to_use.pagarme_plan_id:
+                if plan_to_use:
                     sub_payload = {
                         "customer_id": customer_id,
-                        "plan_id": plan_to_use.pagarme_plan_id,
                         "payment_method": "credit_card",
                         "card_id": pm_id,
+                        "interval": "month",
+                        "interval_count": 1,
+                        "billing_type": "prepaid",
                         "start_at": trial_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        "metadata": {
-                            "tenant_id": str(tenant.id),
-                            "tenant_name": tenant.name,
-                        },
+                        "items": all_items,
+                        "metadata": sub_metadata,
                     }
+
                     with _pagarme_client() as client:
                         resp = client.post("/subscriptions", json=sub_payload)
-                        print("=== PAGARME FUTURE SUBSCRIPTION ===")
+                        print("=== PAGARME FUTURE SUBSCRIPTION (TRIAL) ===")
                         print("STATUS:", resp.status_code)
                         print("PAYLOAD:", sub_payload)
                         print("RESPONSE:", resp.text)
-                        print("===================================")
+                        print("===========================================")
                         if resp.status_code in (200, 201):
                             pagarme_sub = resp.json()
                             sub.pagarme_subscription_id = pagarme_sub["id"]
                             if plan_to_use:
                                 sub.plan_id = plan_to_use.id
                         else:
-                            print(f"[WARN] Erro ao agendar assinatura futura no Pagar.me: {resp.text}")
-                elif sub.pagarme_subscription_id:
-                    # Assinatura futura já existe no Pagar.me -> atualiza o cartão
-                    with _pagarme_client() as client:
-                        client.patch(
-                            f"/subscriptions/{sub.pagarme_subscription_id}/card",
-                            json={"card_id": pm_id},
-                        )
+                            err_msg = _format_pagarme_error_detail(resp.text, "Erro ao agendar assinatura no cartão")
+                            logger.error(f"[ERROR] Falha ao agendar assinatura futura (trial) no Pagar.me: {resp.text}")
+                            raise HTTPException(status_code=400, detail=err_msg)
 
-            # Caso 2: Trial já expirou (trial_end <= now) -> Cobra e ativa imediatamente
-            else:
-                if not sub.pagarme_subscription_id and plan_to_use and plan_to_use.pagarme_plan_id:
+            # Cenário B: Troca de PIX para Cartão (ou período atual já pago) ->
+            # O mês atual já está pago! Agenda a assinatura no Pagar.me para começar apenas no próximo vencimento (current_period_end), SEM cobrar agora!
+            elif is_future_period_paid:
+                sub.status = "active"
+                if plan_to_use:
                     sub_payload = {
                         "customer_id": customer_id,
-                        "plan_id": plan_to_use.pagarme_plan_id,
                         "payment_method": "credit_card",
                         "card_id": pm_id,
-                        "metadata": {
-                            "tenant_id": str(tenant.id),
-                            "tenant_name": tenant.name,
-                        },
+                        "interval": "month",
+                        "interval_count": 1,
+                        "billing_type": "prepaid",
+                        "start_at": curr_period_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "items": all_items,
+                        "metadata": sub_metadata,
+                    }
+
+                    with _pagarme_client() as client:
+                        resp = client.post("/subscriptions", json=sub_payload)
+                        print("=== PAGARME FUTURE SUBSCRIPTION (PIX -> CARD) ===")
+                        print("STATUS:", resp.status_code)
+                        print("PAYLOAD:", sub_payload)
+                        print("RESPONSE:", resp.text)
+                        print("=================================================")
+                        if resp.status_code in (200, 201):
+                            pagarme_sub = resp.json()
+                            sub.pagarme_subscription_id = pagarme_sub["id"]
+                            if plan_to_use:
+                                sub.plan_id = plan_to_use.id
+                        else:
+                            err_msg = _format_pagarme_error_detail(resp.text, "Erro ao agendar assinatura no cartão")
+                            logger.error(f"[ERROR] Falha ao agendar assinatura futura pós-PIX no Pagar.me: {resp.text}")
+                            raise HTTPException(status_code=400, detail=err_msg)
+
+            # Cenário C: Trial já expirou (trial_end <= now) ou período vencido/inadimplente sem pagamento futuro ->
+            # O usuário acabou de adicionar/definir o cartão para reativar o sistema:
+            # Dispara a cobrança do 1º ciclo imediatamente no Pagar.me e ativa hoje mesmo!
+            else:
+                if plan_to_use:
+                    # Se tiver pacote ativo com período futuro já pago, não cobrar o pacote cheio agora!
+                    pkg_end = sub.whatsapp_period_end
+                    if pkg_end and pkg_end.tzinfo is None:
+                        pkg_end = pkg_end.replace(tzinfo=timezone.utc)
+                    if sub.whatsapp_package_status == "active" and pkg_end and pkg_end > now:
+                        # Pacote já quitado até pkg_end: cobra apenas o plano base avulso hoje
+                        base_monthly_plan = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
+                        base_amount = base_monthly_plan.price_cents if base_monthly_plan else 14990
+                        with _pagarme_client() as client:
+                            c_resp = client.post("/charges", json={
+                                "customer_id": customer_id,
+                                "amount": base_amount,
+                                "payment": {
+                                    "payment_method": "credit_card",
+                                    "credit_card": {
+                                        "card_id": pm_id,
+                                        "statement_descriptor": "DATAPET",
+                                        "installments": 1,
+                                    },
+                                },
+                                "metadata": {
+                                    "tenant_id": str(tenant.id),
+                                    "tenant_name": tenant.name,
+                                    "type": "base_plan_activation",
+                                },
+                            })
+                            if c_resp.status_code in (200, 201):
+                                c_json = c_resp.json()
+                                _charge_repo.create(
+                                    db=db,
+                                    tenant_id=tenant.id,
+                                    subscription_id=sub.id,
+                                    pagarme_charge_id=c_json.get("id"),
+                                    amount=base_amount,
+                                    status=c_json.get("status", "paid"),
+                                    payment_method="card",
+                                )
+                            # Agenda a assinatura para iniciar apenas em pkg_end
+                            sub_payload = {
+                                "customer_id": customer_id,
+                                "payment_method": "credit_card",
+                                "card_id": pm_id,
+                                "interval": "month",
+                                "interval_count": 1,
+                                "billing_type": "prepaid",
+                                "start_at": pkg_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                "items": all_items,
+                                "metadata": sub_metadata,
+                            }
+
+                            resp = client.post("/subscriptions", json=sub_payload)
+                            if resp.status_code in (200, 201):
+                                pagarme_sub = resp.json()
+                                sub.pagarme_subscription_id = pagarme_sub["id"]
+                                sub.status = "active"
+                                sub.plan_id = plan_to_use.id
+                                sub.current_period_end = pkg_end
+                                sub.billing_day = pkg_end.day
+                                sub.trial_ends_at = None
+                                sub.canceled_at = None
+                                db.commit()
+                                return
+
+                    sub_payload = {
+                        "customer_id": customer_id,
+                        "payment_method": "credit_card",
+                        "card_id": pm_id,
+                        "interval": "month",
+                        "interval_count": 1,
+                        "billing_type": "prepaid",
+                        "items": all_items,
+                        "metadata": sub_metadata,
                     }
                     with _pagarme_client() as client:
                         resp = client.post("/subscriptions", json=sub_payload)
                         if resp.status_code in (200, 201):
                             pagarme_sub = resp.json()
-                            period_end = now + timedelta(days=30)
+                            
+                            # Extrai a data da próxima cobrança diretamente do Pagar.me
+                            next_billing = pagarme_sub.get("next_billing_at")
+                            period_end = None
+                            if next_billing:
+                                try:
+                                    dt_nb = datetime.fromisoformat(next_billing.replace("Z", "+00:00"))
+                                    dt_nb = dt_nb.replace(hour=12, minute=0, second=0)
+                                    period_end = dt_nb
+                                except Exception:
+                                    pass
+                            
+                            if not period_end:
+                                # Preserva o mesmo dia do mês (ex: dia 18 -> dia 18 do mês seguinte)
+                                # evitando o erro de +30 dias em meses de 31 dias
+                                target_month = now.month + 1 if now.month < 12 else 1
+                                target_year = now.year if now.month < 12 else now.year + 1
+                                target_day = min(now.day, 28) if target_month == 2 else min(now.day, 30) if target_month in (4, 6, 9, 11) else now.day
+                                period_end = now.replace(year=target_year, month=target_month, day=target_day, hour=12, minute=0, second=0)
+
                             sub.status = _map_status(pagarme_sub.get("status", "active"))
                             sub.current_period_end = period_end
+                            sub.billing_day = period_end.day
                             sub.trial_ends_at = None
+                            sub.canceled_at = None
                             sub.pagarme_subscription_id = pagarme_sub["id"]
                             if plan_to_use:
                                 sub.plan_id = plan_to_use.id
 
-                            charges = pagarme_sub.get("charges", [])
+                            charges = pagarme_sub.get("charges") or []
+                            if not charges:
+                                try:
+                                    inv_resp = client.get(f"/invoices?subscription_id={pagarme_sub['id']}")
+                                    if inv_resp.status_code == 200:
+                                        inv_data = inv_resp.json().get("data", [])
+                                        for inv in inv_data:
+                                            if inv.get("charge"):
+                                                charges.append(inv["charge"])
+                                except Exception as e:
+                                    print(f"[WARN] Erro ao buscar invoices da assinatura: {e}")
+
                             if charges:
                                 c = charges[0]
-                                last_trans = c.get("last_transaction", {})
-                                card_data = last_trans.get("card", {})
+                                last_trans = c.get("last_transaction") or {}
+                                card_data = last_trans.get("card") or c.get("card") or {}
                                 _charge_repo.create(
                                     db=db,
                                     tenant_id=tenant.id,
                                     subscription_id=sub.id,
                                     pagarme_charge_id=c.get("id"),
-                                    amount=c.get("amount", 9990),
+                                    amount=c.get("amount", plan_to_use.price_cents or 14990),
                                     status=c.get("status", "paid"),
                                     payment_method="card",
                                     card_last_four=card_data.get("last_four_digits"),
@@ -1115,18 +1601,6 @@ def set_default_payment_method(db: Session, tenant: Tenant, pm_id: str) -> None:
                                 )
                         else:
                             raise HTTPException(status_code=502, detail=f"Erro ao processar ativação no Pagar.me: {resp.text}")
-                elif sub.pagarme_subscription_id:
-                    with _pagarme_client() as client:
-                        client.patch(
-                            f"/subscriptions/{sub.pagarme_subscription_id}/card",
-                            json={"card_id": pm_id},
-                        )
-        elif sub.pagarme_subscription_id:
-            with _pagarme_client() as client:
-                client.patch(
-                    f"/subscriptions/{sub.pagarme_subscription_id}/card",
-                    json={"card_id": pm_id},
-                )
     db.commit()
 
 def change_subscription_to_pix(db: Session, tenant: Tenant) -> None:
@@ -1428,9 +1902,12 @@ def _on_charge_created(db: Session, data: dict) -> None:
         sub = db.query(Subscription).filter(Subscription.tenant_id == int(metadata_tenant_id)).order_by(Subscription.started_at.desc()).first()
 
     if not sub:
-        pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
-        if pagarme_sub_id:
-            sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+        if charge and charge.subscription_id:
+            sub = _repo.get_by_id(db, charge.subscription_id)
+        if not sub:
+            pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
+            if pagarme_sub_id:
+                sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
         if not sub:
             sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
 
@@ -1484,9 +1961,12 @@ def _on_charge_paid(db: Session, data: dict) -> None:
         sub = db.query(Subscription).filter(Subscription.tenant_id == int(metadata_tenant_id)).order_by(Subscription.started_at.desc()).first()
 
     if not sub:
-        pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
-        if pagarme_sub_id:
-            sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+        if charge and charge.subscription_id:
+            sub = _repo.get_by_id(db, charge.subscription_id)
+        if not sub:
+            pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
+            if pagarme_sub_id:
+                sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
         if not sub:
             sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
 
@@ -1517,22 +1997,33 @@ def _on_charge_paid(db: Session, data: dict) -> None:
                 "card_last_four": card_last_four or charge.card_last_four,
             })
 
-        if not was_already_paid and status in ("paid", "captured"):
-            metadata = data.get("metadata", {})
-            charge_type = metadata.get("type")
+        metadata = data.get("metadata", {})
+        charge_type = metadata.get("type")
+        is_pkg_charge = (
+            charge_type in ("whatsapp_package", "whatsapp_package_proration")
+            or (sub.whatsapp_package_id and amount < 14990)
+        )
 
+        if status in ("paid", "captured"):
             # Se a cobrança for específica de pacote de WhatsApp:
-            if charge_type in ("whatsapp_package", "whatsapp_package_proration") or (sub.whatsapp_package_status == "pending_payment" and amount < 9990):
-                pkg_code = metadata.get("package_code") or sub.whatsapp_package_id or "pkg_200"
-                pkg_limit = PACKAGE_LIMITS.get(pkg_code, sub.whatsapp_messages_limit or 200)
-                _repo.update(db, sub, {
-                    "whatsapp_package_id": pkg_code,
-                    "whatsapp_package_status": "active",
-                    "whatsapp_messages_limit": pkg_limit,
-                    "whatsapp_messages_used": 0,
-                })
-                db.commit()
-            else:
+            if is_pkg_charge:
+                if not was_already_paid and sub.whatsapp_package_status != "canceled":
+                    pkg_code = metadata.get("package_code") or sub.whatsapp_package_id or "pkg_200"
+                    prorated_msg = metadata.get("prorated_messages")
+                    if prorated_msg:
+                        pkg_limit = int(prorated_msg)
+                    elif sub.whatsapp_messages_limit and sub.whatsapp_messages_limit > 0:
+                        pkg_limit = sub.whatsapp_messages_limit
+                    else:
+                        pkg_limit = PACKAGE_LIMITS.get(pkg_code, 200)
+                    _repo.update(db, sub, {
+                        "whatsapp_package_id": pkg_code,
+                        "whatsapp_package_status": "active",
+                        "whatsapp_messages_limit": pkg_limit,
+                        "whatsapp_messages_used": 0,
+                    })
+                    db.commit()
+            elif not was_already_paid:
                 # Se for combo ou tiver pacote pendente associado, ativa o pacote junto
                 if sub.whatsapp_package_id and sub.whatsapp_package_status == "pending_payment":
                     pkg_limit = PACKAGE_LIMITS.get(sub.whatsapp_package_id, sub.whatsapp_messages_limit or 200)
@@ -1560,9 +2051,12 @@ def _on_charge_failed(db: Session, data: dict) -> None:
         sub = db.query(Subscription).filter(Subscription.tenant_id == int(metadata_tenant_id)).order_by(Subscription.started_at.desc()).first()
 
     if not sub:
-        pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
-        if pagarme_sub_id:
-            sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
+        if charge and charge.subscription_id:
+            sub = _repo.get_by_id(db, charge.subscription_id)
+        if not sub:
+            pagarme_sub_id = data.get("subscription", {}).get("id") or data.get("subscription_id")
+            if pagarme_sub_id:
+                sub = _repo.get_by_pagarme_subscription_id(db, pagarme_sub_id)
         if not sub:
             sub = _repo.get_by_pagarme_subscription_id(db, charge_id)
 
@@ -1777,11 +2271,44 @@ def sync_charges_from_pagarme(db: Session, tenant: Tenant) -> None:
                             "card_last_four": card_last_four or existing.card_last_four,
                         })
 
-                    if not was_already_paid and status in ("paid", "captured"):
-                        if charge_sub.pagarme_subscription_id and payment_method != "pix":
-                            sync_subscription_from_pagarme(db, charge_sub)
+                    metadata = c.get("metadata", {})
+                    charge_type = metadata.get("type")
+                    is_pkg_charge = (
+                        charge_type in ("whatsapp_package", "whatsapp_package_proration")
+                        or (charge_sub.whatsapp_package_id and amount < 14990)
+                    )
+
+                    if status in ("paid", "captured") and not was_already_paid:
+                        if is_pkg_charge:
+                            # Ativa o pacote de WhatsApp apenas se não tiver sido cancelado manualmente
+                            if charge_sub.whatsapp_package_status != "canceled":
+                                pkg_code = metadata.get("package_code") or charge_sub.whatsapp_package_id or "pkg_200"
+                                prorated_msg = metadata.get("prorated_messages")
+                                if prorated_msg:
+                                    pkg_limit = int(prorated_msg)
+                                elif charge_sub.whatsapp_messages_limit and charge_sub.whatsapp_messages_limit > 0:
+                                    pkg_limit = charge_sub.whatsapp_messages_limit
+                                else:
+                                    pkg_limit = PACKAGE_LIMITS.get(pkg_code, 200)
+                                _repo.update(db, charge_sub, {
+                                    "whatsapp_package_id": pkg_code,
+                                    "whatsapp_package_status": "active",
+                                    "whatsapp_messages_limit": pkg_limit,
+                                    "whatsapp_messages_used": 0,
+                                })
                         else:
-                            _activate_or_extend_subscription(db, charge_sub, payment_method=payment_method)
+                            # Cobrança de plano ou combo
+                            if charge_sub.whatsapp_package_id and charge_sub.whatsapp_package_status == "pending_payment":
+                                pkg_limit = PACKAGE_LIMITS.get(charge_sub.whatsapp_package_id, charge_sub.whatsapp_messages_limit or 200)
+                                _repo.update(db, charge_sub, {
+                                    "whatsapp_package_status": "active",
+                                    "whatsapp_messages_limit": pkg_limit,
+                                    "whatsapp_messages_used": 0,
+                                })
+                            if charge_sub.pagarme_subscription_id and payment_method != "pix":
+                                sync_subscription_from_pagarme(db, charge_sub)
+                            else:
+                                _activate_or_extend_subscription(db, charge_sub, payment_method=payment_method)
                 db.commit()
     except Exception as e:
         print(f"Error syncing charges from Pagar.me: {e}")
@@ -1835,7 +2362,7 @@ def update_charge_card(
             json={"token": card_token, "billing_address": addr},
         )
         if card_resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"Erro ao salvar cartão: {card_resp.text}")
+            raise HTTPException(status_code=400, detail=_format_pagarme_error_detail(card_resp.text, "Erro ao salvar cartão"))
         card_id = card_resp.json()["id"]
 
     payload = {
@@ -1849,7 +2376,7 @@ def update_charge_card(
             json=payload,
         )
         if resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"Erro ao atualizar cartão da cobrança: {resp.text}")
+            raise HTTPException(status_code=400, detail=_format_pagarme_error_detail(resp.text, "Erro ao atualizar cartão da cobrança"))
 
     charge_data = resp.json()
     status = charge_data.get("status", "failed")
@@ -1927,7 +2454,9 @@ def cancel_charge(db: Session, tenant: Tenant, charge_id: str) -> dict:
 
 PACKAGE_LIMITS = {
     "pkg_200": 200,
+    "pkg_300": 300,
     "pkg_500": 500,
+    "pkg_750": 750,
     "pkg_1000": 1000,
     "pkg_2000": 2000,
 }
@@ -1992,7 +2521,10 @@ def calculate_proration(billing_day: int, price_cents: int, total_messages: int 
         days_remaining = (days_in_current_month - current_day) + actual_day
 
     # Cálculo pro-rata de valor e de limite de mensagens
-    prorated_amount_cents = max(100, round((price_cents / days_in_current_month) * days_remaining))
+    if price_cents <= 0:
+        prorated_amount_cents = 0
+    else:
+        prorated_amount_cents = max(100, round((price_cents / days_in_current_month) * days_remaining))
     prorated_messages = max(1, round((total_messages / days_in_current_month) * days_remaining)) if total_messages > 0 else total_messages
 
     return {
@@ -2003,7 +2535,7 @@ def calculate_proration(billing_day: int, price_cents: int, total_messages: int 
         "days_remaining": days_remaining,
         "total_days_in_cycle": days_in_current_month,
         "next_billing_date": next_billing_date,
-        "is_prorated": True,
+        "is_prorated": True if price_cents > 0 else False,
     }
 
 
@@ -2020,31 +2552,49 @@ def preview_package_proration(db: Session, tenant: Tenant, package_code: str) ->
 
     limit = PACKAGE_LIMITS.get(package_code, 500)
 
-    # Verifica se já possui pacote ativo para cobrar apenas a diferença proporcional (Upgrade)
+    # Verifica se já possui pacote ativo para saber se é Upgrade ou Downgrade
     current_pkg_id = sub.whatsapp_package_id if sub else None
     current_pkg_status = sub.whatsapp_package_status if sub else None
     price_to_calculate = plan.price_cents
+    is_downgrade = False
+    current_plan = None
+    current_pkg_limit = sub.whatsapp_messages_limit if sub else None
 
     if current_pkg_id and current_pkg_status == "active" and current_pkg_id != package_code:
         current_plan = db.query(Plan).filter(Plan.code == current_pkg_id, Plan.is_active == True).first()
         if current_plan:
             diff = plan.price_cents - current_plan.price_cents
-            price_to_calculate = max(0, diff)
+            if diff < 0:
+                is_downgrade = True
+                price_to_calculate = 0
+            else:
+                price_to_calculate = diff
 
     proration = calculate_proration(billing_day, price_to_calculate, total_messages=limit)
+
+    next_billing = proration["next_billing_date"]
+    if sub and sub.whatsapp_period_end:
+        w_end = _normalize_dt(sub.whatsapp_period_end)
+        if w_end and w_end > datetime.now(timezone.utc):
+            next_billing = w_end
 
     return {
         "package_code": package_code,
         "package_name": plan.name,
         "monthly_price_cents": plan.price_cents,
-        "prorated_price_cents": proration["prorated_amount_cents"],
-        "prorated_messages": proration["prorated_messages"],
+        "prorated_price_cents": 0 if is_downgrade else proration["prorated_amount_cents"],
+        "prorated_messages": current_pkg_limit if is_downgrade else proration["prorated_messages"],
         "total_messages": limit,
         "billing_day": billing_day,
         "days_remaining": proration["days_remaining"],
         "total_days_in_cycle": proration["total_days_in_cycle"],
-        "next_billing_date": proration["next_billing_date"].isoformat(),
-        "is_prorated": proration["is_prorated"],
+        "next_billing_date": next_billing.isoformat(),
+        "is_prorated": False if is_downgrade else proration["is_prorated"],
+        "is_downgrade": is_downgrade,
+        "current_package_code": current_pkg_id,
+        "current_package_name": current_plan.name if current_plan else None,
+        "current_package_price_cents": current_plan.price_cents if current_plan else 0,
+        "current_messages_limit": current_pkg_limit,
     }
 
 
@@ -2068,58 +2618,89 @@ def checkout_package(
     if not plan:
         raise HTTPException(status_code=404, detail="Pacote não encontrado")
 
-    if not plan.pagarme_plan_id:
-        raise HTTPException(status_code=422, detail="Este pacote não possui ID configurado no Pagar.me")
-
     sub = _repo.get_active_by_tenant(db, tenant.id)
     if not sub:
         raise HTTPException(status_code=400, detail="Nenhuma assinatura base encontrada")
 
+    # Validação de integridade: a contratação/upgrade de pacote deve herdar o método de pagamento da assinatura ativa
+    if sub.payment_method in ("card", "credit_card") and payment_method == "pix":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Sua assinatura está configurada no Cartão de Crédito com renovação automática unificada. "
+                "Para manter seu plano sincronizado, a contratação ou alteração de pacote deve ser realizada no cartão de crédito. "
+                "Para alterar a forma de pagamento de toda a sua conta, acesse as configurações de assinatura."
+            ),
+        )
+    if sub.payment_method == "pix" and payment_method in ("card", "credit_card"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Sua assinatura está configurada via PIX. "
+                "Para contratar via cartão de crédito, altere primeiro a forma de pagamento da sua assinatura nas configurações."
+            ),
+        )
+
     limit = PACKAGE_LIMITS.get(package_code, 500)
     billing_day = sub.billing_day or datetime.now(timezone.utc).day
 
-    # Verifica se já possui um pacote ativo (Troca / Upgrade de Pacote)
+    # Verifica se já possui um pacote ativo (Troca / Upgrade / Downgrade de Pacote)
     current_pkg_id = sub.whatsapp_package_id
     current_pkg_status = sub.whatsapp_package_status
     price_to_calculate = plan.price_cents
+    is_downgrade = False
 
     if current_pkg_id and current_pkg_status == "active" and current_pkg_id != package_code:
         current_plan = db.query(Plan).filter(Plan.code == current_pkg_id, Plan.is_active == True).first()
         if current_plan:
             diff = plan.price_cents - current_plan.price_cents
-            price_to_calculate = max(0, diff)
+            if diff < 0:
+                is_downgrade = True
+                price_to_calculate = 0
+            else:
+                price_to_calculate = diff
 
     proration = calculate_proration(billing_day, price_to_calculate, total_messages=limit)
-    prorated_amount = proration["prorated_amount_cents"]
+    prorated_amount = 0 if is_downgrade else proration["prorated_amount_cents"]
     next_billing_date = proration["next_billing_date"]
-    is_prorated = proration["is_prorated"]
-    initial_messages_limit = limit
+    if sub.whatsapp_period_end:
+        w_end = _normalize_dt(sub.whatsapp_period_end)
+        if w_end and w_end > datetime.now(timezone.utc):
+            next_billing_date = w_end
 
-    # Se estiver em trial, a data de renovação deve coincidir com trial_ends_at
+    is_prorated = False if is_downgrade else proration["is_prorated"]
+    initial_messages_limit = sub.whatsapp_messages_limit if is_downgrade else limit
+
+    # Se estiver em trial ATIVO (data futura), a data de renovação deve coincidir com trial_ends_at
     now_utc = datetime.now(timezone.utc)
-    if sub.trial_ends_at and (sub.status == "trialing" or sub.trial_ends_at > now_utc):
-        trial_end = sub.trial_ends_at
-        if trial_end.tzinfo is None:
-            trial_end = trial_end.replace(tzinfo=timezone.utc)
+    trial_end = _normalize_dt(sub.trial_ends_at)
+    if trial_end and trial_end > now_utc and sub.status in ("trialing",):
         next_billing_date = trial_end
 
     customer_id = _ensure_pagarme_customer(db, tenant, user_email, user_name, document)
 
     # PIX
     if payment_method == "pix":
-        if prorated_amount == 0:
-            _repo.update(db, sub, {
-                "whatsapp_package_id": package_code,
+        if is_downgrade or prorated_amount == 0:
+            update_data = {
+                # IMPORTANTE: No downgrade, o pacote ativo NÃO muda hoje!
+                # Ele continua sendo o pacote atual pago (ex: pkg_1000).
+                # O novo pacote menor é agendado em whatsapp_next_package_id para o próximo ciclo.
+                "whatsapp_next_package_id": package_code,
                 "whatsapp_package_status": "active",
-                "whatsapp_messages_limit": initial_messages_limit,
+                "whatsapp_messages_limit": sub.whatsapp_messages_limit or limit,
                 "whatsapp_period_end": next_billing_date,
-            })
+            }
+            _repo.update(db, sub, update_data)
             db.commit()
             return {
-                "status": "active",
+                "status": "scheduled",
                 "payment_method": "pix",
                 "amount": 0,
-                "message": "Pacote alterado com sucesso.",
+                "is_downgrade": True,
+                "current_package_id": sub.whatsapp_package_id,
+                "next_package_id": package_code,
+                "message": f"Alteração agendada com sucesso para {plan.name}. A nova mensalidade será aplicada na próxima renovação.",
                 "next_billing_date": next_billing_date.isoformat(),
             }
 
@@ -2137,6 +2718,7 @@ def checkout_package(
                 "tenant_name": tenant.name,
                 "type": "whatsapp_package_proration" if is_prorated else "whatsapp_package",
                 "package_code": package_code,
+                "prorated_messages": str(initial_messages_limit),
             },
         }
 
@@ -2189,10 +2771,17 @@ def checkout_package(
         }
 
     # Cartão de Crédito
-    if not card_token and not card_id:
-        raise HTTPException(status_code=422, detail="card_token ou card_id obrigatório para pagamento com cartão")
-
     final_card_id = card_id
+    if not final_card_id and not card_token:
+        default_card = db.query(TenantCard).filter(
+            TenantCard.tenant_id == tenant.id,
+            TenantCard.is_default == True,
+        ).first()
+        if default_card:
+            final_card_id = default_card.pagarme_card_id
+
+    if not card_token and not final_card_id:
+        raise HTTPException(status_code=422, detail="card_token ou card_id obrigatório para pagamento com cartão")
     if card_token:
         with _pagarme_client() as client:
             addr = billing_address or {
@@ -2207,7 +2796,7 @@ def checkout_package(
                 json={"token": card_token, "billing_address": addr},
             )
             if card_resp.status_code not in (200, 201):
-                raise HTTPException(status_code=502, detail=f"Erro ao salvar cartão: {card_resp.text}")
+                raise HTTPException(status_code=400, detail=_format_pagarme_error_detail(card_resp.text, "Erro ao salvar cartão"))
             final_card_id = card_resp.json()["id"]
             _register_card_for_tenant(db, tenant.id, final_card_id)
 
@@ -2230,6 +2819,7 @@ def checkout_package(
                 "tenant_name": tenant.name,
                 "type": "whatsapp_package_proration" if is_prorated else "whatsapp_package",
                 "package_code": package_code,
+                "prorated_messages": str(initial_messages_limit),
             },
         }
         with _pagarme_client() as client:
@@ -2260,129 +2850,220 @@ def checkout_package(
         or (sub.status == "trialing" and sub.trial_ends_at and sub.trial_ends_at > datetime.now(timezone.utc))
     )
 
-    # Regra de Ouro: O billing_date pertence ao tenant. O add-on passa a integrar o Combo na próxima renovação.
-    combo_code = COMBO_MAP.get(package_code)
-    combo_plan = db.query(Plan).filter(Plan.code == combo_code, Plan.is_active == True).first()
-    if not combo_plan:
-        raise HTTPException(status_code=422, detail="Plano combo correspondente não encontrado")
+    # Regra de Ouro: O billing_date pertence ao tenant. O add-on unifica com a renovação.
+    package_plan = db.query(Plan).filter(Plan.code == package_code, Plan.is_active == True).first()
+    if not package_plan:
+        raise HTTPException(status_code=422, detail="Pacote correspondente não encontrado")
 
-    # 2. Cancela assinaturas anteriores no Pagar.me para manter apenas UMA assinatura unificada
-    if sub.pagarme_subscription_id:
+    monthly_plan = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
+
+    # 2. Sincroniza a assinatura unificada no Pagar.me atualizando os itens in-place
+    pagarme_sub_id = sub.pagarme_subscription_id
+    subscription_updated_in_place = False
+
+    if pagarme_sub_id and pagarme_sub_id.startswith("sub_"):
         try:
             with _pagarme_client() as client:
-                client.delete(f"/subscriptions/{sub.pagarme_subscription_id}")
-        except Exception as e:
-            print(f"[WARN] Erro ao cancelar assinatura base anterior para unificação em combo: {e}")
+                sub_check = client.get(f"/subscriptions/{pagarme_sub_id}")
+                if sub_check.status_code == 200 and sub_check.json().get("status") not in ("canceled", "failed"):
+                    # Busca itens atuais da assinatura existente
+                    items_resp = client.get(f"/subscriptions/{pagarme_sub_id}/items")
+                    current_items = items_resp.json().get("data", []) if items_resp.status_code == 200 else []
 
+                    # Deleta quaisquer itens anteriores de WhatsApp da assinatura
+                    for old_item in current_items:
+                        item_name = (old_item.get("name") or old_item.get("description") or "").lower()
+                        if "whatsapp" in item_name:
+                            client.delete(f"/subscriptions/{pagarme_sub_id}/items/{old_item['id']}")
+
+                    # Adiciona o novo item do pacote à assinatura existente
+                    new_item_payload = {
+                        "name": package_plan.name,
+                        "description": package_plan.name,
+                        "quantity": 1,
+                        "pricing_scheme": {
+                            "scheme_type": "unit",
+                            "price": package_plan.price_cents,
+                        },
+                    }
+                    add_resp = client.post(f"/subscriptions/{pagarme_sub_id}/items", json=new_item_payload)
+                    if add_resp.status_code in (200, 201):
+                        subscription_updated_in_place = True
+                        # Atualiza os metadados da assinatura no Pagar.me com o novo package_code
+                        try:
+                            client.patch(
+                                f"/subscriptions/{pagarme_sub_id}/metadata",
+                                json={
+                                    "metadata": {
+                                        "tenant_id": str(tenant.id),
+                                        "tenant_name": tenant.name,
+                                        "type": "unified_subscription",
+                                        "package_code": package_code,
+                                    }
+                                },
+                            )
+                        except Exception as meta_err:
+                            logger.warning(f"Erro ao atualizar metadados da assinatura {pagarme_sub_id}: {meta_err}")
+                    else:
+                        logger.warning(f"Erro ao adicionar item na subscription {pagarme_sub_id}: {add_resp.text}")
+        except Exception as e:
+            logger.warning(f"Falha ao atualizar itens in-place na subscription {pagarme_sub_id}: {e}")
+
+    # Limpa eventual assinatura legada separada de WhatsApp
     if sub.pagarme_whatsapp_subscription_id:
         try:
             with _pagarme_client() as client:
                 client.delete(f"/subscriptions/{sub.pagarme_whatsapp_subscription_id}")
         except Exception as e:
-            print(f"[WARN] Erro ao cancelar assinatura anterior de pacote no Pagar.me: {e}")
+            logger.warning(f"Erro ao cancelar assinatura legada de pacote no Pagar.me: {e}")
 
-    # 3. Cria a assinatura Combo unificada no Pagar.me com start_at = next_billing_date
-    sub_payload = {
-        "customer_id": customer_id,
-        "plan_id": combo_plan.pagarme_plan_id,
-        "payment_method": "credit_card",
-        "card_id": final_card_id,
-        "start_at": next_billing_date.isoformat(),
-        "metadata": {
-            "tenant_id": str(tenant.id),
-            "tenant_name": tenant.name,
-            "type": "combo_subscription",
-            "package_code": package_code,
-        },
-    }
+    # 3. Se não existia assinatura prévia ou não pôde ser atualizada in-place, cria nova assinatura unificada planless
+    if not subscription_updated_in_place:
+        sub_items = []
+        if monthly_plan:
+            sub_items.append({
+                "name": monthly_plan.name,
+                "description": monthly_plan.name,
+                "quantity": 1,
+                "pricing_scheme": {
+                    "scheme_type": "unit",
+                    "price": monthly_plan.price_cents,
+                },
+            })
+        if package_plan:
+            sub_items.append({
+                "name": package_plan.name,
+                "description": package_plan.name,
+                "quantity": 1,
+                "pricing_scheme": {
+                    "scheme_type": "unit",
+                    "price": package_plan.price_cents,
+                },
+            })
 
-    with _pagarme_client() as client:
-        sub_resp = client.post("/subscriptions", json=sub_payload)
-        if sub_resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"Erro ao criar assinatura Combo no Pagar.me: {sub_resp.text}")
-        pagarme_sub = sub_resp.json()
+        sub_payload = {
+            "customer_id": customer_id,
+            "payment_method": "credit_card",
+            "card_id": final_card_id,
+            "interval": "month",
+            "interval_count": 1,
+            "billing_type": "prepaid",
+            "start_at": next_billing_date.isoformat(),
+            "items": sub_items,
+            "metadata": {
+                "tenant_id": str(tenant.id),
+                "tenant_name": tenant.name,
+                "type": "unified_subscription",
+                "package_code": package_code,
+            },
+        }
+
+        with _pagarme_client() as client:
+            sub_resp = client.post("/subscriptions", json=sub_payload)
+            if sub_resp.status_code not in (200, 201):
+                raise HTTPException(status_code=502, detail=f"Erro ao criar assinatura no Pagar.me: {sub_resp.text}")
+            pagarme_sub = sub_resp.json()
+            pagarme_sub_id = pagarme_sub["id"]
 
     # 4. Atualiza dados locais
     update_data = {
-        "whatsapp_package_id": package_code,
+        "whatsapp_package_id": sub.whatsapp_package_id if is_downgrade else package_code,
+        "whatsapp_next_package_id": package_code if is_downgrade else None,
         "whatsapp_package_status": "active",
-        "whatsapp_messages_limit": initial_messages_limit,
-        "whatsapp_messages_used": 0,
+        "whatsapp_messages_limit": sub.whatsapp_messages_limit if is_downgrade else limit,
+        "whatsapp_messages_used": sub.whatsapp_messages_used or 0,
         "whatsapp_period_end": next_billing_date,
         "payment_method": "card",
-        "pagarme_subscription_id": pagarme_sub["id"],
+        "pagarme_subscription_id": pagarme_sub_id,
         "pagarme_whatsapp_subscription_id": None,
     }
 
-    if not is_base_trial_active:
-        update_data["plan_id"] = combo_plan.id
+    if not is_base_trial_active and monthly_plan:
+        update_data["plan_id"] = monthly_plan.id
 
     _repo.update(db, sub, update_data)
     db.commit()
 
     return {
-        "status": "active",
+        "status": "scheduled" if is_downgrade else "active",
         "package_code": package_code,
+        "amount": current_charge_amount,
+        "is_downgrade": is_downgrade,
+        "current_package_id": sub.whatsapp_package_id,
+        "next_package_id": package_code if is_downgrade else None,
         "messages_limit": initial_messages_limit,
         "next_billing_date": next_billing_date.isoformat(),
-        "pagarme_subscription_id": pagarme_sub["id"],
+        "pagarme_subscription_id": pagarme_sub_id,
     }
+
+
+def cancel_scheduled_downgrade(db: Session, tenant: Tenant) -> dict:
+    sub = _repo.get_active_by_tenant(db, tenant.id)
+    if not sub or not sub.whatsapp_next_package_id:
+        raise HTTPException(status_code=400, detail="Nenhum agendamento de alteração encontrado")
+
+    update_data = {
+        "whatsapp_next_package_id": None,
+    }
+
+    _repo.update(db, sub, update_data)
+    db.commit()
+    return {"success": True, "message": "Agendamento de alteração cancelado com sucesso."}
 
 
 def cancel_package(db: Session, tenant: Tenant) -> dict:
     sub = _repo.get_active_by_tenant(db, tenant.id)
-    if not sub or not sub.whatsapp_package_id:
+    if not sub or not sub.whatsapp_package_id or sub.whatsapp_package_status == "canceled":
         raise HTTPException(status_code=400, detail="Nenhum pacote ativo para cancelar")
 
-    # Se estiver em plano combo, cancela o combo e recria a assinatura MONTHLY no Pagar.me
-    if sub.plan and sub.plan.code.startswith("combo_"):
-        if sub.pagarme_subscription_id:
-            try:
-                with _pagarme_client() as client:
-                    client.delete(f"/subscriptions/{sub.pagarme_subscription_id}")
-            except Exception as e:
-                print(f"[WARN] Erro ao cancelar assinatura combo no Pagar.me: {e}")
+    monthly_plan = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
 
-        monthly_plan = db.query(Plan).filter(Plan.code == "MONTHLY", Plan.is_active == True).first()
-        if monthly_plan and monthly_plan.pagarme_plan_id and tenant.pagarme_customer_id:
-            cards = list_payment_methods(db, tenant)
-            card_id = cards[0]["id"] if cards else None
-            if card_id:
-                next_start = sub.whatsapp_period_end or sub.current_period_end or (datetime.now(timezone.utc) + timedelta(days=30))
-                monthly_payload = {
-                    "customer_id": tenant.pagarme_customer_id,
-                    "plan_id": monthly_plan.pagarme_plan_id,
-                    "payment_method": "credit_card",
-                    "card_id": card_id,
-                    "start_at": next_start.isoformat(),
-                    "metadata": {
-                        "tenant_id": str(tenant.id),
-                        "tenant_name": tenant.name,
-                    },
-                }
-                with _pagarme_client() as client:
-                    m_resp = client.post("/subscriptions", json=monthly_payload)
-                    if m_resp.status_code in (200, 201):
-                        new_sub_data = m_resp.json()
-                        _repo.update(db, sub, {
-                            "plan_id": monthly_plan.id,
-                            "pagarme_subscription_id": new_sub_data["id"],
-                            "whatsapp_package_id": None,
-                            "whatsapp_package_status": "canceled",
-                            "pagarme_whatsapp_subscription_id": None,
-                        })
-                        db.commit()
-                        return {"status": "canceled", "message": "Pacote cancelado e assinatura revertida para Plano Mensal (R$ 99,90/mês)"}
+    # Se a assinatura unificada no Pagar.me tiver o item de WhatsApp, remove apenas o item!
+    if sub.pagarme_subscription_id and sub.pagarme_subscription_id.startswith("sub_"):
+        try:
+            with _pagarme_client() as client:
+                items_resp = client.get(f"/subscriptions/{sub.pagarme_subscription_id}/items")
+                if items_resp.status_code == 200:
+                    current_items = items_resp.json().get("data", [])
+                    for it in current_items:
+                        item_name = (it.get("name") or it.get("description") or "").lower()
+                        if "whatsapp" in item_name:
+                            client.delete(f"/subscriptions/{sub.pagarme_subscription_id}/items/{it['id']}")
+                try:
+                    client.patch(
+                        f"/subscriptions/{sub.pagarme_subscription_id}/metadata",
+                        json={
+                            "metadata": {
+                                "tenant_id": str(tenant.id),
+                                "tenant_name": tenant.name,
+                                "type": "unified_subscription",
+                                "package_code": "",
+                            }
+                        },
+                    )
+                except Exception as meta_err:
+                    logger.warning(f"Erro ao limpar metadata do pacote na assinatura {sub.pagarme_subscription_id}: {meta_err}")
+        except Exception as e:
+            logger.warning(f"Erro ao remover item do pacote WhatsApp na assinatura Pagar.me: {e}")
 
+    # Remove assinatura legada avulsa se existir
     if sub.pagarme_whatsapp_subscription_id:
         try:
             with _pagarme_client() as client:
-                client.delete(f"/subscriptions/{sub.pagarme_whatsapp_subscription_id}")
+                resp = client.delete(f"/subscriptions/{sub.pagarme_whatsapp_subscription_id}")
+                if resp.status_code not in (200, 204, 400, 404):
+                    err_msg = f"Falha ao cancelar assinatura legada do pacote WhatsApp {sub.pagarme_whatsapp_subscription_id} no Pagar.me: HTTP {resp.status_code} - {resp.text}"
+                    logger.error(err_msg)
+                    sentry_sdk.capture_message(err_msg, level="error")
         except Exception as e:
-            print(f"[WARN] Erro ao cancelar assinatura do pacote no Pagar.me: {e}")
+            logger.exception(f"Erro ao cancelar assinatura legada do pacote WhatsApp {sub.pagarme_whatsapp_subscription_id} no Pagar.me: {e}")
+            sentry_sdk.capture_exception(e)
 
     _repo.update(db, sub, {
+        "plan_id": monthly_plan.id if monthly_plan and sub.plan_id != 1 else sub.plan_id,
+        "whatsapp_package_id": None,
         "whatsapp_package_status": "canceled",
+        "whatsapp_next_package_id": None,
         "pagarme_whatsapp_subscription_id": None,
     })
     db.commit()

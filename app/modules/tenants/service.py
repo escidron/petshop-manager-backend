@@ -89,7 +89,14 @@ class TenantService:
             if pkg_code:
                 if not pkg_code.startswith("pkg_"):
                     pkg_code = f"pkg_{pkg_code}"
-                pkg_limits = {"pkg_200": 200, "pkg_500": 500, "pkg_1000": 1000, "pkg_2000": 2000}
+                pkg_limits = {
+                    "pkg_200": 200,
+                    "pkg_300": 300,
+                    "pkg_500": 500,
+                    "pkg_750": 750,
+                    "pkg_1000": 1000,
+                    "pkg_2000": 2000,
+                }
                 if pkg_code in pkg_limits:
                     pkg_id = pkg_code
                     pkg_status = "pending_payment"

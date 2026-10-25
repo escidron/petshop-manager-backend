@@ -74,6 +74,10 @@ class AddPaymentMethodRequest(BaseModel):
     document: Optional[str] = None
 
 
+class ReactivateSubscriptionRequest(BaseModel):
+    card_id: Optional[str] = None
+
+
 class SubscriptionUpdate(BaseModel):
     payment_method: str
 
@@ -122,6 +126,7 @@ class SubscriptionResponse(BaseModel):
 
     # WhatsApp Add-on Package Tracking
     whatsapp_package_id: Optional[str] = None
+    whatsapp_next_package_id: Optional[str] = None
     whatsapp_package_status: Optional[str] = "inactive"
     whatsapp_messages_limit: Optional[int] = 0
     whatsapp_messages_used: Optional[int] = 0
