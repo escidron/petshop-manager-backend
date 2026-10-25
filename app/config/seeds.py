@@ -16,9 +16,9 @@ def seed_plans(db: Session):
             "is_active": True,
         },
         {
-            "name": "Plano Mensal",
+            "name": "Data Pet Pro",
             "code": "MONTHLY",
-            "price_cents": 9990,  # 99.90 em centavos
+            "price_cents": 14990,  # 149.90 em centavos
             "currency": "BRL",
             "billing_cycle": "monthly",
             "trial_days": 0,
@@ -28,7 +28,16 @@ def seed_plans(db: Session):
         {
             "name": "WhatsApp - 200 Mensagens",
             "code": "pkg_200",
-            "price_cents": 3790,
+            "price_cents": 2490,
+            "currency": "BRL",
+            "billing_cycle": "monthly",
+            "trial_days": 0,
+            "is_active": True,
+        },
+        {
+            "name": "WhatsApp - 300 Mensagens",
+            "code": "pkg_300",
+            "price_cents": 3490,
             "currency": "BRL",
             "billing_cycle": "monthly",
             "trial_days": 0,
@@ -37,6 +46,15 @@ def seed_plans(db: Session):
         {
             "name": "WhatsApp - 500 Mensagens",
             "code": "pkg_500",
+            "price_cents": 4990,
+            "currency": "BRL",
+            "billing_cycle": "monthly",
+            "trial_days": 0,
+            "is_active": True,
+        },
+        {
+            "name": "WhatsApp - 750 Mensagens",
+            "code": "pkg_750",
             "price_cents": 6990,
             "currency": "BRL",
             "billing_cycle": "monthly",
@@ -46,7 +64,7 @@ def seed_plans(db: Session):
         {
             "name": "WhatsApp - 1.000 Mensagens",
             "code": "pkg_1000",
-            "price_cents": 11990,
+            "price_cents": 9990,
             "currency": "BRL",
             "billing_cycle": "monthly",
             "trial_days": 0,
@@ -55,44 +73,7 @@ def seed_plans(db: Session):
         {
             "name": "WhatsApp - 2.000 Mensagens",
             "code": "pkg_2000",
-            "price_cents": 19990,
-            "currency": "BRL",
-            "billing_cycle": "monthly",
-            "trial_days": 0,
-            "is_active": True,
-        },
-        # Planos Combinados (Plano Pro + WhatsApp pós-trial)
-        {
-            "name": "Data Pet Pro + 200 msgs",
-            "code": "combo_200",
-            "price_cents": 13780,
-            "currency": "BRL",
-            "billing_cycle": "monthly",
-            "trial_days": 0,
-            "is_active": True,
-        },
-        {
-            "name": "Data Pet Pro + 500 msgs",
-            "code": "combo_500",
-            "price_cents": 16980,
-            "currency": "BRL",
-            "billing_cycle": "monthly",
-            "trial_days": 0,
-            "is_active": True,
-        },
-        {
-            "name": "Data Pet Pro + 1.000 msgs",
-            "code": "combo_1000",
-            "price_cents": 21980,
-            "currency": "BRL",
-            "billing_cycle": "monthly",
-            "trial_days": 0,
-            "is_active": True,
-        },
-        {
-            "name": "Data Pet Pro + 2.000 msgs",
-            "code": "combo_2000",
-            "price_cents": 29980,
+            "price_cents": 16990,
             "currency": "BRL",
             "billing_cycle": "monthly",
             "trial_days": 0,
@@ -100,13 +81,27 @@ def seed_plans(db: Session):
         },
     ]
 
+    # Limpeza de segurança: remove quaisquer planos combo legados do banco
+    db.query(Plan).filter(Plan.code.like("combo_%")).delete(synchronize_session=False)
+    db.commit()
+
     for plan_data in plans:
         existing = db.query(Plan).filter(
             Plan.code == plan_data["code"]
         ).first()
 
-        if not existing:
+        if existing:
+            # Mantém planos existentes sincronizados com a definição do código
+            existing.name = plan_data["name"]
+            existing.price_cents = plan_data["price_cents"]
+            existing.currency = plan_data["currency"]
+            existing.billing_cycle = plan_data["billing_cycle"]
+            existing.trial_days = plan_data["trial_days"]
+            existing.is_active = plan_data["is_active"]
+            existing.pagarme_plan_id = None
+        else:
             plan = Plan(**plan_data)
+            plan.pagarme_plan_id = None
             db.add(plan)
 
     db.commit()
@@ -126,11 +121,23 @@ def seed_tenant_types(db: Session):
             TenantType.code == type_data["code"]
         ).first()
 
-        if not existing:
+        if existing:
+            existing.name = type_data["name"]
+            existing.is_active = type_data["is_active"]
+        else:
             t_type = TenantType(**type_data)
             db.add(t_type)
 
     db.commit()
+
+
+def sync_all_seeds(db: Session):
+    """Sincroniza todos os metadados do sistema (planos, tipos de tenant, templates).
+    Pode ser executado com segurança no boot da aplicação (lifespan) de qualquer ambiente.
+    """
+    seed_plans(db)
+    seed_tenant_types(db)
+    seed_whatsapp_templates(db)
 
 
 def seed_whatsapp_templates(db: Session):

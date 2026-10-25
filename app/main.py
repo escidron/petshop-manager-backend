@@ -1,3 +1,6 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -23,15 +26,39 @@ import app.modules.whatsapp.models
 import app.modules.cash_register.models
 import app.modules.financial.models
 import sentry_sdk
+from app.config.database import SessionLocal
+from app.config.seeds import sync_all_seeds
+
+logger = logging.getLogger(__name__)
 
 
 # Initialize Logging Configuration
 setup_logging()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Executado na inicialização do servidor em todos os ambientes (Dev, Staging, Prod).
+    Garante que novos planos, add-ons e metadados sejam sempre sincronizados automaticamente
+    com o banco de dados no momento do deploy/boot.
+    """
+    try:
+        db = SessionLocal()
+        try:
+            sync_all_seeds(db)
+            logger.info("Metadados e catálogo de planos sincronizados com sucesso no boot.")
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.error(f"Erro ao sincronizar sementes no boot da aplicação: {exc}", exc_info=True)
+
+    yield
+
+
 def create_app() -> FastAPI:
     from app.config.settings import settings
 
-    app = FastAPI(title="Petshop API")
+    app = FastAPI(title="Petshop API", lifespan=lifespan)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
