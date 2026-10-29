@@ -162,15 +162,21 @@ def seed_whatsapp_templates(db: Session):
         {
             "trigger_type": "reminder_24h",
             "message_template": (
-                "Olá, {{client_name}}! Passando para lembrar que amanhã você tem um horário agendado no {{petshop_name}} "
-                "para o dia {{date}} às {{time}} ({{details}}).\n\n"
-                "Você confirma o comparecimento? Use os botões abaixo para nos avisar ou solicitar o reagendamento.\n\n"
-                "Caso precise falar conosco, acesse: {{link}}"
+                "Lembrete de Agendamento\n"
+                "- {{petshop_name}}\n\n"
+                "Olá, {{client_name}}. Este é um lembrete do seu agendamento.\n\n"
+                "📅 Data: {{date}}\n"
+                "🕒 Horário: {{time}}\n"
+                "🐶 Pet: {{pet_names}}\n"
+                "🛁 Serviço: {{services_str}}\n\n"
+                "Você poderá comparecer?\n\n"
+                "Basta escolher uma das opções abaixo para confirmar ou cancelar.\n\n"
+                "Dúvidas? Fale conosco: {{link}}\n\n"
+                "Estamos à disposição!"
             ),
             "buttons": [
-                {"id": "confirm", "text": "Confirmar 👍"},
-                {"id": "reschedule", "text": "Reagendar 📅"},
-                {"id": "cancel", "text": "Cancelar ❌"}
+                {"id": "confirm", "text": "Confirmar"},
+                {"id": "cancel", "text": "Cancelar"}
             ],
             "is_active": True,
         },

@@ -51,8 +51,13 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str = ""
     whatsapp_sandbox_mode: bool = True
     whatsapp_sandbox_number: str = ""
-    whatsapp_template_appointment: str = ""
+    whatsapp_template_appointment: str = "lembrete_24h"
     whatsapp_webhook_verify_token: str = ""
+    whatsapp_cron_secret: str = ""
+    whatsapp_reminder_hours_ahead: float = 24.0
+    whatsapp_api_version: str = "v21.0"
+    whatsapp_max_retries: int = 3
+    whatsapp_auto_reply_enabled: bool = False
     app_access_token: str = ""
 
     class Config:
