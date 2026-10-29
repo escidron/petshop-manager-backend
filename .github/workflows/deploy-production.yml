@@ -82,6 +82,14 @@ jobs:
             APP_NAME=Sistema Data Pet
             DEFAULT_FROM_EMAIL=mail@sistemadatapet.com.br
             ADMIN_EMAIL=eduardosanchezcidron@gmail.com
+            WHATSAPP_ACCESS_TOKEN=${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+            WHATSAPP_PHONE_NUMBER_ID=${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+            WHATSAPP_WEBHOOK_VERIFY_TOKEN=${{ secrets.WHATSAPP_WEBHOOK_VERIFY_TOKEN }}
+            WHATSAPP_CRON_SECRET=${{ secrets.WHATSAPP_CRON_SECRET }}
+            WHATSAPP_TEMPLATE_APPOINTMENT=${{ secrets.WHATSAPP_TEMPLATE_APPOINTMENT }}
+            WHATSAPP_SANDBOX_MODE=False
+            WHATSAPP_REMINDER_HOURS_AHEAD=24
+            WHATSAPP_AUTO_REPLY_ENABLED=False
 
       - name: Set up Python
         uses: actions/setup-python@v5

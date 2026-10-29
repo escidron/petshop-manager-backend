@@ -127,15 +127,6 @@ class AppointmentService:
 
         db.commit()
 
-        # Envia notificação por WhatsApp (apenas para o primeiro)
-        try:
-            import logging
-            from app.modules.whatsapp.service import WhatsAppService
-            local_logger = logging.getLogger(__name__)
-            WhatsAppService().send_appointment_confirmation(db, tenant_id, first_appointment.id)
-        except Exception as e:
-            local_logger.error(f"Erro ao enviar notificação de agendamento por WhatsApp: {str(e)}")
-
         # Recarrega o primeiro agendamento com as relações prontas
         return self._attach_recurrence_info(db, self.repo.get_with_relations(db, first_appointment.id))
 
