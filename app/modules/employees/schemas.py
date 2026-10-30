@@ -1,6 +1,8 @@
 from datetime import datetime, date
 from typing import Optional, Literal
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_serializer
+
+from app.utils.timezone import to_brazil_datetime
 
 
 EmployeeRole = Literal["groomer", "bather", "salesperson", "receptionist", "driver", "vet", "other"]
@@ -67,6 +69,12 @@ class PublicAppointment(BaseModel):
     client_name: str
     client_phone: Optional[str] = None
     items: list[PublicAppointmentItem]
+
+    @field_serializer("scheduled_at")
+    def serialize_scheduled_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
 
 
 class PublicFreelancerScheduleResponse(BaseModel):

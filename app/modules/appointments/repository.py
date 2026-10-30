@@ -1,12 +1,13 @@
 from datetime import date, datetime, time
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
-from sqlalchemy import func
+from sqlalchemy import func, Date, cast
 
 from .models import Appointment, AppointmentItem, AppointmentPackageCoverage, AppointmentItemService
 from app.modules.tenant_services.models import Service
 from app.modules.client_packages.models import ClientPackage
 from app.modules.pets.models import Pet
+from app.utils.timezone import get_day_bounds_brazil, get_date_range_bounds_brazil
 
 def _eager_options():
     """Opções de eager loading reutilizáveis para evitar N+1."""
@@ -97,7 +98,6 @@ class AppointmentRepository:
         tenant_id: int,
         day: date,
     ) -> list[Appointment]:
-        from app.utils.timezone import get_day_bounds_brazil
         start, end = get_day_bounds_brazil(day)
         return (
             db.query(Appointment)
@@ -180,7 +180,6 @@ class AppointmentRepository:
             .filter(Appointment.tenant_id == tenant_id)
         )
         if start_date or end_date:
-            from app.utils.timezone import get_date_range_bounds_brazil
             start_dt, end_dt = get_date_range_bounds_brazil(start_date, end_date)
             if start_dt:
                 q = q.filter(Appointment.scheduled_at >= start_dt)
@@ -385,18 +384,17 @@ class AppointmentRepository:
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> list[date]:
-        from sqlalchemy import Date, cast
+        date_col = cast(func.timezone('America/Sao_Paulo', Appointment.scheduled_at), Date)
         q = (
-            db.query(cast(Appointment.scheduled_at, Date))
+            db.query(date_col)
             .filter(Appointment.tenant_id == tenant_id)
         )
         if start_date or end_date:
-            from app.utils.timezone import get_date_range_bounds_brazil
             start_dt, end_dt = get_date_range_bounds_brazil(start_date, end_date)
             if start_dt:
                 q = q.filter(Appointment.scheduled_at >= start_dt)
             if end_dt:
                 q = q.filter(Appointment.scheduled_at <= end_dt)
         
-        results = q.distinct().order_by(cast(Appointment.scheduled_at, Date)).all()
+        results = q.distinct().order_by(date_col).all()
         return [r[0] for r in results if r[0] is not None]
