@@ -874,7 +874,6 @@ class WhatsAppService:
         Envia mensagem de template oficial via Meta WhatsApp Cloud API.
         Retorna (meta_message_id, json_response).
         """
-        import requests
         if not settings.whatsapp_phone_number_id or not settings.whatsapp_access_token:
             raise ValueError("WHATSAPP_PHONE_NUMBER_ID ou WHATSAPP_ACCESS_TOKEN não configurados no servidor.")
 
