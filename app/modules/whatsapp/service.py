@@ -692,17 +692,18 @@ class WhatsAppService:
         if button_payload and ":" in button_payload:
             action_payload = button_payload.split(":", 1)[0]
 
-        if action_payload == "confirm":
+        action_clean = action_payload.strip().lower() if action_payload else ""
+        if action_clean in ("confirm", "confirmar"):
             is_confirm = True
-        elif action_payload == "cancel":
+        elif action_clean in ("cancel", "cancelar"):
             is_cancel = True
-        elif action_payload == "reschedule":
+        elif action_clean in ("reschedule", "reagendar"):
             is_reschedule = True
-        else:
+        elif text:
             # Parser do texto livre
             cleaned_text = text.strip().lower()
-            confirm_keywords = ["1", "sim", "confirmar", "ok", "confirmar agendamento", "vou", "confirmado"]
-            cancel_keywords = ["2", "não", "nao", "cancelar", "cancelar agendamento", "remover"]
+            confirm_keywords = ["1", "sim", "confirmar", "ok", "confirmar agendamento", "vou", "confirmado", "pode confirmar"]
+            cancel_keywords = ["2", "não", "nao", "cancelar", "cancelar agendamento", "remover", "desmarcar"]
             reschedule_keywords = ["3", "reagendar", "mudar", "alterar", "outro dia", "outro horario", "outro horário", "remarcar"]
 
             if any(k in cleaned_text for k in confirm_keywords):
@@ -711,6 +712,12 @@ class WhatsAppService:
                 is_cancel = True
             elif any(k in cleaned_text for k in reschedule_keywords):
                 is_reschedule = True
+
+        logger.info(
+            f"[WHATSAPP] Ação detectada para Agendamento #{appointment.id}: "
+            f"is_confirm={is_confirm}, is_cancel={is_cancel}, is_reschedule={is_reschedule} "
+            f"(action_clean='{action_clean}', text='{text}')"
+        )
 
         app_service = self._get_appointment_service()
 

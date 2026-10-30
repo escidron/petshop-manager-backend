@@ -1,6 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session
+import logging
 from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import PlainTextResponse
+from sqlalchemy.orm import Session
 
 from app.config.database import get_db
 from app.config.settings import settings
@@ -10,6 +13,8 @@ from app.modules.whatsapp.models import WhatsAppMessage
 from app.modules.whatsapp.schemas import SimulateInboundRequest, WhatsAppMessageResponse
 from app.modules.whatsapp.service import WhatsAppService
 from app.modules.whatsapp.cron_reminders import send_reminder_notifications
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/whatsapp", tags=["WhatsApp"])
 
@@ -110,7 +115,6 @@ def verify_meta_webhook(
     hub_challenge = request.query_params.get("hub.challenge")
 
     if hub_mode == "subscribe" and hub_verify_token == settings.whatsapp_webhook_verify_token:
-        from fastapi.responses import PlainTextResponse
         return PlainTextResponse(content=str(hub_challenge))
     
     raise HTTPException(
@@ -190,27 +194,44 @@ async def receive_meta_webhook(
                                 if not db_msg.refunded and db_msg.tenant_id:
                                     service.refund_tenant_message_quota(db, db_msg.tenant_id)
                                     db_msg.refunded = True
-                                    import logging
-                                    logger = logging.getLogger(__name__)
                                     logger.info(f"[WHATSAPP WEBHOOK] Cota estornada para Tenant #{db_msg.tenant_id} (wamid: {wamid})")
                             db.commit()
 
                 # 2. Tratamento de Mensagens Recebidas e Botões
                 messages = value.get("messages", [])
-                if messages:
-                    message = messages[0]
+                for message in messages:
                     from_number = message.get("from")
+                    msg_type = message.get("type")
                     text = ""
                     button_payload = None
 
-                    if message.get("type") == "interactive":
+                    # A. Botão de Template Oficial Meta (Quick Reply)
+                    if msg_type == "button":
+                        btn = message.get("button", {})
+                        button_payload = btn.get("payload")
+                        text = btn.get("text", "")
+
+                    # B. Mensagens Interativas (button_reply ou list_reply)
+                    elif msg_type == "interactive":
                         interactive = message.get("interactive", {})
-                        if interactive.get("type") == "button_reply":
+                        reply_type = interactive.get("type")
+                        if reply_type == "button_reply":
                             button_reply = interactive.get("button_reply", {})
                             button_payload = button_reply.get("id")
-                            text = button_reply.get("title")
-                    elif message.get("type") == "text":
+                            text = button_reply.get("title", "")
+                        elif reply_type == "list_reply":
+                            list_reply = interactive.get("list_reply", {})
+                            button_payload = list_reply.get("id")
+                            text = list_reply.get("title", "")
+
+                    # C. Mensagem de Texto Livre
+                    elif msg_type == "text":
                         text = message.get("text", {}).get("body", "")
+
+                    logger.info(
+                        f"[WHATSAPP WEBHOOK] Mensagem recebida de {from_number} "
+                        f"(tipo: '{msg_type}', text: '{text}', payload: '{button_payload}')"
+                    )
 
                     if from_number and (text or button_payload):
                         service.process_incoming_message(
@@ -222,8 +243,6 @@ async def receive_meta_webhook(
 
         return {"status": "success"}
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Erro ao processar webhook real do WhatsApp: {str(e)}", exc_info=True)
         return {"status": "ignored"}
 

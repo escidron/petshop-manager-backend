@@ -1,15 +1,19 @@
-import pytest
+import asyncio
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
-from unittest.mock import patch, MagicMock
 
-from app.modules.whatsapp.service import WhatsAppService, MetaResponseError
-from app.modules.whatsapp.models import WhatsAppMessage
+import pytest
+
+from app.config.settings import settings
 from app.modules.appointments.models import Appointment, AppointmentStatus
+from app.modules.clients.models import Client
 from app.modules.subscriptions.models import Subscription
 from app.modules.tenants.models import Tenant
-from app.modules.clients.models import Client
-from app.config.settings import settings
+from app.modules.whatsapp.models import WhatsAppMessage
+from app.modules.whatsapp.router import receive_meta_webhook
+from app.modules.whatsapp.service import MetaResponseError, WhatsAppService
+
 
 def test_validate_whatsapp_phone():
     service = WhatsAppService()
@@ -301,5 +305,242 @@ def test_staging_safeguard_blocks_real_clients(db, tenant_id):
     with patch.object(settings, "ENVIRONMENT", "production"):
         with patch.object(settings, "whatsapp_sandbox_mode", False):
             assert service._is_sandbox_target("5511999991234") is False
+
+
+def test_meta_webhook_template_quick_reply_confirms_appointment(db, tenant_id):
+    """
+    Testa o fluxo real do Meta Cloud API quando o usuário clica no botão Quick Reply
+    de um template de lembrete (type="button", payload="confirm:<id>", text="Sim, confirmo").
+    Garante que o agendamento seja marcado como CONFIRMED e o status retornado seja 'success'.
+    """
+    client = Client(tenant_id=tenant_id, name="Eduardo Prod Test", phone="11948808454")
+    db.add(client)
+    db.flush()
+
+    appt = Appointment(
+        tenant_id=tenant_id,
+        client_id=client.id,
+        scheduled_at=datetime.now(ZoneInfo("UTC")) + timedelta(hours=2),
+        status=AppointmentStatus.PENDING
+    )
+    db.add(appt)
+    db.commit()
+
+    meta_payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "123456789",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {"display_phone_number": "5511999999999", "phone_number_id": "123456"},
+                            "messages": [
+                                {
+                                    "from": "5511948808454",
+                                    "id": "wamid.HBgNNTUxMTk0ODgwODQ1NBUCABEYEjMxNUQ3MDVCMDk3Q0VGQTBCMwA=",
+                                    "timestamp": "1730244681",
+                                    "type": "button",
+                                    "button": {
+                                        "payload": f"confirm:{appt.id}",
+                                        "text": "Sim, confirmo"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    mock_request = AsyncMock()
+    mock_request.json = AsyncMock(return_value=meta_payload)
+
+    async def _invoke():
+        return await receive_meta_webhook(mock_request, db=db)
+
+    response = asyncio.run(_invoke())
+
+    assert response == {"status": "success"}
+
+    db.refresh(appt)
+    assert appt.status == AppointmentStatus.CONFIRMED
+
+    # Valida registro de inbound
+    inbound = db.query(WhatsAppMessage).filter(
+        WhatsAppMessage.appointment_id == appt.id,
+        WhatsAppMessage.direction == "inbound"
+    ).first()
+    assert inbound is not None
+    assert inbound.content == "Sim, confirmo"
+    assert inbound.status == "received"
+
+
+def test_meta_webhook_template_quick_reply_cancels_appointment(db, tenant_id):
+    """
+    Testa quando o cliente clica em cancelar no botão Quick Reply do template
+    (type="button", payload="cancel:<id>", text="Cancelar").
+    Garante que o agendamento seja marcado como CANCELED.
+    """
+    client = Client(tenant_id=tenant_id, name="Cliente Cancelamento", phone="11948808454")
+    db.add(client)
+    db.flush()
+
+    appt = Appointment(
+        tenant_id=tenant_id,
+        client_id=client.id,
+        scheduled_at=datetime.now(ZoneInfo("UTC")) + timedelta(hours=2),
+        status=AppointmentStatus.PENDING
+    )
+    db.add(appt)
+    db.commit()
+
+    meta_payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5511948808454",
+                                    "type": "button",
+                                    "button": {
+                                        "payload": f"cancel:{appt.id}",
+                                        "text": "Cancelar"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    mock_request = AsyncMock()
+    mock_request.json = AsyncMock(return_value=meta_payload)
+
+    async def _invoke():
+        return await receive_meta_webhook(mock_request, db=db)
+
+    response = asyncio.run(_invoke())
+    assert response == {"status": "success"}
+
+    db.refresh(appt)
+    assert appt.status == AppointmentStatus.CANCELED
+
+
+def test_meta_webhook_interactive_button_reply(db, tenant_id):
+    """
+    Testa mensagem interativa tradicional (type="interactive", reply_type="button_reply").
+    """
+    client = Client(tenant_id=tenant_id, name="Cliente Interativo", phone="11948808454")
+    db.add(client)
+    db.flush()
+
+    appt = Appointment(
+        tenant_id=tenant_id,
+        client_id=client.id,
+        scheduled_at=datetime.now(ZoneInfo("UTC")) + timedelta(hours=3),
+        status=AppointmentStatus.PENDING
+    )
+    db.add(appt)
+    db.commit()
+
+    meta_payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5511948808454",
+                                    "type": "interactive",
+                                    "interactive": {
+                                        "type": "button_reply",
+                                        "button_reply": {
+                                            "id": f"confirm:{appt.id}",
+                                            "title": "Confirmar"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    mock_request = AsyncMock()
+    mock_request.json = AsyncMock(return_value=meta_payload)
+
+    async def _invoke():
+        return await receive_meta_webhook(mock_request, db=db)
+
+    response = asyncio.run(_invoke())
+    assert response == {"status": "success"}
+
+    db.refresh(appt)
+    assert appt.status == AppointmentStatus.CONFIRMED
+
+
+def test_meta_webhook_text_confirmation(db, tenant_id):
+    """
+    Testa confirmação via mensagem de texto livre (ex: "Pode confirmar").
+    """
+    client = Client(tenant_id=tenant_id, name="Cliente Texto", phone="11977771234")
+    db.add(client)
+    db.flush()
+
+    appt = Appointment(
+        tenant_id=tenant_id,
+        client_id=client.id,
+        scheduled_at=datetime.now(ZoneInfo("UTC")) + timedelta(hours=3),
+        status=AppointmentStatus.PENDING
+    )
+    db.add(appt)
+    db.commit()
+
+    meta_payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5511977771234",
+                                    "type": "text",
+                                    "text": {
+                                        "body": "Pode confirmar"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    mock_request = AsyncMock()
+    mock_request.json = AsyncMock(return_value=meta_payload)
+
+    async def _invoke():
+        return await receive_meta_webhook(mock_request, db=db)
+
+    response = asyncio.run(_invoke())
+    assert response == {"status": "success"}
+
+    db.refresh(appt)
+    assert appt.status == AppointmentStatus.CONFIRMED
+
 
 
