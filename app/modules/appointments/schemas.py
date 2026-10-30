@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_serializer
 from typing import List, Optional
 
 from app.modules.appointments.models import (
@@ -8,6 +8,7 @@ from app.modules.appointments.models import (
 )
 from app.modules.clients.schemas import ClientSummaryResponse
 from app.modules.pets.schemas import PetResponse
+from app.utils.timezone import to_brazil_datetime
 
 
 class PaginatedAppointmentsResponse(BaseModel):
@@ -42,6 +43,12 @@ class ServiceInAppointmentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_serializer("removed_at")
+    def serialize_removed_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
 
 
 class AppointmentItemResponse(BaseModel):
@@ -191,6 +198,12 @@ class AppointmentAuditLogResponse(BaseModel):
     class Config:
         from_attributes = True
 
+    @field_serializer("created_at")
+    def serialize_created_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
 
 class AppointmentResponse(BaseModel):
     id: int
@@ -210,6 +223,12 @@ class AppointmentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_serializer("scheduled_at", "created_at")
+    def serialize_datetime_brazil(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
 
     @model_validator(mode="after")
     def compute_package_coverage(self) -> "AppointmentResponse":

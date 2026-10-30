@@ -1,6 +1,8 @@
 from datetime import date, datetime
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_serializer
 from typing import Optional, List, Any
+
+from app.utils.timezone import to_brazil_datetime
 
 
 class ClientBase(BaseModel):
@@ -75,6 +77,12 @@ class ClientResponse(ClientBase):
     class Config:
         from_attributes = True
 
+    @field_serializer("created_at", "updated_at")
+    def serialize_client_dates(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
 
 class ClientSummaryResponse(BaseModel):
     """Payload mínimo usado na listagem de clientes (tabela) e agendamentos.
@@ -117,6 +125,12 @@ class ClientSummaryResponse(BaseModel):
     phone_tertiary: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
 
     @classmethod
     def from_orm_client(cls, client: Any) -> "ClientSummaryResponse":

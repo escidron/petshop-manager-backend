@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, field_serializer
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Any
@@ -10,6 +10,7 @@ from app.modules.packages.schemas import Package
 from app.modules.appointments.schemas import AppointmentResponse
 from app.modules.client_packages.schemas import ClientPackageResponse
 from app.modules.pets.schemas import PetResponse
+from app.utils.timezone import to_brazil_datetime
 
 # Sale Items
 
@@ -119,6 +120,12 @@ class ComandaItemResponse(ComandaItemBase):
 
     class Config:
         from_attributes = True
+
+    @field_serializer("appointment_date", "removed_at")
+    def serialize_dates(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
 
 # Comandas
 class ComandaSaveRequest(BaseModel):
