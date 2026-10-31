@@ -1,18 +1,21 @@
 from datetime import date
-from fastapi import APIRouter, Depends, Request, Query
 from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
+from app.modules.appointments.models import AppointmentAction
 from app.modules.auth.dependencies import get_current_tenant, require_active_subscription
 from .schemas import (
+    AddAppointmentServiceRequest,
     AppointmentActionRequest,
     AppointmentCreate,
-    AppointmentUpdate,
-    AppointmentResponse,
     AppointmentEmployeeAssignmentRequest,
+    AppointmentResponse,
+    AppointmentUpdate,
     CancelCompletedAppointmentRequest,
-    AddAppointmentServiceRequest,
+    PaginatedAppointmentsResponse,
 )
 from .service import AppointmentService
 
@@ -33,10 +36,6 @@ def create_appointment(
     tenant_id = request.state.tenant_user.tenant_id
     return AppointmentService().create(db, tenant_id, data)
 
-
-from .schemas import (
-    PaginatedAppointmentsResponse,
-)
 
 @router.get(
     "/open-invoices",
@@ -177,8 +176,6 @@ def appointment_action(
     db: Session = Depends(get_db),
     tenant_ctx: dict = Depends(get_current_tenant),
 ):
-    from app.modules.appointments.models import AppointmentAction
-    
     if data.action != AppointmentAction.CANCEL:
         require_active_subscription(tenant_ctx)
 

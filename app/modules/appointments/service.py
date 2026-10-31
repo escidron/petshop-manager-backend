@@ -1,20 +1,40 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import logging
 from typing import Optional
+import uuid
+
 from fastapi import HTTPException
-from sqlalchemy import or_, and_, func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
-from app.modules.appointments.models import Appointment, AppointmentAction, AppointmentStatus
-
-from .repository import AppointmentRepository
-from .schemas import AppointmentCreate, AppointmentUpdate, AppointmentItemCreate, AddAppointmentServiceRequest
-from app.modules.pets.models import Pet
-from app.modules.clients.models import Client
-from app.modules.tenant_services.models import Service
+from app.modules.appointments.models import (
+    Appointment,
+    AppointmentAction,
+    AppointmentAuditLog,
+    AppointmentItemService,
+    AppointmentItemServiceEmployee,
+    AppointmentPackageCoverage,
+    AppointmentStatus,
+)
+from app.modules.appointments.repository import AppointmentRepository, _eager_options
+from app.modules.appointments.schemas import (
+    AddAppointmentServiceRequest,
+    AppointmentCreate,
+    AppointmentItemCreate,
+    AppointmentUpdate,
+)
+from app.modules.client_packages.models import ClientPackageCredit, ClientPackageUsage
 from app.modules.client_packages.repository import ClientPackageRepository
+from app.modules.clients.models import Client
+from app.modules.commissions.models import CommissionEntry
 from app.modules.commissions.service import CommissionService
+from app.modules.pets.models import Pet
+from app.modules.sales.models import Comanda, ComandaItem, Sale, SaleItem
+from app.modules.tenant_services.models import Service
 from app.modules.tenants.models import Tenant
+from app.modules.whatsapp.service import WhatsAppService
+from app.utils.timezone import get_brazil_now, get_brazil_today, get_day_bounds_brazil
 
 
 class AppointmentService:
@@ -58,9 +78,6 @@ class AppointmentService:
         if not client:
             raise HTTPException(404, "Cliente não encontrado")
 
-        import uuid
-        from datetime import timedelta
-        
         recurrence_id = None
         occurrences_count = 1
         
@@ -149,10 +166,7 @@ class AppointmentService:
         day: date,
     ):
         appts = self.repo.list_by_day(db, tenant_id, day)
-        for appt in appts:
-            if appt.recurrence_id and not appt.recurrence_frequency:
-                appt.recurrence_frequency = "weekly"
-        return appts
+        return self._attach_recurrence_info_batch(db, tenant_id, appts)
 
     def list_by_client(
         self,
@@ -165,10 +179,16 @@ class AppointmentService:
         appts = self.repo.list_by_client(
             db, tenant_id, client_id, limit=limit, only_active_or_recent=only_active_or_recent
         )
-        for appt in appts:
-            if appt.recurrence_id and not appt.recurrence_frequency:
-                appt.recurrence_frequency = "weekly"
-        return appts
+        rec_ids = list({a.recurrence_id for a in appts if a.recurrence_id})
+        renewed_any = False
+        for rid in rec_ids:
+            if self._auto_renew_series_if_needed(db, tenant_id, rid):
+                renewed_any = True
+        if renewed_any:
+            appts = self.repo.list_by_client(
+                db, tenant_id, client_id, limit=limit, only_active_or_recent=only_active_or_recent
+            )
+        return self._attach_recurrence_info_batch(db, tenant_id, appts)
     
     def list_by_tenant(
         self,
@@ -178,10 +198,7 @@ class AppointmentService:
         end_date=None,
     ):
         appts = self.repo.list_by_tenant(db, tenant_id, start_date=start_date, end_date=end_date)
-        for appt in appts:
-            if appt.recurrence_id and not appt.recurrence_frequency:
-                appt.recurrence_frequency = "weekly"
-        return appts
+        return self._attach_recurrence_info_batch(db, tenant_id, appts)
 
     # ---------- UPDATE ----------
     def update(
@@ -199,17 +216,23 @@ class AppointmentService:
         old_scheduled_at = appointment.scheduled_at
 
         is_completed = (appointment.status == AppointmentStatus.COMPLETED)
-        if is_completed and user_role != "owner" and not is_admin:
+        is_recurrence_only_on_completed = (
+            is_completed
+            and data.items is None
+            and data.update_all_future
+            and (data.recurrence is not None or data.remove_recurrence)
+        )
+        if is_completed and not is_recurrence_only_on_completed and user_role != "owner" and not is_admin:
             raise HTTPException(
                 status_code=403,
                 detail="Apenas o proprietário (Owner) ou administradores podem editar agendamentos já finalizados.",
             )
 
-        # 🔹 Atualizar campos simples
-        if data.scheduled_at is not None:
+        # 🔹 Atualizar campos simples (não altera scheduled_at de agendamento já finalizado em renovação de recorrência)
+        if data.scheduled_at is not None and not is_recurrence_only_on_completed:
             appointment.scheduled_at = data.scheduled_at
 
-        if data.notes is not None:
+        if data.notes is not None and not is_recurrence_only_on_completed:
             appointment.notes = data.notes
 
         # 🔹 Se vier items → reconstruir
@@ -279,7 +302,6 @@ class AppointmentService:
 
                 # Restaura funcionário já atribuído se este pet e serviço já tinham profissional
                 if existing_emp_map:
-                    from app.modules.appointments.models import AppointmentItemService
                     for s in services:
                         old_emp_id = existing_emp_map.get((item.pet_id, s.id))
                         if old_emp_id:
@@ -307,15 +329,15 @@ class AppointmentService:
                 appointment.recurrence_frequency = None
         else:
             # Alterar este e TODOS os futuros
-            import uuid
             if data.remove_recurrence:
                 # O usuário desmarcou a recorrência: remove recorrência deste e dos futuros
                 if appointment.recurrence_id:
+                    target_rec_id = appointment.recurrence_id
                     future_appointments = (
                         db.query(Appointment)
                         .filter(
                             Appointment.tenant_id == tenant_id,
-                            Appointment.recurrence_id == appointment.recurrence_id,
+                            Appointment.recurrence_id == target_rec_id,
                             Appointment.scheduled_at > old_scheduled_at,
                             Appointment.id != appointment.id,
                         )
@@ -327,6 +349,20 @@ class AppointmentService:
                         else:
                             future_appt.recurrence_id = None
                             future_appt.recurrence_frequency = None
+
+                    if is_recurrence_only_on_completed:
+                        # Se está encerrando/dispensando uma recorrência já finalizada, limpa a série para não gerar mais alerta
+                        past_series_appts = (
+                            db.query(Appointment)
+                            .filter(
+                                Appointment.tenant_id == tenant_id,
+                                Appointment.recurrence_id == target_rec_id,
+                            )
+                            .all()
+                        )
+                        for pa in past_series_appts:
+                            pa.recurrence_id = None
+                            pa.recurrence_frequency = None
 
                 appointment.recurrence_id = None
                 appointment.recurrence_frequency = None
@@ -351,7 +387,61 @@ class AppointmentService:
                     recurrence_id = appointment.recurrence_id
                     appointment.recurrence_frequency = new_freq
 
-                if is_new_series or freq_changed:
+                if is_recurrence_only_on_completed:
+                    # Renovação a partir de um agendamento já finalizado: preserva o finalizado e cria novas sessões futuras
+                    old_future_appts = (
+                        db.query(Appointment)
+                        .filter(
+                            Appointment.tenant_id == tenant_id,
+                            Appointment.recurrence_id == recurrence_id,
+                            Appointment.scheduled_at > old_scheduled_at,
+                            Appointment.id != appointment.id,
+                        )
+                        .all()
+                    )
+                    for fa in old_future_appts:
+                        if not fa.is_paid and fa.status in [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]:
+                            db.delete(fa)
+                    db.flush()
+
+                    items_payload = [
+                        AppointmentItemCreate(
+                            pet_id=it.pet_id,
+                            service_ids=[svc.id for svc in it.services],
+                        )
+                        for it in appointment.items
+                    ]
+
+                    if data.scheduled_at is not None and data.scheduled_at > old_scheduled_at:
+                        renewal_base_date = data.scheduled_at
+                    else:
+                        renewal_base_date = self._calculate_next_scheduled_at(old_scheduled_at, new_freq, 1)
+
+                    for i in range(new_occurrences):
+                        future_scheduled_at = self._calculate_next_scheduled_at(renewal_base_date, new_freq, i)
+                        future_appt = self.repo.create(
+                            db=db,
+                            tenant_id=tenant_id,
+                            client_id=appointment.client_id,
+                            scheduled_at=future_scheduled_at,
+                            notes=appointment.notes,
+                        )
+                        future_appt.recurrence_id = recurrence_id
+                        future_appt.recurrence_frequency = new_freq
+
+                        for item in items_payload:
+                            services = self._get_services(
+                                db,
+                                tenant_id,
+                                item.service_ids,
+                            )
+                            self.repo.create_item(
+                                db=db,
+                                appointment=future_appt,
+                                pet_id=item.pet_id,
+                                services=services,
+                            )
+                elif is_new_series or freq_changed:
                     # Deletar futuros agendamentos pendentes da série antiga se existirem
                     if not is_new_series:
                         old_future_appts = (
@@ -558,9 +648,6 @@ class AppointmentService:
 
         # Se o agendamento já estiver finalizado, sincroniza os SaleItems e as comissões
         if appointment.status == AppointmentStatus.COMPLETED:
-            from app.modules.sales.models import Sale, SaleItem
-            from app.modules.commissions.models import CommissionEntry
-
             for assignment in assignments:
                 emp_ids = getattr(assignment, "employee_ids", None)
                 if emp_ids is None:
@@ -609,7 +696,7 @@ class AppointmentService:
                                 pass
             db.commit()
 
-        return result
+        return self._attach_recurrence_info(db, result)
 
     # ---------- DELETE ----------
     def delete(
@@ -629,11 +716,6 @@ class AppointmentService:
         appointment: Appointment,
         snapshot: dict,
     ):
-        from app.modules.client_packages.models import ClientPackageCredit, ClientPackageUsage
-        from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
-        from app.modules.commissions.models import CommissionEntry
-        from app.modules.appointments.models import AppointmentItemService, AppointmentItemServiceEmployee
-
         db.flush()
         db.expire(appointment)
         appointment_full = self.repo.get_with_relations(db, appointment.id)
@@ -895,7 +977,6 @@ class AppointmentService:
                     pos_sale.payments[0].amount = float(Decimal(str(pos_sale.payments[0].amount)) + diff)
         else:
             # Agendamento ainda não pago via PDV
-            from sqlalchemy import or_
             open_comandas = db.query(Comanda).filter(
                 Comanda.tenant_id == tenant_id,
                 Comanda.status == "open",
@@ -1045,7 +1126,6 @@ class AppointmentService:
         db.commit()
 
     def _calculate_next_scheduled_at(self, base_date, frequency: str, index: int):
-        from datetime import timedelta
         if frequency == 'weekly':
             return base_date + timedelta(days=7 * index)
         elif frequency == 'biweekly':
@@ -1054,53 +1134,216 @@ class AppointmentService:
             return base_date + timedelta(days=28 * index)
         return base_date + timedelta(days=7 * index)
 
+    def _deduce_series_frequency(self, series_rows: list) -> str:
+        for row in series_rows:
+            if row.recurrence_frequency:
+                return row.recurrence_frequency
+        if len(series_rows) >= 2:
+            days = abs((series_rows[1].scheduled_at.date() - series_rows[0].scheduled_at.date()).days)
+            if 5 <= days <= 9:
+                return "weekly"
+            elif 12 <= days <= 16:
+                return "biweekly"
+            else:
+                return "monthly"
+        return "weekly"
+
+    def _attach_recurrence_info_batch(
+        self,
+        db: Session,
+        tenant_id: int,
+        appointments: list[Appointment],
+    ) -> list[Appointment]:
+        if not appointments:
+            return appointments
+
+        rec_ids = list({a.recurrence_id for a in appointments if a.recurrence_id})
+        if not rec_ids:
+            for appt in appointments:
+                appt.recurrence = None
+            return appointments
+
+        rows = (
+            db.query(
+                Appointment.id,
+                Appointment.recurrence_id,
+                Appointment.recurrence_frequency,
+                Appointment.scheduled_at,
+                Appointment.status,
+            )
+            .filter(
+                Appointment.tenant_id == tenant_id,
+                Appointment.recurrence_id.in_(rec_ids),
+                Appointment.status != AppointmentStatus.CANCELED,
+            )
+            .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
+            .all()
+        )
+
+        series_by_id: dict[str, list] = {}
+        for r in rows:
+            series_by_id.setdefault(r.recurrence_id, []).append(r)
+
+        freq_by_id: dict[str, str] = {
+            rid: self._deduce_series_frequency(s_rows)
+            for rid, s_rows in series_by_id.items()
+        }
+
+        for appt in appointments:
+            if not appt.recurrence_id:
+                appt.recurrence = None
+                continue
+
+            rid = appt.recurrence_id
+            s_rows = series_by_id.get(rid, [])
+            frequency = appt.recurrence_frequency or freq_by_id.get(rid, "weekly")
+            appt.recurrence_frequency = frequency
+
+            if not s_rows:
+                appt.recurrence = {
+                    "frequency": frequency,
+                    "occurrences": 2,
+                }
+                continue
+
+            total_occurrences = len(s_rows)
+            idx = next((i for i, r in enumerate(s_rows) if r.id == appt.id), None)
+            if idx is not None:
+                remaining_occurrences = total_occurrences - idx
+            else:
+                remaining_occurrences = sum(1 for r in s_rows if r.scheduled_at >= appt.scheduled_at)
+
+            appt.recurrence = {
+                "frequency": frequency,
+                "occurrences": max(2, remaining_occurrences),
+            }
+
+        return appointments
+
     def _attach_recurrence_info(self, db: Session, appointment: Appointment | None) -> Appointment | None:
         if not appointment or not appointment.recurrence_id:
             if appointment:
                 appointment.recurrence = None
             return appointment
+        self._attach_recurrence_info_batch(db, appointment.tenant_id, [appointment])
+        return appointment
 
-        frequency = appointment.recurrence_frequency
-        if not frequency:
-            # Fallback para deduzir frequência em agendamentos legados
-            series = (
-                db.query(Appointment.scheduled_at)
-                .filter(
-                    Appointment.tenant_id == appointment.tenant_id,
-                    Appointment.recurrence_id == appointment.recurrence_id,
-                )
-                .order_by(Appointment.scheduled_at.asc())
-                .limit(2)
-                .all()
-            )
-            if len(series) >= 2:
-                days = abs((series[1][0].date() - series[0][0].date()).days)
-                if 5 <= days <= 9:
-                    frequency = "weekly"
-                elif 12 <= days <= 16:
-                    frequency = "biweekly"
-                else:
-                    frequency = "monthly"
-            else:
-                frequency = "weekly"
-            appointment.recurrence_frequency = frequency
+    def _auto_renew_series_if_needed(
+        self,
+        db: Session,
+        tenant_id: int,
+        recurrence_id: str | None,
+    ) -> list[Appointment]:
+        """
+        Renova automaticamente uma série recorrente quando sua última sessão é concluída
+        (0 sessões PENDING/CONFIRMED/IN_PROGRESS restantes e a série não foi cancelada).
+        Cria um novo ciclo de agendamentos futuros mantendo a mesma frequência, pets, serviços e horário.
+        """
+        if not recurrence_id:
+            return []
 
-        count = (
+        all_in_series = (
             db.query(Appointment)
             .filter(
-                Appointment.tenant_id == appointment.tenant_id,
-                Appointment.recurrence_id == appointment.recurrence_id,
-                Appointment.scheduled_at >= appointment.scheduled_at,
-                Appointment.status != AppointmentStatus.CANCELED,
+                Appointment.tenant_id == tenant_id,
+                Appointment.recurrence_id == recurrence_id,
             )
-            .count()
+            .order_by(Appointment.scheduled_at.asc(), Appointment.id.asc())
+            .all()
         )
+        if not all_in_series:
+            return []
 
-        appointment.recurrence = {
-            "frequency": frequency,
-            "occurrences": max(2, count),
-        }
-        return appointment
+        # Se o último agendamento da série foi cancelado, a recorrência foi interrompida
+        if all_in_series[-1].status == AppointmentStatus.CANCELED:
+            return []
+
+        non_canceled = [
+            a for a in all_in_series if a.status != AppointmentStatus.CANCELED
+        ]
+        if not non_canceled:
+            return []
+
+        active_remaining = [
+            a
+            for a in non_canceled
+            if a.status
+            in (
+                AppointmentStatus.PENDING,
+                AppointmentStatus.CONFIRMED,
+                AppointmentStatus.IN_PROGRESS,
+            )
+        ]
+        if len(active_remaining) > 0:
+            return []
+
+        last_appt = self.repo.get_with_relations(db, non_canceled[-1].id)
+        if not last_appt or not last_appt.items:
+            return []
+
+        frequency = last_appt.recurrence_frequency or self._deduce_series_frequency(non_canceled)
+        # Mantém o tamanho do ciclo anterior (entre 2 e 12 sessões)
+        cycle_count = min(max(2, len(non_canceled)), 12)
+
+        valid_items: list[tuple[int, list[Service]]] = []
+        for it in last_appt.items:
+            if not it.pet_id:
+                continue
+            if it.pet and getattr(it.pet, "is_deceased", False):
+                continue
+            removed_service_ids = {
+                ais.service_id
+                for ais in getattr(it, "item_services", [])
+                if getattr(ais, "status", "active") == "removed"
+            }
+            service_ids = [
+                svc.id
+                for svc in it.services
+                if svc.is_active and svc.id not in removed_service_ids
+            ]
+            if not service_ids:
+                continue
+            services = (
+                db.query(Service)
+                .filter(
+                    Service.id.in_(service_ids),
+                    Service.tenant_id == tenant_id,
+                    Service.is_active == True,
+                )
+                .all()
+            )
+            if services:
+                valid_items.append((it.pet_id, services))
+
+        if not valid_items:
+            return []
+
+        created_appts: list[Appointment] = []
+        for i in range(1, cycle_count + 1):
+            next_scheduled_at = self._calculate_next_scheduled_at(
+                last_appt.scheduled_at, frequency, i
+            )
+            new_appt = self.repo.create(
+                db=db,
+                tenant_id=tenant_id,
+                client_id=last_appt.client_id,
+                scheduled_at=next_scheduled_at,
+                notes=last_appt.notes,
+            )
+            new_appt.recurrence_id = recurrence_id
+            new_appt.recurrence_frequency = frequency
+            for pet_id, services in valid_items:
+                self.repo.create_item(
+                    db=db,
+                    appointment=new_appt,
+                    pet_id=pet_id,
+                    services=services,
+                )
+            created_appts.append(new_appt)
+
+        db.commit()
+        return created_appts
+
     def _validate_pet(
         self,
         db: Session,
@@ -1172,7 +1415,7 @@ class AppointmentService:
             AppointmentAction.NO_SHOW: AppointmentStatus.NO_SHOW,
         }
         if target_status_map.get(action) == current_status:
-            return self.repo.get_with_relations(db, appointment.id)
+            return self._attach_recurrence_info(db, self.repo.get_with_relations(db, appointment.id))
 
         if current_status not in self.TRANSITIONS:
             raise HTTPException(
@@ -1192,7 +1435,6 @@ class AppointmentService:
         result = self.repo.save_action(db, appointment)
 
         if action == AppointmentAction.CANCEL and cancel_all_future and appointment.recurrence_id:
-            from app.modules.appointments.models import Appointment
             future_appointments = db.query(Appointment).filter(
                 Appointment.tenant_id == tenant_id,
                 Appointment.recurrence_id == appointment.recurrence_id,
@@ -1206,10 +1448,8 @@ class AppointmentService:
         if action == AppointmentAction.CANCEL and not by_whatsapp:
             try:
                 db.commit()
-                from app.modules.whatsapp.service import WhatsAppService
                 WhatsAppService().send_whatsapp_notification(db, tenant_id, appointment.id, "appointment_canceled")
             except Exception as e:
-                import logging
                 logging.getLogger(__name__).error(f"Erro ao notificar cancelamento por WhatsApp: {str(e)}")
 
         # Ao completar, desconta créditos de pacotes e registra coverages (FIFO)
@@ -1264,8 +1504,6 @@ class AppointmentService:
                 for service in item.services
                 if (item.id, service.id) not in covered_pairs
             ]
-
-            from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
 
             # Verifica se o agendamento já possui uma venda de PDV concluída
             pos_sale = db.query(Sale).filter(
@@ -1387,11 +1625,8 @@ class AppointmentService:
 
             # Envia notificação de Pet Pronto por WhatsApp
             try:
-                import logging
-                from app.modules.whatsapp.service import WhatsAppService
                 WhatsAppService().send_whatsapp_notification(db, tenant_id, appointment.id, "pet_ready")
             except Exception as e:
-                import logging
                 logging.getLogger(__name__).error(f"Erro ao notificar que o pet está pronto: {str(e)}")
 
             # Aviso não-bloqueante se algum serviço estiver sem funcionário
@@ -1410,7 +1645,12 @@ class AppointmentService:
                     f"Atenção: serviços sem funcionário vinculado: {', '.join(unique_missing)}"
                 ]
 
-        return result
+        # Se este era o último agendamento da série recorrente e foi concluído ou não compareceu,
+        # renova automaticamente o próximo ciclo mantendo a mesma configuração.
+        if action in (AppointmentAction.COMPLETE, AppointmentAction.NO_SHOW) and appointment.recurrence_id:
+            self._auto_renew_series_if_needed(db, tenant_id, appointment.recurrence_id)
+
+        return self._attach_recurrence_info(db, result)
 
     def list_open_invoices(
         self,
@@ -1487,7 +1727,6 @@ class AppointmentService:
             emp_ids = [data.employee_id] if data.employee_id else []
 
         if emp_ids:
-            from app.modules.appointments.models import AppointmentItemService, AppointmentItemServiceEmployee
             primary_emp_id = emp_ids[0]
             db.query(AppointmentItemService).filter(
                 AppointmentItemService.appointment_item_id == target_item.id,
@@ -1510,7 +1749,6 @@ class AppointmentService:
 
         # 4. Se o agendamento já estava COMPLETED, sincroniza com comanda aberta se houver
         if appointment.status == AppointmentStatus.COMPLETED:
-            from app.modules.sales.models import Comanda, ComandaItem
             comanda = db.query(Comanda).filter(
                 Comanda.tenant_id == tenant_id,
                 Comanda.status == "open",
@@ -1558,11 +1796,6 @@ class AppointmentService:
         For non-completed appointments, removes the service from the scheduled item.
         Always records an audit log and synchronizes with any open comanda in the POS.
         """
-        from datetime import datetime, timezone
-        from sqlalchemy import or_, func
-        from app.modules.appointments.models import AppointmentItemService, AppointmentAuditLog, AppointmentPackageCoverage
-        from app.modules.sales.models import Comanda, ComandaItem, Sale, SaleItem
-
         appointment = self.repo.get_by_id(db, tenant_id, appointment_id)
         if not appointment:
             raise HTTPException(status_code=404, detail="Agendamento não encontrado.")
@@ -1751,11 +1984,8 @@ class AppointmentService:
         item_ids = [item.id for item in appointment_full.items] if appointment_full.items else []
 
         # 2. Localizar e cancelar todas as vendas (Sales) associadas
-        from app.modules.sales.models import Sale, SaleItem, Comanda, ComandaItem
+        # Exceção controlada (dependência circular entre SalesService e AppointmentService)
         from app.modules.sales.service import SalesService
-        from app.modules.commissions.models import CommissionEntry
-        from app.modules.client_packages.models import ClientPackageCredit, ClientPackageUsage
-        from app.modules.appointments.models import AppointmentPackageCoverage
 
         sales_service = SalesService()
 
