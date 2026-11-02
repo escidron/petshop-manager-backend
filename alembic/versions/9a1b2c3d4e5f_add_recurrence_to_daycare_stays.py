@@ -1,7 +1,7 @@
 """add_recurrence_to_daycare_stays
 
 Revision ID: 9a1b2c3d4e5f
-Revises: 8f2a1b3c4d5e
+Revises: d1c2b3a4f5e6
 Create Date: 2026-11-01 18:30:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '9a1b2c3d4e5f'
-down_revision: Union[str, Sequence[str], None] = '8f2a1b3c4d5e'
+down_revision: Union[str, Sequence[str], None] = 'd1c2b3a4f5e6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
