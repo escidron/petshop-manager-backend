@@ -8,6 +8,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.api.v1.api_router import api_router
+from app.modules.daycare.router import router as daycare_router
 from app.config.limiter import limiter
 from app.config.logging_config import setup_logging
 from app.config.observability_middleware import ObservabilityMiddleware
@@ -25,6 +26,7 @@ import app.modules.waiting_list.models
 import app.modules.whatsapp.models
 import app.modules.cash_register.models
 import app.modules.financial.models
+import app.modules.daycare.models
 import sentry_sdk
 from app.config.database import SessionLocal
 from app.config.seeds import sync_all_seeds
@@ -78,6 +80,7 @@ def create_app() -> FastAPI:
     app.add_middleware(ObservabilityMiddleware)
 
     app.include_router(api_router, prefix="/api/v1")
+    app.include_router(daycare_router, include_in_schema=False)
 
     if settings.SENTRY_DSN:
         sentry_sdk.init(
