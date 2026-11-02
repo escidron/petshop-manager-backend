@@ -1,5 +1,6 @@
 import pytest
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.config.database import engine
 from app.modules.tenants.models import Tenant
 from app.modules.clients.models import Client
@@ -10,6 +11,15 @@ from app.modules.employees.models import Employee
 
 # Ensure all application models and mappings are loaded
 import app.main
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_daycare_test_tables():
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE daycare_modalities ADD COLUMN IF NOT EXISTS sizes JSON;"))
+        conn.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS recurrence_id VARCHAR(50);"))
+        conn.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS recurrence_rule JSON;"))
+        conn.commit()
 
 
 @pytest.fixture(scope="function")

@@ -1,6 +1,9 @@
 from sqlalchemy.orm import Session
 
+from sqlalchemy import text
+from app.modules.daycare.models import DaycareModality, DaycareStay, DaycareTask, PetHealthRecord
 from app.modules.plans.models import Plan
+from app.modules.whatsapp.models import WhatsAppTemplate
 from app.modules.tenants.models import TenantType
 
 
@@ -135,13 +138,22 @@ def sync_all_seeds(db: Session):
     """Sincroniza todos os metadados do sistema (planos, tipos de tenant, templates).
     Pode ser executado com segurança no boot da aplicação (lifespan) de qualquer ambiente.
     """
+    bind = db.get_bind()
+    DaycareModality.__table__.create(bind=bind, checkfirst=True)
+    DaycareStay.__table__.create(bind=bind, checkfirst=True)
+    db.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS modality_id INTEGER REFERENCES daycare_modalities(id) ON DELETE SET NULL;"))
+    db.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS unit_price_cents INTEGER NOT NULL DEFAULT 0;"))
+    db.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS total_price_cents INTEGER NOT NULL DEFAULT 0;"))
+    db.commit()
+    DaycareTask.__table__.create(bind=bind, checkfirst=True)
+    PetHealthRecord.__table__.create(bind=bind, checkfirst=True)
     seed_plans(db)
     seed_tenant_types(db)
     seed_whatsapp_templates(db)
 
 
 def seed_whatsapp_templates(db: Session):
-    from app.modules.whatsapp.models import WhatsAppTemplate
+
 
     templates = [
         {
