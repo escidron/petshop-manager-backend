@@ -1,6 +1,7 @@
-from datetime import datetime
-from pydantic import BaseModel, Field, model_validator, field_serializer
+from datetime import datetime, timezone
 from typing import List, Optional
+
+from pydantic import BaseModel, Field, field_serializer, model_validator
 
 from app.modules.appointments.models import (
     AppointmentAction,
@@ -74,7 +75,6 @@ class AppointmentItemResponse(BaseModel):
         appt_status = getattr(appointment, "status", None) if appointment else None
         if pet and not covered_ids and appt_status not in [AppointmentStatus.COMPLETED, AppointmentStatus.CANCELED, "completed", "canceled"]:
             client_pkgs = getattr(pet, "client_packages", []) or []
-            from datetime import timezone
             now = datetime.now(timezone.utc)
             for pkg in client_pkgs:
                 if not getattr(pkg, "is_active", False):
@@ -161,7 +161,7 @@ class AppointmentRecurrence(BaseModel):
 
 class AppointmentRecurrenceInfo(BaseModel):
     frequency: str = Field(description="'weekly', 'biweekly', or 'monthly'")
-    occurrences: int = Field(description="Number of remaining occurrences in the series")
+    occurrences: int = Field(description="Number of remaining occurrences in the series (min 2 for form compatibility)")
 
 
 class AppointmentCreate(BaseModel):
@@ -278,3 +278,5 @@ class AddAppointmentServiceRequest(BaseModel):
     service_id: int
     employee_id: Optional[int] = None
     employee_ids: Optional[List[int]] = None
+
+
