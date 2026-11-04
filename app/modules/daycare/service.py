@@ -12,6 +12,7 @@ from app.modules.clients.models import Client
 from app.modules.daycare.models import (
     DaycareModality,
     DaycareModalityBillingType,
+    DaycarePackage,
     DaycareStay,
     DaycareStayAction,
     DaycareStayStatus,
@@ -22,6 +23,8 @@ from app.modules.daycare.repository import DaycareRepository
 from app.modules.daycare.schemas import (
     DaycareModalityCreate,
     DaycareModalityUpdate,
+    DaycarePackageCreate,
+    DaycarePackageUpdate,
     DaycareStayCreate,
     DaycareStayUpdate,
     DaycareTaskCreate,
@@ -477,6 +480,9 @@ class DaycareService:
         if data.notes is not None:
             stay.notes = data.notes
 
+        if data.report_data is not None:
+            stay.report_data = data.report_data
+
         if data.tasks is not None:
             db.query(DaycareTask).filter(
                 DaycareTask.stay_id == stay.id,
@@ -495,6 +501,21 @@ class DaycareService:
                     )
                 )
 
+        db.commit()
+        loaded = self.repo.get_by_id(db, tenant_id, stay.id)
+        return self._attach_package_info(loaded)
+
+    def update_report(
+        self,
+        db: Session,
+        tenant_id: int,
+        stay_id: int,
+        report_data: dict,
+    ) -> DaycareStay:
+        stay = self.repo.get_by_id(db, tenant_id, stay_id)
+        if not stay:
+            raise HTTPException(status_code=404, detail="Agendamento de creche nao encontrado")
+        stay.report_data = report_data
         db.commit()
         loaded = self.repo.get_by_id(db, tenant_id, stay.id)
         return self._attach_package_info(loaded)
@@ -1061,4 +1082,95 @@ class DaycareService:
         if not record:
             raise HTTPException(status_code=404, detail="Registro de saúde não encontrado")
         db.delete(record)
+        db.commit()
+
+    # ---------- PACOTES E MENSALIDADES DA CRECHE ----------
+    def list_packages(
+        self,
+        db: Session,
+        tenant_id: int,
+        only_active: bool = False,
+    ) -> List[DaycarePackage]:
+        query = db.query(DaycarePackage).filter(DaycarePackage.tenant_id == tenant_id)
+        if only_active:
+            query = query.filter(DaycarePackage.is_active == True)
+        return query.order_by(DaycarePackage.id.asc()).all()
+
+    def get_package(
+        self,
+        db: Session,
+        tenant_id: int,
+        package_id: int,
+    ) -> DaycarePackage:
+        pkg = (
+            db.query(DaycarePackage)
+            .filter(DaycarePackage.id == package_id, DaycarePackage.tenant_id == tenant_id)
+            .first()
+        )
+        if not pkg:
+            raise HTTPException(status_code=404, detail="Pacote de creche não encontrado")
+        return pkg
+
+    def create_package(
+        self,
+        db: Session,
+        tenant_id: int,
+        data: DaycarePackageCreate,
+    ) -> DaycarePackage:
+        pkg = DaycarePackage(
+            tenant_id=tenant_id,
+            name=data.name.strip(),
+            price_cents=data.price_cents,
+            is_monthly=data.is_monthly,
+            frequency=data.frequency if data.is_monthly else None,
+            days_quantity=data.days_quantity if not data.is_monthly else None,
+            validity_days=data.validity_days if not data.is_monthly else None,
+            is_active=data.is_active,
+        )
+        db.add(pkg)
+        db.commit()
+        db.refresh(pkg)
+        return pkg
+
+    def update_package(
+        self,
+        db: Session,
+        tenant_id: int,
+        package_id: int,
+        data: DaycarePackageUpdate,
+    ) -> DaycarePackage:
+        pkg = self.get_package(db, tenant_id, package_id)
+        if data.name is not None:
+            pkg.name = data.name.strip()
+        if data.price_cents is not None:
+            pkg.price_cents = data.price_cents
+        if data.is_monthly is not None:
+            pkg.is_monthly = data.is_monthly
+        if data.frequency is not None:
+            pkg.frequency = data.frequency
+        if data.days_quantity is not None:
+            pkg.days_quantity = data.days_quantity
+        if data.validity_days is not None:
+            pkg.validity_days = data.validity_days
+        if data.is_active is not None:
+            pkg.is_active = data.is_active
+
+        if pkg.is_monthly:
+            pkg.days_quantity = None
+            pkg.validity_days = None
+        else:
+            pkg.frequency = None
+
+        db.commit()
+        db.refresh(pkg)
+        return pkg
+
+    def delete_package(
+        self,
+        db: Session,
+        tenant_id: int,
+        package_id: int,
+    ) -> None:
+        pkg = self.get_package(db, tenant_id, package_id)
+        db.delete(pkg)
         db.commit()

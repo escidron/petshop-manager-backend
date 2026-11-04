@@ -113,6 +113,69 @@ class DaycareModality(Base):
     )
 
 
+class DaycarePackage(Base):
+    __tablename__ = "daycare_packages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+    )
+
+    price_cents: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
+    is_monthly: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    frequency: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    days_quantity: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    validity_days: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class DaycareStay(Base):
     __tablename__ = "daycare_stays"
     __table_args__ = (
@@ -247,6 +310,11 @@ class DaycareStay(Base):
     )
 
     recurrence_rule: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
+    report_data: Mapped[dict | None] = mapped_column(
         JSON,
         nullable=True,
     )

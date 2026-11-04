@@ -9,6 +9,7 @@ from app.config.database import get_db
 from app.modules.auth.dependencies import get_current_tenant, require_active_subscription
 from app.modules.daycare.models import (
     DaycareModality,
+    DaycarePackage,
     DaycareStay,
     DaycareTask,
     PetHealthRecord,
@@ -17,6 +18,10 @@ from app.modules.daycare.schemas import (
     DaycareModalityCreate,
     DaycareModalityResponse,
     DaycareModalityUpdate,
+    DaycarePackageCreate,
+    DaycarePackageResponse,
+    DaycarePackageUpdate,
+    DaycareReportUpdateRequest,
     DaycareStayActionRequest,
     DaycareStayCreate,
     DaycareStayResponse,
@@ -38,6 +43,7 @@ def ensure_daycare_schema(db: Session = Depends(get_db)) -> None:
         return
     bind = db.get_bind()
     DaycareModality.__table__.create(bind=bind, checkfirst=True)
+    DaycarePackage.__table__.create(bind=bind, checkfirst=True)
     db.execute(
         text(
             "ALTER TABLE daycare_modalities ADD COLUMN IF NOT EXISTS species JSON;"
@@ -57,6 +63,11 @@ def ensure_daycare_schema(db: Session = Depends(get_db)) -> None:
     db.execute(
         text(
             "ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS total_price_cents INTEGER NOT NULL DEFAULT 0;"
+        )
+    )
+    db.execute(
+        text(
+            "ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS report_data JSON;"
         )
     )
     db.commit()
@@ -150,6 +161,87 @@ def delete_daycare_modality(
 ):
     tenant_id = request.state.tenant_user.tenant_id
     DaycareService().delete_modality(db, tenant_id, modality_id)
+    return None
+
+
+# ---------- PACOTES E MENSALIDADES DA CRECHE ----------
+@router.get(
+    "/packages",
+    response_model=List[DaycarePackageResponse],
+)
+@router.get(
+    "/packages/",
+    response_model=List[DaycarePackageResponse],
+    include_in_schema=False,
+)
+def list_daycare_packages(
+    request: Request,
+    db: Session = Depends(get_db),
+    only_active: bool = Query(False),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return DaycareService().list_packages(db, tenant_id, only_active=only_active)
+
+
+@router.post(
+    "/packages",
+    response_model=DaycarePackageResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
+@router.post(
+    "/packages/",
+    response_model=DaycarePackageResponse,
+    dependencies=[Depends(require_active_subscription)],
+    include_in_schema=False,
+)
+def create_daycare_package(
+    data: DaycarePackageCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return DaycareService().create_package(db, tenant_id, data)
+
+
+@router.put(
+    "/packages/{package_id}",
+    response_model=DaycarePackageResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
+@router.patch(
+    "/packages/{package_id}",
+    response_model=DaycarePackageResponse,
+    dependencies=[Depends(require_active_subscription)],
+    include_in_schema=False,
+)
+def update_daycare_package(
+    package_id: int,
+    data: DaycarePackageUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return DaycareService().update_package(db, tenant_id, package_id, data)
+
+
+@router.delete(
+    "/packages/{package_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_active_subscription)],
+)
+@router.delete(
+    "/packages/{package_id}/",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_active_subscription)],
+    include_in_schema=False,
+)
+def delete_daycare_package(
+    package_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    DaycareService().delete_package(db, tenant_id, package_id)
     return None
 
 
@@ -254,6 +346,27 @@ def update_daycare_stay(
 ):
     tenant_id = request.state.tenant_user.tenant_id
     return DaycareService().update(db, tenant_id, stay_id, data)
+
+
+@router.patch(
+    "/{stay_id}/report",
+    response_model=DaycareStayResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
+@router.patch(
+    "/stays/{stay_id}/report",
+    response_model=DaycareStayResponse,
+    dependencies=[Depends(require_active_subscription)],
+    include_in_schema=False,
+)
+def update_daycare_report(
+    stay_id: int,
+    data: DaycareReportUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant_id = request.state.tenant_user.tenant_id
+    return DaycareService().update_report(db, tenant_id, stay_id, data.report_data)
 
 
 @router.delete(

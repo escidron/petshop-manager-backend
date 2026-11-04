@@ -138,11 +138,16 @@ class DaycareStayUpdate(BaseModel):
     belongings: Optional[str] = None
     notes: Optional[str] = None
     tasks: Optional[List[DaycareTaskCreate]] = None
+    report_data: Optional[dict] = None
 
 
 class DaycareStayActionRequest(BaseModel):
     action: DaycareStayAction
     notes: Optional[str] = None
+
+
+class DaycareReportUpdateRequest(BaseModel):
+    report_data: dict
 
 
 class PetHealthRecordCreate(BaseModel):
@@ -204,6 +209,7 @@ class DaycareStayResponse(BaseModel):
     notes: Optional[str] = None
     recurrence_id: Optional[str] = None
     recurrence_rule: Optional[dict] = None
+    report_data: Optional[dict] = None
     covered_quantity: int = 0
     is_package_covered: bool = False
     client: ClientSummaryResponse
@@ -245,3 +251,51 @@ class DaycareStayResponse(BaseModel):
         if dt is None:
             return None
         return to_brazil_datetime(dt)
+
+class DaycarePackageCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    price_cents: int = Field(..., ge=0)
+    is_monthly: bool = True
+    frequency: Optional[int] = Field(default=None, ge=1, le=7)
+    days_quantity: Optional[int] = Field(default=None, ge=1)
+    validity_days: Optional[int] = Field(default=None, ge=1)
+    is_active: bool = True
+
+
+class DaycarePackageUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    price_cents: Optional[int] = Field(default=None, ge=0)
+    is_monthly: Optional[bool] = None
+    frequency: Optional[int] = Field(default=None, ge=1, le=7)
+    days_quantity: Optional[int] = Field(default=None, ge=1)
+    validity_days: Optional[int] = Field(default=None, ge=1)
+    is_active: Optional[bool] = None
+
+
+class DaycarePackageResponse(BaseModel):
+    id: int
+    name: str
+    price_cents: int
+    is_monthly: bool
+    frequency: Optional[int] = None
+    days_quantity: Optional[int] = None
+    validity_days: Optional[int] = None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
+    @field_serializer("updated_at")
+    def serialize_updated_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+

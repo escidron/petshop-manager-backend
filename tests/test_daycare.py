@@ -12,6 +12,7 @@ from app.modules.clients.models import Client
 from app.modules.daycare.models import (
     DaycareModality,
     DaycareModalityBillingType,
+    DaycarePackage,
     DaycareStay,
     DaycareStayAction,
     DaycareStayStatus,
@@ -23,6 +24,8 @@ from app.modules.daycare.models import (
 from app.modules.daycare.schemas import (
     DaycareModalityCreate,
     DaycareModalityUpdate,
+    DaycarePackageCreate,
+    DaycarePackageUpdate,
     DaycareRecurrenceInput,
     DaycareStayCreate,
     DaycareStayResponse,
@@ -42,6 +45,7 @@ def ensure_daycare_tables(db: Session):
     """Cria as tabelas de creche dentro da transação de teste (com rollback automático)."""
     bind = db.get_bind()
     DaycareModality.__table__.create(bind=bind, checkfirst=True)
+    DaycarePackage.__table__.create(bind=bind, checkfirst=True)
     db.execute(text("ALTER TABLE daycare_modalities ADD COLUMN IF NOT EXISTS species JSON;"))
     DaycareStay.__table__.create(bind=bind, checkfirst=True)
     DaycareTask.__table__.create(bind=bind, checkfirst=True)
@@ -553,6 +557,113 @@ def test_daycare_continuous_recurrence_and_auto_renewal(
     assert len(last_stay.tasks) == 1
     assert last_stay.tasks[0].title == "Almoço"
 
+def test_daycare_update_report(
+    db: Session,
+    tenant_id: int,
+    test_client: Client,
+    test_pet: Pet,
+):
+    """Testa atualizacao incremental do boletim diario (report_data) da estadia."""
+    service = DaycareService()
+    start_dt = datetime(2026, 11, 2, 8, 0, tzinfo=BRAZIL_TZ)
+    end_dt = datetime(2026, 11, 2, 18, 0, tzinfo=BRAZIL_TZ)
+
+    stay = service.create(
+        db,
+        tenant_id,
+        DaycareStayCreate(
+            client_id=test_client.id,
+            pet_id=test_pet.id,
+            stay_type=DaycareStayType.DAILY,
+            quantity=1,
+            unit_price_cents=6000,
+            scheduled_start_at=start_dt,
+            scheduled_end_at=end_dt,
+        ),
+    )
+    assert stay.report_data is None
+
+    # Atualiza primeira parte do boletim: refeicao e necessidades
+    partial_report = {
+        "feeding_status": "ate_all",
+        "feeding_obs": "Comeu toda a racao com apetite",
+        "pee_status": "normal",
+        "poop_status": "normal",
+    }
+    updated = service.update_report(db, tenant_id, stay.id, partial_report)
+    assert updated.report_data["feeding_status"] == "ate_all"
+    assert updated.report_data["poop_status"] == "normal"
+
+    # Atualiza adicionando humor e recadinho dos tios
+    full_report = {
+        **updated.report_data,
+        "mood_tags": ["Brincalhao", "Socivel"],
+        "best_friend": "Thor",
+        "caretaker_notes": "Brincou muito no patio e foi muito carinhoso!",
+    }
+    updated_again = service.update_report(db, tenant_id, stay.id, full_report)
+    assert updated_again.report_data["best_friend"] == "Thor"
+    assert "Socivel" in updated_again.report_data["mood_tags"]
+    assert updated_again.report_data["feeding_status"] == "ate_all"
 
 
+def test_daycare_package_crud(
+    db: Session,
+    tenant_id: int,
+):
+    """Testa criação de plano mensal (com frequência) e cartela avulsa (com validade e diárias)."""
+    service = DaycareService()
 
+    # 1. Cria plano mensal (ex: 3x na semana)
+    monthly_pkg = service.create_package(
+        db,
+        tenant_id,
+        DaycarePackageCreate(
+            name="Creche 3x na semana",
+            price_cents=65000,
+            is_monthly=True,
+            frequency=3,
+        ),
+    )
+    assert monthly_pkg.id is not None
+    assert monthly_pkg.is_monthly is True
+    assert monthly_pkg.frequency == 3
+    assert monthly_pkg.days_quantity is None
+    assert monthly_pkg.validity_days is None
+    assert monthly_pkg.price_cents == 65000
+
+    # 2. Cria cartela avulsa (ex: 10 diárias válidas por 90 dias)
+    flex_pkg = service.create_package(
+        db,
+        tenant_id,
+        DaycarePackageCreate(
+            name="Cartela 10 Diárias de Creche",
+            price_cents=70000,
+            is_monthly=False,
+            days_quantity=10,
+            validity_days=90,
+        ),
+    )
+    assert flex_pkg.id is not None
+    assert flex_pkg.is_monthly is False
+    assert flex_pkg.days_quantity == 10
+    assert flex_pkg.validity_days == 90
+    assert flex_pkg.frequency is None
+
+    # 3. Lista pacotes
+    packages = service.list_packages(db, tenant_id)
+    assert len(packages) >= 2
+
+    # 4. Atualiza pacote
+    updated = service.update_package(
+        db,
+        tenant_id,
+        monthly_pkg.id,
+        DaycarePackageUpdate(price_cents=68000),
+    )
+    assert updated.price_cents == 68000
+
+    # 5. Deleta pacote
+    service.delete_package(db, tenant_id, flex_pkg.id)
+    remaining = service.list_packages(db, tenant_id)
+    assert all(p.id != flex_pkg.id for p in remaining)
