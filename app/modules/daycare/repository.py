@@ -26,6 +26,7 @@ def _stay_eager_options():
             selectinload(Pet.client_packages).selectinload(ClientPackage.credits),
         ),
         joinedload(DaycareStay.modality),
+        joinedload(DaycareStay.package),
         joinedload(DaycareStay.service),
         selectinload(DaycareStay.tasks),
     ]

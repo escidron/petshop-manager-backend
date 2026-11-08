@@ -57,6 +57,11 @@ def ensure_daycare_schema(db: Session = Depends(get_db)) -> None:
     )
     db.execute(
         text(
+            "ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS package_id INTEGER REFERENCES daycare_packages(id) ON DELETE SET NULL;"
+        )
+    )
+    db.execute(
+        text(
             "ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS unit_price_cents INTEGER NOT NULL DEFAULT 0;"
         )
     )

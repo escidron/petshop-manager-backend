@@ -113,6 +113,7 @@ class DaycareStayCreate(BaseModel):
     client_id: int
     pet_id: int
     modality_id: Optional[int] = None
+    package_id: Optional[int] = None
     service_id: Optional[int] = None
     stay_type: DaycareStayType = DaycareStayType.DAILY
     quantity: int = Field(default=1, ge=1)
@@ -128,6 +129,7 @@ class DaycareStayCreate(BaseModel):
 
 class DaycareStayUpdate(BaseModel):
     modality_id: Optional[int] = None
+    package_id: Optional[int] = None
     service_id: Optional[int] = None
     stay_type: Optional[DaycareStayType] = None
     quantity: Optional[int] = Field(default=None, ge=1)
@@ -189,69 +191,6 @@ class DaycareServiceSummary(BaseModel):
         from_attributes = True
 
 
-class DaycareStayResponse(BaseModel):
-    id: int
-    client_id: int
-    pet_id: int
-    modality_id: Optional[int] = None
-    service_id: Optional[int] = None
-    stay_type: str
-    quantity: int
-    unit_price_cents: int = 0
-    total_price_cents: int = 0
-    scheduled_start_at: datetime
-    scheduled_end_at: datetime
-    check_in_at: Optional[datetime] = None
-    check_out_at: Optional[datetime] = None
-    status: DaycareStayStatus
-    food_info: Optional[str] = None
-    belongings: Optional[str] = None
-    notes: Optional[str] = None
-    recurrence_id: Optional[str] = None
-    recurrence_rule: Optional[dict] = None
-    report_data: Optional[dict] = None
-    covered_quantity: int = 0
-    is_package_covered: bool = False
-    client: ClientSummaryResponse
-    pet: PetResponse
-    modality: Optional[DaycareModalityResponse] = None
-    service: Optional[DaycareServiceSummary] = None
-    tasks: List[DaycareTaskResponse] = Field(default_factory=list)
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-    @field_serializer("scheduled_start_at")
-    def serialize_scheduled_start_at(self, dt: datetime | None, _info):
-        if dt is None:
-            return None
-        return to_brazil_datetime(dt)
-
-    @field_serializer("scheduled_end_at")
-    def serialize_scheduled_end_at(self, dt: datetime | None, _info):
-        if dt is None:
-            return None
-        return to_brazil_datetime(dt)
-
-    @field_serializer("check_in_at")
-    def serialize_check_in_at(self, dt: datetime | None, _info):
-        if dt is None:
-            return None
-        return to_brazil_datetime(dt)
-
-    @field_serializer("check_out_at")
-    def serialize_check_out_at(self, dt: datetime | None, _info):
-        if dt is None:
-            return None
-        return to_brazil_datetime(dt)
-
-    @field_serializer("created_at")
-    def serialize_created_at(self, dt: datetime | None, _info):
-        if dt is None:
-            return None
-        return to_brazil_datetime(dt)
-
 class DaycarePackageCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     price_cents: int = Field(..., ge=0)
@@ -295,6 +234,72 @@ class DaycarePackageResponse(BaseModel):
 
     @field_serializer("updated_at")
     def serialize_updated_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
+
+class DaycareStayResponse(BaseModel):
+    id: int
+    client_id: int
+    pet_id: int
+    modality_id: Optional[int] = None
+    package_id: Optional[int] = None
+    service_id: Optional[int] = None
+    stay_type: str
+    quantity: int
+    unit_price_cents: int = 0
+    total_price_cents: int = 0
+    scheduled_start_at: datetime
+    scheduled_end_at: datetime
+    check_in_at: Optional[datetime] = None
+    check_out_at: Optional[datetime] = None
+    status: DaycareStayStatus
+    food_info: Optional[str] = None
+    belongings: Optional[str] = None
+    notes: Optional[str] = None
+    recurrence_id: Optional[str] = None
+    recurrence_rule: Optional[dict] = None
+    report_data: Optional[dict] = None
+    covered_quantity: int = 0
+    is_package_covered: bool = False
+    client: ClientSummaryResponse
+    pet: PetResponse
+    modality: Optional[DaycareModalityResponse] = None
+    package: Optional[DaycarePackageResponse] = None
+    service: Optional[DaycareServiceSummary] = None
+    tasks: List[DaycareTaskResponse] = Field(default_factory=list)
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+    @field_serializer("scheduled_start_at")
+    def serialize_scheduled_start_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
+    @field_serializer("scheduled_end_at")
+    def serialize_scheduled_end_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
+    @field_serializer("check_in_at")
+    def serialize_check_in_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
+    @field_serializer("check_out_at")
+    def serialize_check_out_at(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, dt: datetime | None, _info):
         if dt is None:
             return None
         return to_brazil_datetime(dt)

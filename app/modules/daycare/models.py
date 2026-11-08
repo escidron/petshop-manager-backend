@@ -208,6 +208,12 @@ class DaycareStay(Base):
         index=True,
     )
 
+    package_id: Mapped[int | None] = mapped_column(
+        ForeignKey("daycare_packages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     service_id: Mapped[int | None] = mapped_column(
         ForeignKey("services.id", ondelete="SET NULL"),
         nullable=True,
@@ -328,6 +334,7 @@ class DaycareStay(Base):
     client = relationship("Client")
     pet = relationship("Pet")
     modality = relationship("DaycareModality")
+    package = relationship("DaycarePackage")
     service = relationship("Service")
     tasks: Mapped[list["DaycareTask"]] = relationship(
         "DaycareTask",

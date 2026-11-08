@@ -51,6 +51,7 @@ def ensure_daycare_tables(db: Session):
     DaycareTask.__table__.create(bind=bind, checkfirst=True)
     PetHealthRecord.__table__.create(bind=bind, checkfirst=True)
     db.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS modality_id INTEGER REFERENCES daycare_modalities(id) ON DELETE SET NULL;"))
+    db.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS package_id INTEGER REFERENCES daycare_packages(id) ON DELETE SET NULL;"))
     db.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS unit_price_cents INTEGER NOT NULL DEFAULT 0;"))
     db.execute(text("ALTER TABLE daycare_stays ADD COLUMN IF NOT EXISTS total_price_cents INTEGER NOT NULL DEFAULT 0;"))
 
@@ -667,3 +668,84 @@ def test_daycare_package_crud(
     service.delete_package(db, tenant_id, flex_pkg.id)
     remaining = service.list_packages(db, tenant_id)
     assert all(p.id != flex_pkg.id for p in remaining)
+
+
+def test_create_daycare_stay_with_monthly_package_and_checkout(
+    db: Session,
+    tenant_id: int,
+    test_client: Client,
+    test_pet: Pet,
+):
+    """Testa agendamento recorrente vinculado a um Pacote Mensal (package_id), gerando cobrança única na Comanda e isentando os dias no check-out."""
+    service = DaycareService()
+
+    monthly_pkg = service.create_package(
+        db,
+        tenant_id,
+        DaycarePackageCreate(
+            name="Pacote Mensal 3x na semana",
+            price_cents=65000,
+            is_monthly=True,
+            frequency=3,
+        ),
+    )
+
+    # Segunda-feira 02/11/2026
+    start_dt = datetime(2026, 11, 2, 8, 0, tzinfo=BRAZIL_TZ)
+    end_dt = datetime(2026, 11, 2, 18, 0, tzinfo=BRAZIL_TZ)
+
+    first_stay = service.create(
+        db=db,
+        tenant_id=tenant_id,
+        data=DaycareStayCreate(
+            client_id=test_client.id,
+            pet_id=test_pet.id,
+            package_id=monthly_pkg.id,
+            stay_type=DaycareStayType.DAILY,
+            quantity=1,
+            scheduled_start_at=start_dt,
+            scheduled_end_at=end_dt,
+            recurrence=DaycareRecurrenceInput(
+                frequency="custom",
+                weekdays=[1, 3, 5],  # Seg, Qua, Sex
+                weeks_count=4,
+                is_continuous=False,
+            ),
+        ),
+    )
+
+    assert first_stay.package_id == monthly_pkg.id
+    assert first_stay.is_package_covered is True
+    assert first_stay.covered_quantity == 1
+
+    # Verifica que as 12 estadias (3x por 4 semanas) foram criadas com package_id
+    stays = (
+        db.query(DaycareStay)
+        .filter(
+            DaycareStay.tenant_id == tenant_id,
+            DaycareStay.recurrence_id == first_stay.recurrence_id,
+        )
+        .all()
+    )
+    assert len(stays) == 12
+    assert all(s.package_id == monthly_pkg.id and s.covered_quantity == 1 for s in stays)
+
+    # Verifica que apenas 1 item com o valor do pacote mensal foi lançado na Comanda aberta do cliente
+    comanda = (
+        db.query(Comanda)
+        .filter(Comanda.tenant_id == tenant_id, Comanda.client_id == test_client.id)
+        .first()
+    )
+    assert comanda is not None
+    assert float(comanda.total_amount) == 650.0
+    assert len(comanda.items) == 1
+    assert "Pacote Mensal 3x na semana" in comanda.items[0].name
+
+    # Faz check-in e check-out do primeiro dia -> não deve duplicar cobrança na comanda
+    service.apply_action(db, tenant_id, first_stay.id, DaycareStayAction.CHECK_IN)
+    service.apply_action(db, tenant_id, first_stay.id, DaycareStayAction.CHECK_OUT)
+
+    db.refresh(comanda)
+    assert float(comanda.total_amount) == 650.0
+    assert len(comanda.items) == 1
+

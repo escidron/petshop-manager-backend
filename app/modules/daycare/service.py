@@ -215,7 +215,7 @@ class DaycareService:
         return service
 
     def _attach_package_info(self, stay: DaycareStay) -> DaycareStay:
-        if stay.covered_quantity and stay.covered_quantity > 0:
+        if stay.package_id or (stay.covered_quantity and stay.covered_quantity > 0):
             stay.is_package_covered = True
             return stay
 
@@ -281,13 +281,18 @@ class DaycareService:
                 detail="A data/hora de saída não pode ser anterior à data/hora de entrada.",
             )
 
-        self._validate_client_and_pet(db, tenant_id, data.client_id, data.pet_id)
+        _, pet = self._validate_client_and_pet(db, tenant_id, data.client_id, data.pet_id)
         modality = self._validate_modality(db, tenant_id, data.modality_id)
+        package = self.get_package(db, tenant_id, data.package_id) if data.package_id else None
         service = self._validate_service(db, tenant_id, data.service_id)
 
-        unit_cents, total_cents = self._compute_prices(
-            modality, service, data.quantity, data.unit_price_cents
-        )
+        if package:
+            unit_cents = 0
+            total_cents = 0
+        else:
+            unit_cents, total_cents = self._compute_prices(
+                modality, service, data.quantity, data.unit_price_cents
+            )
 
         base_start = to_brazil_datetime(data.scheduled_start_at)
         base_end = to_brazil_datetime(data.scheduled_end_at)
@@ -341,6 +346,27 @@ class DaycareService:
                 else:
                     offsets_days = [i * 7 for i in range(count)]
 
+        pkg_comanda_id: Optional[int] = None
+        if package and package.price_cents > 0:
+            pkg_subtotal = float(Decimal(package.price_cents) / Decimal("100"))
+            comanda = self._get_or_create_open_comanda(
+                db, tenant_id, data.client_id, pkg_subtotal
+            )
+            db.add(
+                ComandaItem(
+                    comanda_id=comanda.id,
+                    item_type="service",
+                    item_id=package.id,
+                    name=f"Pacote Creche ({package.name}) - {pet.name}",
+                    quantity=1,
+                    unit_price=pkg_subtotal,
+                    subtotal=pkg_subtotal,
+                    pet_ids=[pet.id],
+                    unit="UN",
+                )
+            )
+            pkg_comanda_id = comanda.id
+
         first_stay: Optional[DaycareStay] = None
         for day_offset in offsets_days:
             cur_start = base_start + timedelta(days=day_offset)
@@ -350,11 +376,14 @@ class DaycareService:
                 client_id=data.client_id,
                 pet_id=data.pet_id,
                 modality_id=data.modality_id,
+                package_id=package.id if package else None,
                 service_id=data.service_id,
                 stay_type=data.stay_type.value,
                 quantity=data.quantity,
                 unit_price_cents=unit_cents,
                 total_price_cents=total_cents,
+                covered_quantity=1 if package else 0,
+                comanda_id=pkg_comanda_id,
                 scheduled_start_at=cur_start,
                 scheduled_end_at=cur_end,
                 status=DaycareStayStatus.PENDING.value,
@@ -438,6 +467,12 @@ class DaycareService:
             modality = self._validate_modality(db, tenant_id, data.modality_id)
             stay.modality_id = data.modality_id
             stay.modality = modality
+
+        if data.package_id is not None:
+            package = self.get_package(db, tenant_id, data.package_id)
+            stay.package_id = package.id
+            stay.package = package
+            stay.covered_quantity = 1
 
         if data.service_id is not None:
             service = self._validate_service(db, tenant_id, data.service_id)
@@ -769,6 +804,10 @@ class DaycareService:
     ) -> None:
         pet_name = stay.pet.name if stay.pet else "Pet"
         qty_needed = max(1, stay.quantity or 1)
+
+        # Caso 0: Estadia coberta por Pacote da Creche (package_id)
+        if stay.package_id:
+            return
 
         # Caso 1: Estadia com Modalidade própria da Creche (ou unit_price_cents definido sem depender do serviço de banho)
         if stay.modality_id and stay.modality:
@@ -1172,5 +1211,9 @@ class DaycareService:
         package_id: int,
     ) -> None:
         pkg = self.get_package(db, tenant_id, package_id)
+        db.query(DaycareStay).filter(
+            DaycareStay.package_id == package_id,
+            DaycareStay.tenant_id == tenant_id,
+        ).update({DaycareStay.package_id: None}, synchronize_session=False)
         db.delete(pkg)
         db.commit()
