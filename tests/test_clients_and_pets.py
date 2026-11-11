@@ -1,17 +1,37 @@
-import pytest
 from datetime import date, datetime, timezone, timedelta
+
+import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.modules.clients.service import ClientService
+from app.modules.appointments.models import (
+    Appointment,
+    AppointmentAction,
+    AppointmentAuditLog,
+    AppointmentStatus,
+)
+from app.modules.appointments.schemas import (
+    AppointmentCreate,
+    AppointmentItemCreate,
+    AppointmentRecurrence,
+)
+from app.modules.appointments.service import AppointmentService
+from app.modules.clients.models import Client
 from app.modules.clients.repository import ClientRepository
 from app.modules.clients.schemas import ClientCreate, ClientUpdate
-from app.modules.clients.models import Client
-
-from app.modules.pets.service import PetService
+from app.modules.clients.service import ClientService
+from app.modules.daycare.models import DaycareStay, DaycareStayStatus
+from app.modules.pets.models import Pet
 from app.modules.pets.repository import PetRepository
 from app.modules.pets.schemas import PetCreate, PetUpdate
-from app.modules.pets.models import Pet
+from app.modules.pets.service import PetService
+from app.modules.tenant_services.models import Service
+from app.modules.waiting_list.models import (
+    WaitingListEntry,
+    WaitingListItem,
+    WaitingListPeriod,
+    WaitingListStatus,
+)
 
 
 @pytest.fixture
@@ -272,3 +292,208 @@ def test_update_and_delete_pet(
     with pytest.raises(HTTPException) as exc_info:
         pet_service.get_pet(db, tenant_id, created.id)
     assert exc_info.value.status_code == 404
+
+
+def test_mark_pet_deceased_cancels_single_pet_appointments_and_recurrence(
+    db: Session,
+    tenant_id: int,
+    test_client: Client,
+    test_service: Service,
+    pet_service: PetService,
+):
+    """
+    Se um pet tem agendamentos abertos (PENDING / CONFIRMED, inclusive recorrentes)
+    apenas para ele e é marcado como óbito (is_deceased=True):
+    - Todos os agendamentos abertos são cancelados automaticamente e recebem nota de óbito.
+    - Agendamentos já finalizados (COMPLETED) permanecem intactos no histórico.
+    """
+    appt_service = AppointmentService()
+    pet = pet_service.create_pet(
+        db,
+        tenant_id,
+        PetCreate(client_id=test_client.id, name="Rex", species="Canino", size="M"),
+    )
+
+    now = datetime.now(timezone.utc)
+    first_appt = appt_service.create(
+        db,
+        tenant_id,
+        AppointmentCreate(
+            client_id=test_client.id,
+            scheduled_at=now + timedelta(days=1),
+            items=[AppointmentItemCreate(pet_id=pet.id, service_ids=[test_service.id])],
+            recurrence=AppointmentRecurrence(frequency="weekly", occurrences=3),
+        ),
+    )
+
+    series_appts = (
+        db.query(Appointment)
+        .filter(
+            Appointment.tenant_id == tenant_id,
+            Appointment.recurrence_id == first_appt.recurrence_id,
+        )
+        .order_by(Appointment.scheduled_at.asc())
+        .all()
+    )
+    assert len(series_appts) == 3
+
+    # Conclui o primeiro agendamento e confirma o segundo
+    appt_service.apply_action(db, tenant_id, series_appts[0].id, AppointmentAction.CONFIRM)
+    appt_service.apply_action(db, tenant_id, series_appts[0].id, AppointmentAction.START)
+    appt_service.apply_action(db, tenant_id, series_appts[0].id, AppointmentAction.COMPLETE)
+    appt_service.apply_action(db, tenant_id, series_appts[1].id, AppointmentAction.CONFIRM)
+
+    # Marca o pet como óbito
+    updated_pet = pet_service.update_pet(
+        db,
+        tenant_id,
+        pet.id,
+        PetUpdate(is_deceased=True),
+    )
+    assert updated_pet.is_deceased is True
+
+    db.expire_all()
+    refreshed = (
+        db.query(Appointment)
+        .filter(
+            Appointment.tenant_id == tenant_id,
+            Appointment.recurrence_id == first_appt.recurrence_id,
+        )
+        .order_by(Appointment.scheduled_at.asc())
+        .all()
+    )
+
+    # O primeiro (COMPLETED) permanece COMPLETED
+    assert refreshed[0].status == AppointmentStatus.COMPLETED
+    # Os futuros (CONFIRMED e PENDING) foram cancelados automaticamente e mantêm o item para histórico
+    assert refreshed[1].status == AppointmentStatus.CANCELED
+    assert "[Cancelado automaticamente: pet Rex foi a óbito]" in (refreshed[1].notes or "")
+    assert len(refreshed[1].items) == 1
+
+    assert refreshed[2].status == AppointmentStatus.CANCELED
+    assert "[Cancelado automaticamente: pet Rex foi a óbito]" in (refreshed[2].notes or "")
+
+    logs = (
+        db.query(AppointmentAuditLog)
+        .filter(
+            AppointmentAuditLog.tenant_id == tenant_id,
+            AppointmentAuditLog.appointment_id == refreshed[1].id,
+            AppointmentAuditLog.action == "appointment_canceled_deceased",
+        )
+        .all()
+    )
+    assert len(logs) == 1
+
+
+def test_mark_pet_deceased_removes_only_deceased_pet_from_multi_pet_appointment(
+    db: Session,
+    tenant_id: int,
+    test_client: Client,
+    test_service: Service,
+    pet_service: PetService,
+):
+    """
+    Se um agendamento futuro (avulso ou recorrente) possui 2 pets (Pet 1 e Pet 2)
+    e apenas o Pet 1 vai a óbito:
+    - O Pet 1 é removido dos agendamentos abertos (PENDING / CONFIRMED).
+    - O agendamento NÃO é cancelado e continua ativo apenas com o Pet 2.
+    - Uma observação e log de auditoria são registrados no agendamento.
+    """
+    appt_service = AppointmentService()
+    pet1 = pet_service.create_pet(
+        db,
+        tenant_id,
+        PetCreate(client_id=test_client.id, name="Bidu", species="Canino", size="P"),
+    )
+    pet2 = pet_service.create_pet(
+        db,
+        tenant_id,
+        PetCreate(client_id=test_client.id, name="Luna", species="Canino", size="P"),
+    )
+
+    now = datetime.now(timezone.utc)
+    first_appt = appt_service.create(
+        db,
+        tenant_id,
+        AppointmentCreate(
+            client_id=test_client.id,
+            scheduled_at=now + timedelta(days=2),
+            items=[
+                AppointmentItemCreate(pet_id=pet1.id, service_ids=[test_service.id]),
+                AppointmentItemCreate(pet_id=pet2.id, service_ids=[test_service.id]),
+            ],
+            recurrence=AppointmentRecurrence(frequency="biweekly", occurrences=2),
+        ),
+    )
+
+    # Marca apenas pet1 (Bidu) como óbito
+    pet_service.update_pet(
+        db,
+        tenant_id,
+        pet1.id,
+        PetUpdate(is_deceased=True),
+    )
+
+    db.expire_all()
+    series_appts = (
+        db.query(Appointment)
+        .filter(
+            Appointment.tenant_id == tenant_id,
+            Appointment.recurrence_id == first_appt.recurrence_id,
+        )
+        .order_by(Appointment.scheduled_at.asc())
+        .all()
+    )
+    assert len(series_appts) == 2
+
+    for appt in series_appts:
+        # Continua PENDING (não foi cancelado)
+        assert appt.status == AppointmentStatus.PENDING
+        # Resta apenas a Luna (pet2)
+        remaining_pet_ids = [it.pet_id for it in appt.items]
+        assert remaining_pet_ids == [pet2.id]
+        assert "[Pet Bidu removido automaticamente do agendamento (óbito)]" in (appt.notes or "")
+
+    # E também verifica Creche (DaycareStay) e Lista de Espera (WaitingListEntry)
+    pet3 = pet_service.create_pet(
+        db,
+        tenant_id,
+        PetCreate(client_id=test_client.id, name="Max", species="Canino", size="G"),
+    )
+    stay = DaycareStay(
+        tenant_id=tenant_id,
+        client_id=test_client.id,
+        pet_id=pet3.id,
+        scheduled_start_at=now + timedelta(days=3),
+        scheduled_end_at=now + timedelta(days=3, hours=8),
+        status=DaycareStayStatus.PENDING.value,
+    )
+    db.add(stay)
+
+    wl_entry = WaitingListEntry(
+        tenant_id=tenant_id,
+        client_id=test_client.id,
+        preferred_period=WaitingListPeriod.MORNING,
+        status=WaitingListStatus.PENDING,
+    )
+    db.add(wl_entry)
+    db.flush()
+    wl_item = WaitingListItem(
+        waiting_list_entry_id=wl_entry.id,
+        pet_id=pet3.id,
+        services=[test_service],
+    )
+    db.add(wl_item)
+    db.commit()
+
+    pet_service.update_pet(db, tenant_id, pet3.id, PetUpdate(is_deceased=True))
+    db.expire_all()
+
+    refreshed_stay = db.query(DaycareStay).filter(DaycareStay.id == stay.id).first()
+    assert refreshed_stay.status == DaycareStayStatus.CANCELED.value
+    assert "[Cancelado automaticamente: pet Max foi a óbito]" in (refreshed_stay.notes or "")
+
+    refreshed_wl = db.query(WaitingListEntry).filter(WaitingListEntry.id == wl_entry.id).first()
+    assert refreshed_wl.status == WaitingListStatus.CANCELED
+    assert "[Cancelado automaticamente: pet Max foi a óbito]" in (refreshed_wl.notes or "")
+
