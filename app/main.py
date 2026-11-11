@@ -1,38 +1,36 @@
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+import sentry_sdk
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from sqlalchemy import text
+
 from app.api.v1.api_router import api_router
-from app.modules.daycare.router import router as daycare_router
+from app.config.database import SessionLocal
 from app.config.limiter import limiter
 from app.config.logging_config import setup_logging
 from app.config.observability_middleware import ObservabilityMiddleware
-import app.modules.users.models
-import app.modules.tenants.models
-import app.modules.suppliers.models
+from app.config.settings import settings
+import app.modules.appointments.models
+import app.modules.auth.models
+import app.modules.cash_register.models
+import app.modules.client_packages.models
+import app.modules.daycare.models
+from app.modules.daycare.router import router as daycare_router
+import app.modules.financial.models
+import app.modules.plans.models
 import app.modules.products.models
 import app.modules.sales.models
-import app.modules.client_packages.models
-import app.modules.appointments.models
 import app.modules.subscriptions.models
-import app.modules.plans.models
-import app.modules.auth.models
+import app.modules.suppliers.models
+import app.modules.tenants.models
+import app.modules.users.models
 import app.modules.waiting_list.models
 import app.modules.whatsapp.models
-import app.modules.cash_register.models
-import app.modules.financial.models
-import app.modules.daycare.models
-import sentry_sdk
-from app.config.database import SessionLocal
-from app.config.seeds import sync_all_seeds
-from app.config.settings import settings
-from sqlalchemy import text
-from app.config.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -41,28 +39,9 @@ logger = logging.getLogger(__name__)
 setup_logging()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Executado na inicialização do servidor em todos os ambientes (Dev, Staging, Prod).
-    Garante que novos planos, add-ons e metadados sejam sempre sincronizados automaticamente
-    com o banco de dados no momento do deploy/boot.
-    """
-    try:
-        db = SessionLocal()
-        try:
-            sync_all_seeds(db)
-            logger.info("Metadados e catálogo de planos sincronizados com sucesso no boot.")
-        finally:
-            db.close()
-    except Exception as exc:
-        logger.error(f"Erro ao sincronizar sementes no boot da aplicação: {exc}", exc_info=True)
-
-    yield
-
-
 def create_app() -> FastAPI:
 
-    app = FastAPI(title="Petshop API", lifespan=lifespan)
+    app = FastAPI(title="Petshop API")
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

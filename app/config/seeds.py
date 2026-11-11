@@ -136,7 +136,7 @@ def seed_tenant_types(db: Session):
 
 def sync_all_seeds(db: Session):
     """Sincroniza todos os metadados do sistema (planos, tipos de tenant, templates).
-    Pode ser executado com segurança no boot da aplicação (lifespan) de qualquer ambiente.
+    Executado via comando explícito de deploy (python -m app.run_seeds).
     """
     bind = db.get_bind()
     DaycareModality.__table__.create(bind=bind, checkfirst=True)
