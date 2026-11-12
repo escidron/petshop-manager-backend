@@ -69,6 +69,19 @@ jobs:
             DEFAULT_FROM_EMAIL=mail-staging@sistemadatapet.com.br
             ADMIN_EMAIL=eduardosanchezcidron@gmail.com
 
+      - name: Clean up old Artifact Registry images
+        run: |
+          IMAGE_PATH="us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/petshop-manager/backend-staging"
+          echo "Limpando imagens antigas de $IMAGE_PATH (mantendo apenas a imagem atual em uso)..."
+          gcloud artifacts docker images list "$IMAGE_PATH" \
+            --sort-by=~UPDATE_TIME \
+            --format="value(version)" | tail -n +2 | while read -r digest; do
+              if [ -n "$digest" ]; then
+                echo "Deletando imagem antiga: ${IMAGE_PATH}@${digest}"
+                gcloud artifacts docker images delete "${IMAGE_PATH}@${digest}" --delete-tags --quiet || true
+              fi
+            done
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
