@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Request, UploadFile, File, Form
+import io
+from fastapi import APIRouter, Depends, Request, UploadFile, File, Form, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config.database import get_db
@@ -8,6 +10,7 @@ from .schemas import (
     PetUpdate,
     PetResponse,
     PetPhotoResponse,
+    ClientPetReportResponse,
 )
 from .service import PetService
 
@@ -44,6 +47,51 @@ def list_pets_by_client(
     service = PetService()
     tenant_id = request.state.tenant_user.tenant_id
     return service.list_pets_by_client(db, tenant_id, client_id)
+
+
+@router.get("/reports/clients-pets", response_model=ClientPetReportResponse)
+def get_clients_pets_report(
+    request: Request,
+    is_active: bool | None = Query(None, description="Filtrar por status do pet"),
+    search: str | None = Query(None, description="Busca por nome, cliente, telefone ou raça"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    service = PetService()
+    tenant_id = request.state.tenant_user.tenant_id
+    return service.get_clients_pets_report(
+        db=db,
+        tenant_id=tenant_id,
+        is_active=is_active,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/reports/clients-pets/export")
+def export_clients_pets_report(
+    request: Request,
+    is_active: bool | None = Query(None, description="Filtrar por status do pet"),
+    search: str | None = Query(None, description="Busca por nome, cliente, telefone ou raça"),
+    db: Session = Depends(get_db),
+):
+    service = PetService()
+    tenant_id = request.state.tenant_user.tenant_id
+    excel_bytes = service.export_clients_pets_excel(
+        db=db,
+        tenant_id=tenant_id,
+        is_active=is_active,
+        search=search,
+    )
+    return StreamingResponse(
+        io.BytesIO(excel_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="relatorio_clientes_pets.xlsx"'
+        },
+    )
 
 
 @router.get("/{pet_id}", response_model=PetResponse)

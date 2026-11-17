@@ -1,6 +1,8 @@
 from datetime import date, datetime
-from pydantic import BaseModel
 from typing import Optional, List
+from pydantic import BaseModel, field_serializer
+
+from app.utils.timezone import to_brazil_datetime
 
 
 class PetBase(BaseModel):
@@ -75,4 +77,52 @@ class PetResponse(PetBase):
 
     class Config:
         from_attributes = True
+
+
+class ClientPetReportItem(BaseModel):
+    pet_id: int
+    pet_name: str
+    species: str
+    species_label: str
+    breed: Optional[str] = None
+    gender: Optional[str] = None
+    gender_label: str
+    size: Optional[str] = None
+    coat_type: Optional[str] = None
+    coat_type_label: Optional[str] = None
+    coat_color: Optional[str] = None
+    is_neutered: Optional[bool] = None
+    age: Optional[int] = None
+    age_unit: Optional[str] = None
+    age_unit_label: Optional[str] = None
+    birth_date: Optional[date] = None
+    is_active: bool
+    is_deceased: bool
+    notes: Optional[str] = None
+
+    # Dados do Dono / Cliente
+    client_id: int
+    client_name: str
+    client_phone: Optional[str] = None
+    client_phone_secondary: Optional[str] = None
+
+    # Último Serviço
+    last_service_date: Optional[datetime] = None
+    last_service_name: Optional[str] = None
+
+    @field_serializer("last_service_date")
+    def serialize_last_service_date(self, dt: datetime | None, _info):
+        if dt is None:
+            return None
+        return to_brazil_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class ClientPetReportResponse(BaseModel):
+    items: List[ClientPetReportItem]
+    total: int
+    total_active_pets: int
+    total_unique_clients: int
 

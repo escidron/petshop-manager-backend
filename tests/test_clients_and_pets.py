@@ -1,8 +1,16 @@
+import io
+import openpyxl
 import pytest
 from datetime import date, datetime, timezone, timedelta
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.modules.appointments.models import (
+    Appointment,
+    AppointmentItem,
+    AppointmentItemService,
+    AppointmentStatus,
+)
 from app.modules.clients.service import ClientService
 from app.modules.clients.repository import ClientRepository
 from app.modules.clients.schemas import ClientCreate, ClientUpdate
@@ -12,6 +20,7 @@ from app.modules.pets.service import PetService
 from app.modules.pets.repository import PetRepository
 from app.modules.pets.schemas import PetCreate, PetUpdate
 from app.modules.pets.models import Pet
+from app.modules.tenant_services.models import Service
 
 
 @pytest.fixture
@@ -272,3 +281,87 @@ def test_update_and_delete_pet(
     with pytest.raises(HTTPException) as exc_info:
         pet_service.get_pet(db, tenant_id, created.id)
     assert exc_info.value.status_code == 404
+
+
+def test_clients_pets_report_and_excel(
+    db: Session,
+    tenant_id: int,
+    test_client: Client,
+    pet_service: PetService,
+):
+    """Testa geração de relatório de clientes e pets e exportação em Excel."""
+    pet_ativo = pet_service.create_pet(
+        db, tenant_id,
+        PetCreate(client_id=test_client.id, name="Thor Ativo", species="dog", breed="Golden", size="G", is_active=True),
+    )
+    pet_inativo = pet_service.create_pet(
+        db, tenant_id,
+        PetCreate(client_id=test_client.id, name="Loki Inativo", species="cat", breed="Siamês", size="P", is_active=False),
+    )
+
+    service = Service(
+        tenant_id=tenant_id,
+        name="Banho Premium",
+        price_cents=5000,
+    )
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+
+    now_utc = datetime.now(timezone.utc)
+    appt = Appointment(
+        tenant_id=tenant_id,
+        client_id=test_client.id,
+        scheduled_at=now_utc,
+        status=AppointmentStatus.COMPLETED,
+    )
+    db.add(appt)
+    db.commit()
+    db.refresh(appt)
+
+    appt_item = AppointmentItem(
+        appointment_id=appt.id,
+        pet_id=pet_ativo.id,
+    )
+    db.add(appt_item)
+    db.commit()
+    db.refresh(appt_item)
+
+    appt_service_link = AppointmentItemService(
+        appointment_item_id=appt_item.id,
+        service_id=service.id,
+        status="active",
+    )
+    db.add(appt_service_link)
+    db.commit()
+
+    report = pet_service.get_clients_pets_report(db, tenant_id, search="Thor Ativo")
+    assert report.total >= 1
+    assert report.total_active_pets >= 1
+    assert report.total_unique_clients >= 1
+
+    thor_items = [item for item in report.items if item.pet_id == pet_ativo.id]
+    assert len(thor_items) == 1
+    thor = thor_items[0]
+    assert thor.pet_name == "Thor Ativo"
+    assert thor.client_name == test_client.name
+    assert thor.last_service_name == "Banho Premium"
+    assert thor.last_service_date is not None
+
+    report_inativos = pet_service.get_clients_pets_report(db, tenant_id, is_active=False)
+    assert any(i.pet_id == pet_inativo.id for i in report_inativos.items)
+    assert not any(i.pet_id == pet_ativo.id for i in report_inativos.items)
+
+    report_search = pet_service.get_clients_pets_report(db, tenant_id, search="Thor Ativo")
+    assert len(report_search.items) == 1
+    assert report_search.items[0].pet_id == pet_ativo.id
+
+    excel_bytes = pet_service.export_clients_pets_excel(db, tenant_id, search="Thor Ativo")
+    assert excel_bytes.startswith(b"PK\x03\x04")
+
+    wb = openpyxl.load_workbook(io.BytesIO(excel_bytes))
+    assert "Clientes & Pets" in wb.sheetnames
+    ws = wb["Clientes & Pets"]
+    assert ws["A1"].value == "RELATÓRIO DE CLIENTES & PETS"
+    assert ws.cell(row=4, column=1).value == "Cliente (Dono)"
+    assert ws.cell(row=4, column=4).value == "Nome do Pet"
